@@ -9,6 +9,9 @@ obj/
 appsettings.Local.json
 appsettings.*.local.json
 
+# Real account-id mapping reveals actual bank/institution relationships - local only
+src/Expense.Importers.SimpleFin/simplefin-account-map.json
+
 # Editors
 .idea/
 *.swp

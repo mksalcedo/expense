@@ -9,6 +9,10 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.9" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="simplefin-account-map.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('simplefin-account-map.json')" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>

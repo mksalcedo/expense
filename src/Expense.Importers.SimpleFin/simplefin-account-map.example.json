@@ -1,0 +1,4 @@
+{
+  "_comment": "Maps SimpleFin account 'id' values to local accounts.id primary keys. Copy to simplefin-account-map.json (gitignored) and fill in with real values from `dotnet run -- --list-accounts`.",
+  "ACT-replace-with-real-simplefin-id": 1
+}
