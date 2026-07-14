@@ -81,7 +81,7 @@ Each budget category has a **Funding Strategy** (v1: Groceries/Supplements/Resta
 
 **How the Amex payment amount is computed for each due date in the 12-month forecast (resolved):**
 
-- **Cycle still entirely in the future** (hasn't started) → use the budgeted variable-spending total (sum of current `budget_periods` amounts for whichever categories have `funding_rules.strategy = pay_in_full_amex` — Groceries/Restaurants/Supplements/Gas today, but never hardcoded by name; adding, renaming, or removing a category just means updating its funding strategy, not touching code) + extra principal. There's no actual data yet, so this is the planning estimate.
+- **Cycle still entirely in the future** (hasn't started) → use the budgeted variable-spending total (sum of current `budget_periods` amounts, each **prorated to its monthly equivalent** regardless of what frequency it was entered in, for whichever categories have `funding_rules.strategy = pay_in_full_amex` — Groceries/Restaurants/Supplements/Gas today, but never hardcoded by name; adding, renaming, or removing a category just means updating its funding strategy, not touching code) + extra principal. There's no actual data yet, so this is the planning estimate.
 - **Cycle in progress or already closed** → use `MAX(actual charges this cycle, budgeted variable-spending total)` + extra principal. The real number only overrides the budget when it's *higher*. If the cycle actually came in under budget, the forecast still shows the budgeted (larger) number — it does not get optimistic based on underspending. Any real savings shows up naturally the next time the actual checking balance is refreshed, not by the forecast lowering a future payment line in advance. This is the same asymmetry as "budgets are targets, not predictions," applied specifically to protect the forecast from ever looking rosier than the plan.
 - This computation **never needs category data** — it's a straight sum of raw Amex transaction amounts for the cycle (see the categorization/forecast decoupling note below), compared against the budget total. It is decoupled from the Spending Tracker's category-level actual/remaining view, which is a separate computation over the same underlying transactions.
 
@@ -177,7 +177,7 @@ Deliberately dropped from earlier drafts of this section: a separate "posting_st
 Unlike the current spreadsheet — which carries an over/underspend forward into the next week's "Remaining" (`Remaining = Budget − This Period's Spent + Last Period's Remaining`) — the app uses **no carryover at all, in either direction.** Each period's Remaining is simply:
 
 ```
-Remaining = this period's budget_periods amount − SUM(this period's categorized spend)
+Remaining = this period's budget_periods amount (prorated to this period's length) − SUM(this period's categorized spend)
 ```
 
 No stored or carried-forward state, no dependency on the prior period. The cash-flow impact of overspending is already captured by the Amex forecast's `MAX(actual, budget)` rule; the decision of whether to actually change a budget going forward is left entirely to the historical trend reports (weekly/13-week averages, etc.) — carryover would have been a second, competing way of surfacing the same signal inside the wrong view.
@@ -187,7 +187,7 @@ No stored or carried-forward state, no dependency on the prior period. The cash-
 Guiding rule applied throughout: only add a table if it earns its place; generate/derive at read time instead of storing wherever the data doesn't need to persist.
 
 **Accounts & balances**
-- `accounts`: `id, name, type` (checking | active_spending | debt), `min_payment`, `extra_payment` (nullable, debt-type only), `statement_close_day`, `payment_due_day` (nullable, Amex only — a recurring day-of-month pattern, not a stored list of past/future cycles).
+- `accounts`: `id, name, type` (checking | active_spending | debt), `min_payment`, `extra_payment` (nullable, debt-type only), `payment_due_day` (nullable, every debt account — the forecast needs a day-of-month to place each account's recurring payment on the ledger), `statement_close_day` (nullable, **Amex only** — only Amex's forecast computation needs a "which charges belong to which cycle" boundary; every other debt account's payment is just a flat `min_payment + extra_payment` on its due day, no cycle-qualification logic). Both are a recurring day-of-month pattern, not a stored list of past/future cycles.
 - `checking_balance_snapshots`: `as_of_date, balance`. The forecast always starts from the latest row.
 - `debt_balance_snapshots`: `account_id, as_of_date, balance`. Kept as a history (not a single current-value field) specifically to support a debt-balance-over-time trend chart.
 
@@ -199,7 +199,8 @@ Guiding rule applied throughout: only add a table if it earns its place; generat
 - `amazon_order_items`: `id, order_id (plain text, no parent orders table — the duplication of order_date across ~1-2 items per order isn't worth a join), order_date, item_title, price, quantity, tax_allocated, product_id (nullable), category_id (nullable), refund_amount (nullable), created_at`. Tax is **prorated across all items in the order** (proportional to each item's price). `product_id IS NULL` is that item's "pending categorization."
 
 **Budgets**
-- `budget_periods` (renamed from an earlier "budget_versions" — clearer name for the same thing: each row is the period during which a specific amount applied to a category): `category_id, amount, effective_from, effective_through (nullable = current)`.
+- `budget_periods` (renamed from an earlier "budget_versions" — clearer name for the same thing: each row is the period during which a specific amount applied to a category): `category_id, amount, frequency (weekly | biweekly | monthly | quarterly | annual), effective_from, effective_through (nullable = current)`.
+- **Budget amounts can be entered in any frequency, not a fixed unit.** A category isn't forced into "always weekly" or "always monthly" — one category could be weekly, another quarterly, and a category can even change frequency over time (a new dated `budget_periods` row can carry a different frequency than the last one, same as it can carry a different amount). Every consumer of a budget figure — the Spending Tracker's week/month views, the Amex forecast's monthly "qualifying charges" estimate, Historical Analysis's budget-vs-actual comparisons — prorates from whatever frequency was actually chosen via a canonical daily-rate conversion (`amount ÷ days-in-that-frequency`, then `× days-in-whatever-period-is-needed`), rather than assuming one global unit.
 
 **Forecast — deliberately not stored as generated events**
 - `recurring_rules`: `name, direction (income/expense), amount, frequency, anchor, account_id, active, start_date, end_date (nullable)`. Covers income (paychecks, SS, pension) and genuinely fixed bills (mortgage, internet, power, insurance, etc.) only. **Does not** need a `category_id`, and does not get rows for the Variable Spending Budget line (computed from `budget_periods` at generation time) or any debt payment including Amex (computed from `accounts.min_payment`/`extra_payment`, plus actual Amex cycle charges — see above).
