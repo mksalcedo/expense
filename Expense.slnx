@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Expense.Domain/Expense.Domain.csproj" />
+    <Project Path="src/Expense.Importers.AmazonGmail/Expense.Importers.AmazonGmail.csproj" />
+    <Project Path="src/Expense.Importers.SimpleFin/Expense.Importers.SimpleFin.csproj" />
+    <Project Path="src/Expense.Web/Expense.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Expense.Domain.Tests/Expense.Domain.Tests.csproj" />
+    <Project Path="tests/Expense.Web.Tests/Expense.Web.Tests.csproj" />
+  </Folder>
+</Solution>

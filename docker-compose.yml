@@ -1,0 +1,16 @@
+services:
+  expense_db:
+    image: postgres:16-alpine
+    container_name: expense_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: expense
+      POSTGRES_USER: expense
+      POSTGRES_PASSWORD: expense_dev_local_only
+    ports:
+      - "5433:5432"
+    volumes:
+      - expense_db_data:/var/lib/postgresql/data
+
+volumes:
+  expense_db_data:
