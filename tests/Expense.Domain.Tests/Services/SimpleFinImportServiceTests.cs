@@ -9,11 +9,15 @@ namespace Expense.Domain.Tests.Services;
 
 public class SimpleFinImportServiceTests : DatabaseTestBase
 {
+    // Keyed on the stable "id" field, not "name" - a real account's display name was
+    // observed to contain garbled unicode replacement characters, so name is not a
+    // safe mapping key even though it reads nicely in most cases.
     private const string TwoAccountResponse = """
     {
       "errors": [],
       "accounts": [
         {
+          "id": "ACT-amex-test",
           "org": { "name": "American Express" },
           "name": "Classic Gold Card (1000)",
           "balance": "-47341.98",
@@ -24,6 +28,7 @@ public class SimpleFinImportServiceTests : DatabaseTestBase
           ]
         },
         {
+          "id": "ACT-discover-test",
           "org": { "name": "Discover" },
           "name": "Discover Credit Card",
           "balance": "0.00",
@@ -54,8 +59,8 @@ public class SimpleFinImportServiceTests : DatabaseTestBase
 
     private static Dictionary<string, int> BuildAccountMap(Account amex, Account discover) => new()
     {
-        ["Classic Gold Card (1000)"] = amex.Id,
-        ["Discover Credit Card"] = discover.Id
+        ["ACT-amex-test"] = amex.Id,
+        ["ACT-discover-test"] = discover.Id
     };
 
     [Fact]
@@ -108,12 +113,12 @@ public class SimpleFinImportServiceTests : DatabaseTestBase
         {
           "errors": [],
           "accounts": [
-            { "org": { "name": "Wells Fargo" }, "name": "EVERYDAY CHECKING", "balance": "6463.02", "balance-date": 1783980195, "transactions": [] }
+            { "id": "ACT-checking-test", "org": { "name": "Wells Fargo" }, "name": "EVERYDAY CHECKING", "balance": "6463.02", "balance-date": 1783980195, "transactions": [] }
           ]
         }
         """;
         var sut = CreateSut(checkingResponse);
-        var map = new Dictionary<string, int> { ["EVERYDAY CHECKING"] = checking.Id };
+        var map = new Dictionary<string, int> { ["ACT-checking-test"] = checking.Id };
 
         await sut.ImportAsync(Context, map, DateTimeOffset.UtcNow.AddDays(-45));
 
@@ -138,14 +143,14 @@ public class SimpleFinImportServiceTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task Import_UnmappedSimpleFinAccount_IsReportedNotErrored()
+    public async Task Import_UnmappedSimpleFinAccount_IsReportedByIdNotErrored()
     {
         var (amex, _) = await CreateAccountsAsync();
         var sut = CreateSut(TwoAccountResponse);
-        var mapMissingDiscover = new Dictionary<string, int> { ["Classic Gold Card (1000)"] = amex.Id };
+        var mapMissingDiscover = new Dictionary<string, int> { ["ACT-amex-test"] = amex.Id };
 
         var summary = await sut.ImportAsync(Context, mapMissingDiscover, DateTimeOffset.UtcNow.AddDays(-45));
 
-        Assert.Contains("Discover Credit Card", summary.UnmappedAccounts);
+        Assert.Contains("ACT-discover-test", summary.UnmappedAccounts);
     }
 }

@@ -25,9 +25,9 @@ public class SimpleFinImportService(SimpleFinClient client, DedupService dedup, 
 
         foreach (var simpleFinAccount in response.Accounts)
         {
-            if (!accountMap.TryGetValue(simpleFinAccount.Name, out var localAccountId))
+            if (!accountMap.TryGetValue(simpleFinAccount.Id, out var localAccountId))
             {
-                summary.UnmappedAccounts.Add(simpleFinAccount.Name);
+                summary.UnmappedAccounts.Add(simpleFinAccount.Id);
                 continue;
             }
 

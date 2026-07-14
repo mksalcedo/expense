@@ -13,6 +13,9 @@ public class SimpleFinAccountsResponse
 
 public class SimpleFinAccount
 {
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
     [JsonPropertyName("org")]
     public SimpleFinOrg Org { get; set; } = new();
 
