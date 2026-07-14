@@ -1,5 +1,6 @@
 using Expense.Domain.Data;
 using Expense.Domain.Services.Budgets;
+using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Forecast;
 using Expense.Domain.Settings;
 using Expense.Web.Components;
@@ -24,6 +25,9 @@ builder.Services.AddScoped<RecurrenceExpander>();
 builder.Services.AddScoped<AmexCycleCalculator>();
 builder.Services.AddScoped<ForecastEngine>();
 builder.Services.AddScoped<IForecastResultProvider, ForecastResultProvider>();
+
+builder.Services.AddScoped<CategorizationService>();
+builder.Services.AddScoped<IReviewQueueProvider, ReviewQueueProvider>();
 
 var app = builder.Build();
 

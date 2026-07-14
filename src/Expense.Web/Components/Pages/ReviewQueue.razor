@@ -1,0 +1,123 @@
+@page "/review-queue"
+@using Expense.Domain.Services.Categorization
+@inject IReviewQueueProvider ReviewQueueProvider
+
+<PageTitle>Review Queue</PageTitle>
+
+<h1>Review Queue</h1>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <h2>Bank Transactions (@_data.PendingTransactions.Count)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Amount</th>
+                <th>Category</th>
+                <th>Create rule (optional pattern)</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var transaction in _data.PendingTransactions)
+            {
+                <tr>
+                    <td>@transaction.TransactionDate.ToString("yyyy-MM-dd")</td>
+                    <td>@transaction.Description</td>
+                    <td>@transaction.Amount.ToString("N2")</td>
+                    <td>
+                        <select id="txn-category-@transaction.Id" @onchange="e => _transactionCategory[transaction.Id] = int.Parse((string)e.Value!)">
+                            <option value="0">-- select --</option>
+                            @foreach (var category in _data.Categories)
+                            {
+                                <option value="@category.Id">@category.Name</option>
+                            }
+                        </select>
+                    </td>
+                    <td>
+                        <input id="txn-pattern-@transaction.Id" @onchange="e => _transactionPattern[transaction.Id] = (string?)e.Value" />
+                    </td>
+                    <td>
+                        <button id="txn-categorize-@transaction.Id" @onclick="() => CategorizeTransactionAsync(transaction.Id)">Categorize</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <h2>Amazon Items (@_data.PendingAmazonItems.Count)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Order Date</th>
+                <th>Item</th>
+                <th>Price</th>
+                <th>Category</th>
+                <th>Create product (optional pattern)</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in _data.PendingAmazonItems)
+            {
+                <tr>
+                    <td>@item.OrderDate.ToString("yyyy-MM-dd")</td>
+                    <td>@item.ItemTitle</td>
+                    <td>@item.Price.ToString("N2")</td>
+                    <td>
+                        <select id="item-category-@item.Id" @onchange="e => _itemCategory[item.Id] = int.Parse((string)e.Value!)">
+                            <option value="0">-- select --</option>
+                            @foreach (var category in _data.Categories)
+                            {
+                                <option value="@category.Id">@category.Name</option>
+                            }
+                        </select>
+                    </td>
+                    <td>
+                        <input id="item-pattern-@item.Id" @onchange="e => _itemPattern[item.Id] = (string?)e.Value" />
+                    </td>
+                    <td>
+                        <button id="item-categorize-@item.Id" @onclick="() => CategorizeAmazonItemAsync(item.Id)">Categorize</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private ReviewQueueData? _data;
+    private readonly Dictionary<int, int> _transactionCategory = [];
+    private readonly Dictionary<int, string?> _transactionPattern = [];
+    private readonly Dictionary<int, int> _itemCategory = [];
+    private readonly Dictionary<int, string?> _itemPattern = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
+    private async Task CategorizeTransactionAsync(int transactionId)
+    {
+        if (!_transactionCategory.TryGetValue(transactionId, out var categoryId) || categoryId == 0) return;
+
+        _transactionPattern.TryGetValue(transactionId, out var pattern);
+        await ReviewQueueProvider.CategorizeTransactionAsync(transactionId, categoryId, string.IsNullOrWhiteSpace(pattern) ? null : pattern);
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
+    private async Task CategorizeAmazonItemAsync(int itemId)
+    {
+        if (!_itemCategory.TryGetValue(itemId, out var categoryId) || categoryId == 0) return;
+
+        _itemPattern.TryGetValue(itemId, out var pattern);
+        await ReviewQueueProvider.CategorizeAmazonItemAsync(itemId, categoryId, string.IsNullOrWhiteSpace(pattern) ? null : pattern);
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+}
