@@ -1,0 +1,20 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Local secrets / config overrides (real secrets go in dotnet user-secrets, not here)
+appsettings.Local.json
+appsettings.*.local.json
+
+# Editors
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Claude Code local settings (personal permission grants, not shared)
+.claude/settings.local.json
