@@ -154,6 +154,95 @@ public class AmazonOrderEmailParserTests
         Assert.Equal(3.12m, item.TaxAllocated); // 55.12 - 52
     }
 
+    // Real auto-confirm@amazon.com body, "simplified" template: inline "Order #<id>",
+    // no item list at all, "Order Total: $X" - used for gift cards (pulled from the
+    // user's Gmail).
+    private const string GiftCardEmail = """
+        Amazon.com Order Confirmation
+        www.amazon.com/ref=TE_simp_tex_h
+        _______________________________________________________________________________________
+
+        Hello Mark,
+
+        Thank you for shopping with us.
+
+        View or manage your orders in Your Orders:
+        https://www.amazon.com/gp/css/order-details?orderId=112-2462185-2052218&ref_=TE_simp_od
+
+        Details
+        Order #112-2462185-2052218
+
+            Estimated delivery: Within 5 minutes
+                Send gift card(s) to: +19712710932
+            In rare circumstances delivery may be delayed.
+        Learn more: https://www.amazon.com/gp/help/customer/display.html/ref=help_order_confirm_email?ie=UTF8&nodeId=201138850
+            Order Total: $150.00
+
+        =======================================================================================
+
+        We hope to see you again soon.
+
+        Amazon.com
+        """;
+
+    // Same simplified template, but for a real (non-gift-card) item - Amazon sometimes
+    // sends this bare confirmation with no item title/price breakdown at all (pulled
+    // from the user's Gmail).
+    private const string SimplifiedNoItemDetailEmail = """
+        Amazon.com Order Confirmation
+        www.amazon.com/ref=TE_simp_tex_h
+        _______________________________________________________________________________________
+
+        Hello Mark,
+
+        Thank you for shopping with us.
+
+        We'll send a confirmation when your item ships.
+
+        View or manage your orders in Your Orders:
+        https://www.amazon.com/gp/css/order-details?orderId=113-1132648-3403446&ref_=TE_simp_od
+
+        Details
+        Order #113-1132648-3403446
+
+            Arriving:
+            Thursday, Jul 17, 5 p.m. - 10 p.m.
+
+            Ship to:
+            Mark
+            NORCROSS, GA
+
+            Order Total: $22.00
+
+        ======================================================================================
+        We hope to see you again soon.
+
+        Amazon.com
+        """;
+
+    [Fact]
+    public void Parse_GiftCardEmail_ProducesOneItemTitledForOffBudgetMatching()
+    {
+        var items = _sut.Parse(GiftCardEmail, new DateOnly(2026, 3, 1));
+
+        var item = Assert.Single(items);
+        Assert.Equal("112-2462185-2052218", item.OrderId);
+        Assert.Equal("Amazon eGift Card", item.ItemTitle);
+        Assert.Equal(150.00m, item.Price);
+        Assert.Equal(0m, item.TaxAllocated);
+    }
+
+    [Fact]
+    public void Parse_SimplifiedTemplateWithNoItemDetail_ProducesAPlaceholderPendingItem()
+    {
+        var items = _sut.Parse(SimplifiedNoItemDetailEmail, new DateOnly(2026, 3, 1));
+
+        var item = Assert.Single(items);
+        Assert.Equal("113-1132648-3403446", item.OrderId);
+        Assert.Equal(22.00m, item.Price);
+        Assert.DoesNotContain("Gift Card", item.ItemTitle);
+    }
+
     [Fact]
     public void Parse_MalformedBody_ThrowsRatherThanImportEmptyOrWrongData()
     {

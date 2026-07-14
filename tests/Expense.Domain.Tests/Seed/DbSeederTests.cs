@@ -78,6 +78,17 @@ public class DbSeederTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task SeedAsync_CreatesGiftCardProductRule_RoutingToOffBudgetMisc()
+    {
+        await _sut.SeedAsync(Context);
+
+        var offBudget = await Context.Categories.SingleAsync(c => c.Name == "Off-Budget/Misc");
+        var product = await Context.Products.SingleAsync(p => p.ProductPattern == "%GIFT CARD%");
+
+        Assert.Equal(offBudget.Id, product.CategoryId);
+    }
+
+    [Fact]
     public async Task SeedAsync_RunTwice_IsIdempotent()
     {
         await _sut.SeedAsync(Context);

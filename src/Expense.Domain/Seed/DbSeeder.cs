@@ -37,6 +37,9 @@ public class DbSeeder
         );
         await context.SaveChangesAsync();
 
+        context.Products.Add(new Product { ProductPattern = "%GIFT CARD%", CategoryId = offBudget.Id });
+        await context.SaveChangesAsync();
+
         context.Accounts.Add(new Account { Name = "Wells Fargo Checking", Type = AccountType.Checking });
         await context.SaveChangesAsync();
 
