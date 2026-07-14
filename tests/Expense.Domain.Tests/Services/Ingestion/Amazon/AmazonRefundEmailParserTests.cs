@@ -30,6 +30,26 @@ public class AmazonRefundEmailParserTests
         Assert.Equal(23.31m, refund.RefundAmount); // Item Refund $21.99 + Item Tax Refund $1.32
     }
 
+    // Real payments-messages@amazon.com body - a "goodwill" refund uses a single combined
+    // line instead of separate Item Refund/Item Tax Refund lines (pulled from the user's
+    // Gmail; this was a near-duplicate resend of the same order as RefundEmail above,
+    // just with a different refund-breakdown wording).
+    private const string GoodwillRefundEmail = """
+        Hello, We're writing to let you know we processed your refund of $23.31 for your Order 112-1510135-3538618 from JFP Western Inc..
+
+        This refund is for the following item(s):     Item: MOS Cardstock Paper - 11" x 14"     Quantity: 1     ASIN: B0DKB7SPSR     Reason for refund: Account adjustment     Here's the breakdown of your refund for this item:         Goodwill Refund: $23.31
+        """;
+
+    [Fact]
+    public void Parse_GoodwillRefund_UsesTheSingleCombinedAmount()
+    {
+        var refunds = _sut.Parse(GoodwillRefundEmail);
+
+        var refund = Assert.Single(refunds);
+        Assert.Equal("112-1510135-3538618", refund.OrderId);
+        Assert.Equal(23.31m, refund.RefundAmount);
+    }
+
     [Fact]
     public void Parse_MalformedBody_ThrowsRatherThanImportEmptyOrWrongData()
     {

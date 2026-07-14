@@ -111,6 +111,49 @@ public class AmazonOrderEmailParserTests
         Assert.Equal(1.26m, vitaminD.TaxAllocated); // 2.63 leftover * (21/43.8), rounded
     }
 
+    // Real auto-confirm@amazon.com body, older template using "Total" (no colon)
+    // instead of "Grand Total:" - pulled directly from the user's Gmail (2025 order)
+    private const string OlderTemplateEmail = """
+        Thanks for your order, Mark!
+        Ordered
+
+        Shipped
+
+        Out for delivery
+
+        Delivered
+
+        Arriving Saturday
+
+        Mark - NORCROSS, GA
+
+        Order #
+        112-8265526-8324223
+
+        View or edit order
+        https://www.amazon.com/gp/css/order-details?orderID=112-8265526-8324223&ref_=p_btn_fed_veo
+
+        * Ancestral Supplements Grass Fed Beef Prostate Supplements for Men with Liver, 3000mg, Prostate Health Support Promotes Men's Health, Non-GMO, 180 Capsules
+          Quantity: 1
+          52 USD
+
+        Total
+        55.12 USD
+
+        Amazon.com
+        """;
+
+    [Fact]
+    public void Parse_OlderTemplateWithPlainTotalLabel_StillParsesCorrectly()
+    {
+        var items = _sut.Parse(OlderTemplateEmail, new DateOnly(2025, 6, 1));
+
+        var item = Assert.Single(items);
+        Assert.Equal("112-8265526-8324223", item.OrderId);
+        Assert.Equal(52m, item.Price);
+        Assert.Equal(3.12m, item.TaxAllocated); // 55.12 - 52
+    }
+
     [Fact]
     public void Parse_MalformedBody_ThrowsRatherThanImportEmptyOrWrongData()
     {

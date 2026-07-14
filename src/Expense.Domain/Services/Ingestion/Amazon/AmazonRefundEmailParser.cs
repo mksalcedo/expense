@@ -14,8 +14,10 @@ public partial class AmazonRefundEmailParser
     [GeneratedRegex(@"for your Order (?<id>[\w-]+)")]
     private static partial Regex OrderIdPattern();
 
+    // Either an itemized "Item Refund: $X" (+ optional "Item Tax Refund: $Y"), or a
+    // single combined "Goodwill Refund: $X" line - both real variants seen in practice.
     [GeneratedRegex(
-        @"Item:\s*(?<title>.+?)\s+Quantity:\s*(?<qty>\d+).*?Item Refund:\s*\$(?<itemRefund>[\d.]+)(?:\s+Item Tax Refund:\s*\$(?<taxRefund>[\d.]+))?",
+        @"Item:\s*(?<title>.+?)\s+Quantity:\s*(?<qty>\d+).*?(?:Item Refund:\s*\$(?<itemRefund>[\d.]+)(?:\s+Item Tax Refund:\s*\$(?<taxRefund>[\d.]+))?|Goodwill Refund:\s*\$(?<goodwill>[\d.]+))",
         RegexOptions.Singleline)]
     private static partial Regex ItemRefundPattern();
 
@@ -36,15 +38,16 @@ public partial class AmazonRefundEmailParser
 
         return itemMatches.Select(m =>
         {
-            var itemRefund = decimal.Parse(m.Groups["itemRefund"].Value);
+            var itemRefund = m.Groups["itemRefund"].Success ? decimal.Parse(m.Groups["itemRefund"].Value) : 0m;
             var taxRefund = m.Groups["taxRefund"].Success ? decimal.Parse(m.Groups["taxRefund"].Value) : 0m;
+            var goodwill = m.Groups["goodwill"].Success ? decimal.Parse(m.Groups["goodwill"].Value) : 0m;
 
             return new AmazonRefundInfo
             {
                 OrderId = orderId,
                 ItemTitle = m.Groups["title"].Value.Trim(),
                 Quantity = int.Parse(m.Groups["qty"].Value),
-                RefundAmount = itemRefund + taxRefund
+                RefundAmount = itemRefund + taxRefund + goodwill
             };
         }).ToList();
     }

@@ -18,7 +18,8 @@ public partial class AmazonOrderEmailParser
     [GeneratedRegex(@"\*\s*(?<title>.+?)\r?\n\s*Quantity:\s*(?<qty>\d+)\r?\n\s*(?<price>[\d.]+)\s*USD", RegexOptions.Singleline)]
     private static partial Regex ItemPattern();
 
-    [GeneratedRegex(@"Grand Total:\s*\r?\n\s*(?<total>[\d.]+)\s*USD")]
+    // Recent emails say "Grand Total:", older ones just say "Total" with no colon
+    [GeneratedRegex(@"(?:Grand )?Total:?\s*\r?\n\s*(?<total>[\d.]+)\s*USD")]
     private static partial Regex GrandTotalPattern();
 
     public List<AmazonOrderItem> Parse(string emailBody, DateOnly orderDate)
