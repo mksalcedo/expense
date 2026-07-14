@@ -12,6 +12,8 @@ public class ExpenseDbContext(DbContextOptions<ExpenseDbContext> options) : DbCo
     public DbSet<MerchantRule> MerchantRules => Set<MerchantRule>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<FundingRule> FundingRules => Set<FundingRule>();
+    public DbSet<BankTransaction> BankTransactions => Set<BankTransaction>();
+    public DbSet<AmazonOrderItem> AmazonOrderItems => Set<AmazonOrderItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
