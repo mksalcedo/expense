@@ -11,8 +11,8 @@ public class ReviewQueueProvider(IDbContextFactory<ExpenseDbContext> contextFact
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         return new ReviewQueueData
         {
-            PendingTransactions = await categorization.GetPendingBankTransactionsAsync(context),
-            PendingAmazonItems = await categorization.GetPendingAmazonOrderItemsAsync(context),
+            TransactionGroups = await categorization.GetPendingTransactionGroupsAsync(context),
+            AmazonItemGroups = await categorization.GetPendingAmazonItemGroupsAsync(context),
             Categories = await context.Categories.OrderBy(c => c.Name).ToListAsync(cancellationToken)
         };
     }

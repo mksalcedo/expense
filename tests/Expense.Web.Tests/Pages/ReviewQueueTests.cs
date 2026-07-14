@@ -37,58 +37,77 @@ public class ReviewQueueTests : BunitContext
     private static ReviewQueueData MakeData() => new()
     {
         Categories = [new Category { Id = 1, Name = "Groceries", IsBudgeted = true }],
-        PendingTransactions =
+        TransactionGroups =
         [
-            new BankTransaction { Id = 10, AccountId = 1, TransactionDate = new DateOnly(2026, 7, 1), Description = "TRADER JOE S", Amount = -40m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow }
+            new PendingTransactionGroup
+            {
+                SuggestedPattern = "PUBLIX", SampleDescription = "PUBLIX NORCROSS GA",
+                TransactionIds = [10, 11, 12], TotalAmount = -62m
+            }
         ],
-        PendingAmazonItems =
+        AmazonItemGroups =
         [
-            new AmazonOrderItem { Id = 20, OrderId = "1", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Qunol Ultra CoQ10", Price = 30m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow }
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "Qunol Ultra CoQ10", ItemTitle = "Qunol Ultra CoQ10",
+                ItemIds = [20, 21], TotalPrice = 62m
+            }
         ]
     };
 
     [Fact]
-    public void ReviewQueue_RendersPendingTransactionsAndAmazonItems()
+    public void ReviewQueue_RendersGroupedRowsWithCountsAndPrefilledPattern()
     {
         var provider = new FakeReviewQueueProvider(MakeData());
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
 
-        Assert.Contains("TRADER JOE S", cut.Markup);
+        Assert.Contains("PUBLIX NORCROSS GA", cut.Markup);
+        Assert.Contains("3", cut.Markup); // group count
         Assert.Contains("Qunol Ultra CoQ10", cut.Markup);
+        Assert.Equal("PUBLIX", cut.Find("#txn-pattern-10").GetAttribute("value"));
+        Assert.Equal("Qunol Ultra CoQ10", cut.Find("#item-pattern-20").GetAttribute("value"));
     }
 
     [Fact]
-    public void CategorizeTransaction_SelectingCategoryAndPatternThenClicking_CallsProviderWithBothValues()
+    public void SelectingCategoryOnTransactionGroup_ImmediatelyCategorizesUsingTheDefaultPattern_NoExtraClick()
     {
         var provider = new FakeReviewQueueProvider(MakeData());
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
-
         cut.Find("#txn-category-10").Change("1");
-        cut.Find("#txn-pattern-10").Change("%TRADER JOE%");
-        cut.Find("#txn-categorize-10").Click();
 
-        Assert.Equal(10, provider.LastTransactionId);
+        Assert.Equal(10, provider.LastTransactionId); // the group's first (representative) transaction id
         Assert.Equal(1, provider.LastCategoryId);
-        Assert.Equal("%TRADER JOE%", provider.LastPattern);
+        Assert.Equal("PUBLIX", provider.LastPattern);
     }
 
     [Fact]
-    public void CategorizeAmazonItem_SelectingCategoryOnlyThenClicking_CallsProviderWithNullPattern()
+    public void EditingPatternBeforeSelectingCategory_UsesTheEditedPatternInstead()
     {
         var provider = new FakeReviewQueueProvider(MakeData());
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
+        cut.Find("#txn-pattern-10").Change("PUBLIX SUPER MARKET");
+        cut.Find("#txn-category-10").Change("1");
 
+        Assert.Equal("PUBLIX SUPER MARKET", provider.LastPattern);
+    }
+
+    [Fact]
+    public void SelectingCategoryOnAmazonItemGroup_ImmediatelyCategorizesUsingTheDefaultPattern()
+    {
+        var provider = new FakeReviewQueueProvider(MakeData());
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
         cut.Find("#item-category-20").Change("1");
-        cut.Find("#item-categorize-20").Click();
 
-        Assert.Equal(20, provider.LastAmazonItemId);
+        Assert.Equal(20, provider.LastAmazonItemId); // the group's first (representative) item id
         Assert.Equal(1, provider.LastCategoryId);
-        Assert.Null(provider.LastPattern);
+        Assert.Equal("Qunol Ultra CoQ10", provider.LastPattern);
     }
 }

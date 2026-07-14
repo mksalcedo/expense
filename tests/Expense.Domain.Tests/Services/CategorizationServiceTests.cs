@@ -221,4 +221,43 @@ public class CategorizationServiceTests : DatabaseTestBase
         Assert.Null(unrelated.CategoryId);
         Assert.Equal(1, retroactiveCount);
     }
+
+    [Fact]
+    public async Task GetPendingTransactionGroupsAsync_GroupsRepeatedMerchantsIntoOneRow()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.AddRange(
+            new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 1), Description = "PUBLIX NORCROSS GA", Amount = -40m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow },
+            new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 5), Description = "PUBLIX NORCROSS GA", Amount = -22m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow },
+            new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 6), Description = "TRADER JOE S #123", Amount = -15m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingTransactionGroupsAsync(Context);
+
+        Assert.Equal(2, groups.Count);
+        var publix = groups.Single(g => g.SuggestedPattern == "PUBLIX NORCROSS GA");
+        Assert.Equal(2, publix.TransactionIds.Count);
+        Assert.Equal(-62m, publix.TotalAmount);
+        var traderJoes = groups.Single(g => g.SuggestedPattern == "TRADER JOE S");
+        Assert.Single(traderJoes.TransactionIds);
+    }
+
+    [Fact]
+    public async Task GetPendingAmazonItemGroupsAsync_GroupsByExactTitleIntoOneRow()
+    {
+        Context.AmazonOrderItems.AddRange(
+            new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 1), ItemTitle = "Qunol Ultra CoQ10", Price = 30m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow },
+            new AmazonOrderItem { OrderId = "2", OrderDate = new DateOnly(2026, 7, 5), ItemTitle = "Qunol Ultra CoQ10", Price = 32m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow },
+            new AmazonOrderItem { OrderId = "3", OrderDate = new DateOnly(2026, 7, 6), ItemTitle = "Random Kitchen Gadget", Price = 12m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingAmazonItemGroupsAsync(Context);
+
+        Assert.Equal(2, groups.Count);
+        var qunol = groups.Single(g => g.ItemTitle == "Qunol Ultra CoQ10");
+        Assert.Equal(2, qunol.ItemIds.Count);
+        Assert.Equal(62m, qunol.TotalPrice);
+        Assert.Equal("Qunol Ultra CoQ10", qunol.SuggestedPattern);
+    }
 }
