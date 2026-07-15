@@ -40,7 +40,7 @@ public class AccountManagementService
         context.Categories.Add(category);
         await context.SaveChangesAsync();
 
-        context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.AccountPayment });
+        context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.AccountPayment, AccountId = account.Id });
 
         var pattern = suggestedMerchantPattern ?? $"%{name.ToUpperInvariant()}%";
         context.MerchantRules.Add(new MerchantRule { MerchantPattern = pattern, CategoryId = category.Id });
@@ -71,6 +71,22 @@ public class AccountManagementService
     {
         var account = await context.Accounts.SingleAsync(a => a.Id == accountId);
         account.Name = name;
+        await SetPaymentFieldsAsync(context, account, minPayment, extraPayment, paymentDueDay, statementCloseDay);
+    }
+
+    /// <summary>Payment-fields-only save, for editing an AccountPayment category's linked account inline from Categories.razor - never touches the account's name.</summary>
+    public async Task UpdatePaymentFieldsAsync(
+        ExpenseDbContext context, int accountId,
+        decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay)
+    {
+        var account = await context.Accounts.SingleAsync(a => a.Id == accountId);
+        await SetPaymentFieldsAsync(context, account, minPayment, extraPayment, paymentDueDay, statementCloseDay);
+    }
+
+    private static async Task SetPaymentFieldsAsync(
+        ExpenseDbContext context, Account account,
+        decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay)
+    {
         account.MinPayment = minPayment;
         account.ExtraPayment = extraPayment;
         account.PaymentDueDay = paymentDueDay;

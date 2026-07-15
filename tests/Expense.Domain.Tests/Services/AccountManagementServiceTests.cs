@@ -26,6 +26,7 @@ public class AccountManagementServiceTests : DatabaseTestBase
         Assert.Equal(173m, account.MinPayment);
         Assert.True(category.IsActive);
         Assert.Equal(FundingStrategies.AccountPayment, fundingRule.Strategy);
+        Assert.Equal(account.Id, fundingRule.AccountId);
         Assert.Contains("DISCOVER", merchantRule.MerchantPattern.ToUpperInvariant());
     }
 
@@ -111,5 +112,19 @@ public class AccountManagementServiceTests : DatabaseTestBase
         var reloaded = await Context.Accounts.SingleAsync(a => a.Id == account.Id);
         Assert.Equal(24, reloaded.StatementCloseDay);
         Assert.Equal(1100m, reloaded.ExtraPayment);
+    }
+
+    [Fact]
+    public async Task UpdatePaymentFieldsAsync_UpdatesPaymentFieldsWithoutTouchingName()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "Discover", type: AccountType.Debt, minPayment: 173m);
+
+        await _sut.UpdatePaymentFieldsAsync(Context, account.Id, minPayment: 180m, extraPayment: 20m, paymentDueDay: 5, statementCloseDay: null);
+
+        var reloaded = await Context.Accounts.SingleAsync(a => a.Id == account.Id);
+        Assert.Equal("Discover", reloaded.Name);
+        Assert.Equal(180m, reloaded.MinPayment);
+        Assert.Equal(20m, reloaded.ExtraPayment);
+        Assert.Equal(5, reloaded.PaymentDueDay);
     }
 }

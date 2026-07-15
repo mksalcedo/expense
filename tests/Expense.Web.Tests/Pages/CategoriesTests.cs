@@ -16,11 +16,13 @@ public class CategoriesTests : BunitContext
         public string? LastCreatedName { get; private set; }
         public string? LastCreatedFundingStrategy { get; private set; }
         public BudgetInput? LastCreatedBudget { get; private set; }
+        public AccountPaymentInput? LastCreatedAccountPayment { get; private set; }
 
         public int? LastUpdatedId { get; private set; }
         public string? LastUpdatedName { get; private set; }
         public string? LastUpdatedFundingStrategy { get; private set; }
         public BudgetInput? LastUpdatedBudget { get; private set; }
+        public AccountPaymentInput? LastUpdatedAccountPayment { get; private set; }
 
         public int? LastDeactivatedId { get; private set; }
         public int? LastReactivatedId { get; private set; }
@@ -28,20 +30,22 @@ public class CategoriesTests : BunitContext
         public Task<CategoriesPageData> GetCategoriesAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new CategoriesPageData { Categories = Rows, Accounts = Accounts });
 
-        public Task CreateCategoryAsync(string name, string fundingStrategy, BudgetInput? budget = null, CancellationToken cancellationToken = default)
+        public Task CreateCategoryAsync(string name, string fundingStrategy, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default)
         {
             LastCreatedName = name;
             LastCreatedFundingStrategy = fundingStrategy;
             LastCreatedBudget = budget;
+            LastCreatedAccountPayment = accountPayment;
             return Task.CompletedTask;
         }
 
-        public Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, BudgetInput? budget = null, CancellationToken cancellationToken = default)
+        public Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default)
         {
             LastUpdatedId = categoryId;
             LastUpdatedName = name;
             LastUpdatedFundingStrategy = fundingStrategy;
             LastUpdatedBudget = budget;
+            LastUpdatedAccountPayment = accountPayment;
             return Task.CompletedTask;
         }
 
@@ -75,7 +79,18 @@ public class CategoriesTests : BunitContext
                 BudgetAmount = 2681.22m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense,
                 BudgetAnchor = new DateOnly(2026, 1, 4), BudgetAccountId = 10
             },
-            new CategoryRow { Id = 5, Name = "Discover Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment }
+            new CategoryRow
+            {
+                Id = 5, Name = "Discover Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment,
+                LinkedAccountId = 20, LinkedAccountType = AccountType.Debt, LinkedAccountMinPayment = 173m, LinkedAccountPaymentDueDay = 3
+            },
+            new CategoryRow
+            {
+                Id = 6, Name = "Amex Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment,
+                LinkedAccountId = 21, LinkedAccountType = AccountType.ActiveSpending, LinkedAccountExtraPayment = 1100m,
+                LinkedAccountPaymentDueDay = 20, LinkedAccountStatementCloseDay = 26
+            },
+            new CategoryRow { Id = 7, Name = "New Card Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment }
         ],
         Accounts = [new AccountOption { Id = 10, Name = "Wells Fargo Checking" }]
     };
@@ -274,7 +289,67 @@ public class CategoriesTests : BunitContext
         cut.Find("#category-row-5").Click(); // Discover Payment: account_payment
 
         Assert.Empty(cut.FindAll("#detail-amount"));
-        Assert.Contains("linked account", cut.Markup);
+    }
+
+    [Fact]
+    public void SelectingADebtAccountPaymentCategory_ShowsMinPaymentButNotStatementCloseDay()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-5").Click(); // Discover Payment: linked to a Debt account
+
+        Assert.Equal("173", cut.Find("#detail-min-payment").GetAttribute("value"));
+        Assert.Equal("3", cut.Find("#detail-payment-due-day").GetAttribute("value"));
+        Assert.Empty(cut.FindAll("#detail-statement-close-day"));
+    }
+
+    [Fact]
+    public void SelectingAnActiveSpendingAccountPaymentCategory_ShowsStatementCloseDayButNotMinPayment()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-6").Click(); // Amex Payment: linked to an ActiveSpending account
+
+        Assert.Equal("26", cut.Find("#detail-statement-close-day").GetAttribute("value"));
+        Assert.Equal("1100", cut.Find("#detail-extra-payment").GetAttribute("value"));
+        Assert.Empty(cut.FindAll("#detail-min-payment"));
+    }
+
+    [Fact]
+    public void SelectingAnAccountPaymentCategoryWithNoLinkedAccount_ShowsAFallbackMessage()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-7").Click(); // New Card Payment: no linked account yet
+
+        Assert.Empty(cut.FindAll("#detail-min-payment"));
+        Assert.Empty(cut.FindAll("#detail-extra-payment"));
+        Assert.Contains("no linked account", cut.Markup);
+    }
+
+    [Fact]
+    public void SavingADebtAccountPaymentCategory_PassesAccountPaymentInputNotBudgetInput()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-5").Click();
+        cut.Find("#detail-min-payment").Change("180");
+        cut.Find("#detail-payment-due-day").Change("5");
+        cut.Find("#detail-save").Click();
+
+        Assert.Null(provider.LastUpdatedBudget);
+        Assert.NotNull(provider.LastUpdatedAccountPayment);
+        Assert.Equal(180m, provider.LastUpdatedAccountPayment!.MinPayment);
+        Assert.Equal(5, provider.LastUpdatedAccountPayment.PaymentDueDay);
+        Assert.Null(provider.LastUpdatedAccountPayment.StatementCloseDay);
     }
 
     [Fact]

@@ -71,7 +71,43 @@ else
                 </div>
                 @if (_formFundingStrategy == FundingStrategies.AccountPayment)
                 {
-                    <p><em>This category's expected amount comes from its linked account's min/extra payment, set on the Accounts page - not entered here.</em></p>
+                    @if (_formLinkedAccountType is { } linkedType)
+                    {
+                        @if (linkedType == AccountType.Debt)
+                        {
+                            <div>
+                                <label>Min payment
+                                    <input id="detail-min-payment" type="number" step="0.01" value="@_formMinPayment"
+                                           @onchange="e => _formMinPayment = ParseNullableDecimal((string)e.Value!)" />
+                                </label>
+                            </div>
+                        }
+                        <div>
+                            <label>Extra payment
+                                <input id="detail-extra-payment" type="number" step="0.01" value="@_formExtraPayment"
+                                       @onchange="e => _formExtraPayment = ParseNullableDecimal((string)e.Value!)" />
+                            </label>
+                        </div>
+                        <div>
+                            <label>Payment due day
+                                <input id="detail-payment-due-day" type="number" value="@_formPaymentDueDay"
+                                       @onchange="e => _formPaymentDueDay = ParseNullableInt((string)e.Value!)" />
+                            </label>
+                        </div>
+                        @if (linkedType == AccountType.ActiveSpending)
+                        {
+                            <div>
+                                <label>Statement close day
+                                    <input id="detail-statement-close-day" type="number" value="@_formStatementCloseDay"
+                                           @onchange="e => _formStatementCloseDay = ParseNullableInt((string)e.Value!)" />
+                                </label>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <p><em>This category has no linked account yet - account payment categories are normally created automatically from the Accounts page.</em></p>
+                    }
                 }
                 @if (_formFundingStrategy == FundingStrategies.Direct)
                 {
@@ -161,10 +197,22 @@ else
     private DateOnly _formAnchor = DateOnly.FromDateTime(DateTime.Today);
     private int? _formAccountId;
 
+    private AccountType? _formLinkedAccountType;
+    private decimal? _formMinPayment;
+    private decimal? _formExtraPayment;
+    private int? _formPaymentDueDay;
+    private int? _formStatementCloseDay;
+
     protected override async Task OnInitializedAsync()
     {
         _data = await CategoriesProvider.GetCategoriesAsync();
     }
+
+    private static decimal? ParseNullableDecimal(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : decimal.Parse(value);
+
+    private static int? ParseNullableInt(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : int.Parse(value);
 
     private static string FundingStrategyLabel(string strategy) => strategy switch
     {
@@ -214,6 +262,11 @@ else
         _formFrequency = Frequency.Monthly;
         _formAnchor = DateOnly.FromDateTime(DateTime.Today);
         _formAccountId = null;
+        _formLinkedAccountType = null;
+        _formMinPayment = null;
+        _formExtraPayment = null;
+        _formPaymentDueDay = null;
+        _formStatementCloseDay = null;
     }
 
     private Task SelectAsync(CategoryRow category)
@@ -228,6 +281,11 @@ else
         _formFrequency = category.BudgetFrequency ?? Frequency.Monthly;
         _formAnchor = category.BudgetAnchor ?? DateOnly.FromDateTime(DateTime.Today);
         _formAccountId = category.BudgetAccountId;
+        _formLinkedAccountType = category.LinkedAccountType;
+        _formMinPayment = category.LinkedAccountMinPayment;
+        _formExtraPayment = category.LinkedAccountExtraPayment;
+        _formPaymentDueDay = category.LinkedAccountPaymentDueDay;
+        _formStatementCloseDay = category.LinkedAccountStatementCloseDay;
         return Task.CompletedTask;
     }
 
@@ -244,13 +302,17 @@ else
             _ => null
         };
 
+        AccountPaymentInput? accountPayment = _formFundingStrategy == FundingStrategies.AccountPayment && _formLinkedAccountType is not null
+            ? new AccountPaymentInput(_formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay)
+            : null;
+
         if (_mode == DetailMode.Creating)
         {
-            await CategoriesProvider.CreateCategoryAsync(_formName, _formFundingStrategy, budget);
+            await CategoriesProvider.CreateCategoryAsync(_formName, _formFundingStrategy, budget, accountPayment);
         }
         else if (_selectedId is { } id)
         {
-            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formFundingStrategy, budget);
+            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formFundingStrategy, budget, accountPayment);
         }
 
         _mode = DetailMode.None;

@@ -10,4 +10,9 @@ public class FundingRule
     public int CategoryId { get; set; }
     public Category Category { get; set; } = null!;
     public required string Strategy { get; set; }
+
+    // Only set for AccountPayment-strategy categories - which Account this category's
+    // payment fields (MinPayment/ExtraPayment/etc.) are edited on.
+    public int? AccountId { get; set; }
+    public Account? Account { get; set; }
 }

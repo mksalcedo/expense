@@ -12,6 +12,7 @@ public class FundingRuleConfiguration : IEntityTypeConfiguration<FundingRule>
         builder.HasKey(r => r.Id);
         builder.Property(r => r.Strategy).IsRequired().HasMaxLength(50);
         builder.HasOne(r => r.Category).WithMany().HasForeignKey(r => r.CategoryId);
+        builder.HasOne(r => r.Account).WithMany().HasForeignKey(r => r.AccountId);
         builder.HasIndex(r => r.CategoryId).IsUnique();
     }
 }

@@ -53,4 +53,41 @@ public class FundingRuleTests : DatabaseTestBase
         Assert.Contains(restaurants.Id, amexFundedCategoryIds);
         Assert.DoesNotContain(amexPayment.Id, amexFundedCategoryIds);
     }
+
+    [Fact]
+    public async Task FundingRule_ForAnAccountPaymentCategory_LinksToItsAccount()
+    {
+        var discover = new Account { Name = "Discover", Type = AccountType.Debt };
+        Context.Accounts.Add(discover);
+        await Context.SaveChangesAsync();
+
+        var category = new Category { Name = "Discover Payment" };
+        Context.Categories.Add(category);
+        await Context.SaveChangesAsync();
+
+        var rule = new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.AccountPayment, AccountId = discover.Id };
+        Context.FundingRules.Add(rule);
+        await Context.SaveChangesAsync();
+
+        await using var reloadContext = CreateContextInSameTransaction();
+        var reloaded = await reloadContext.FundingRules.Include(r => r.Account).SingleAsync(r => r.Id == rule.Id);
+
+        Assert.Equal("Discover", reloaded.Account!.Name);
+    }
+
+    [Fact]
+    public async Task FundingRule_ForAnOrdinaryCategory_HasNoLinkedAccount()
+    {
+        var category = new Category { Name = "Groceries" };
+        Context.Categories.Add(category);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.PayInFullAmex });
+        await Context.SaveChangesAsync();
+
+        await using var reloadContext = CreateContextInSameTransaction();
+        var reloaded = await reloadContext.FundingRules.SingleAsync(r => r.CategoryId == category.Id);
+
+        Assert.Null(reloaded.AccountId);
+    }
 }
