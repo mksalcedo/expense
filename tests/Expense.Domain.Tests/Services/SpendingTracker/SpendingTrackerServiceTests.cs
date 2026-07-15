@@ -116,6 +116,27 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task UncategorizedIncomeTransactions_AreExcludedFromPending_ThisIsSpendOnly()
+    {
+        // An uncategorized paycheck deposit (or any positive-amount transaction) isn't
+        // "spend that hasn't been sorted yet" - it's income, and doesn't belong here at all.
+        await CreateGroceriesAsync();
+        var checking = new Account { Name = "Wells Fargo Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 14), PostedDate = new DateOnly(2026, 7, 14),
+            Description = "EFX PAYROLL DEPOSIT", Amount = 4588.87m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        Assert.Equal(0m, result.PendingAmount);
+    }
+
+    [Fact]
     public async Task AmazonMerchantBankRow_IsExcludedFromCategoryTotals_OnlyTheItemLevelDataCounts()
     {
         var groceries = await CreateGroceriesAsync();

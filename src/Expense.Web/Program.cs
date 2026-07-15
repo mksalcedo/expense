@@ -5,6 +5,7 @@ using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Forecast;
 using Expense.Domain.Services.OneTimeEvents;
+using Expense.Domain.Services.SpendingTracker;
 using Expense.Domain.Settings;
 using Expense.Web.Components;
 using Microsoft.EntityFrameworkCore;
@@ -43,6 +44,9 @@ builder.Services.AddScoped<IAccountsPageProvider, AccountsPageProvider>();
 
 builder.Services.AddScoped<OneTimeEventManagementService>();
 builder.Services.AddScoped<IOneTimeEventsPageProvider, OneTimeEventsPageProvider>();
+
+builder.Services.AddScoped<SpendingTrackerService>();
+builder.Services.AddScoped<ISpendingTrackerPageProvider, SpendingTrackerPageProvider>();
 
 var app = builder.Build();
 

@@ -1,0 +1,60 @@
+@page "/spending-tracker"
+@using Expense.Domain.Services.SpendingTracker
+@inject ISpendingTrackerPageProvider SpendingTrackerProvider
+
+<PageTitle>Spending Tracker</PageTitle>
+
+<h1>Spending Tracker</h1>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div style="display:flex; gap:3rem; align-items:flex-start;">
+        @RenderPeriod("This Week", _data.Week)
+        @RenderPeriod("This Month", _data.Month)
+    </div>
+}
+
+@code {
+    private SpendingTrackerPageData? _data;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
+    }
+
+    private RenderFragment RenderPeriod(string title, SpendingTrackerResult result) => @<div>
+        <h2>@title</h2>
+        <p>@result.PeriodStart.ToString("yyyy-MM-dd") to @result.PeriodEnd.ToString("yyyy-MM-dd")</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Budget</th>
+                    <th>Actual</th>
+                    <th>Remaining</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var category in result.Categories)
+                {
+                    <tr>
+                        <td>@category.CategoryName</td>
+                        <td>@category.Budget.ToString("N2")</td>
+                        <td>@category.Actual.ToString("N2")</td>
+                        <td>@category.Remaining.ToString("N2")</td>
+                    </tr>
+                }
+                <tr>
+                    <td>Pending / Uncategorized</td>
+                    <td></td>
+                    <td>@result.PendingAmount.ToString("N2")</td>
+                    <td></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>;
+}

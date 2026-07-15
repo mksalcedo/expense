@@ -11,6 +11,10 @@ namespace Expense.Domain.Services.SpendingTracker;
 /// categories are fixed bills/income, AccountPayment categories are paydown-only debt).
 /// No carryover in either direction: Remaining = this period's prorated budget minus
 /// this period's actual spend, full stop - see design-summary.md.
+///
+/// PendingAmount is spend only (negative-amount transactions) - real checking activity
+/// includes plenty of legitimately-uncategorized non-spend rows (paycheck deposits, etc.),
+/// and this view is specifically about "have I sorted all my spending into a category yet."
 /// </summary>
 public class SpendingTrackerService(BudgetProrationService proration)
 {
@@ -79,7 +83,7 @@ public class SpendingTrackerService(BudgetProrationService proration)
         }).ToList();
 
         var pendingBank = await context.BankTransactions
-            .Where(t => !t.IsAmazonMerchant && t.CategoryId == null
+            .Where(t => !t.IsAmazonMerchant && t.CategoryId == null && t.Amount < 0
                         && t.PostedDate != null && t.PostedDate >= periodStart && t.PostedDate <= periodEnd)
             .SumAsync(t => (decimal?)t.Amount, cancellationToken) ?? 0m;
 
