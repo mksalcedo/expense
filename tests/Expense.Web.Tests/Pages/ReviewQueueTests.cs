@@ -8,20 +8,30 @@ namespace Expense.Web.Tests.Pages;
 
 public class ReviewQueueTests : BunitContext
 {
-    private class FakeReviewQueueProvider(ReviewQueueData data) : IReviewQueueProvider
+    // Stateful fake: CategorizeTransactionAsync/CategorizeAmazonItemAsync actually
+    // remove the resolved group from the data, mirroring what the real backend does -
+    // needed to reproduce the "stale dropdown state leaks onto a different remaining
+    // row" bug, which only shows up when the list actually shrinks between renders.
+    private class FakeReviewQueueProvider : IReviewQueueProvider
     {
+        public List<PendingTransactionGroup> TransactionGroups { get; set; } = [];
+        public List<PendingAmazonItemGroup> AmazonItemGroups { get; set; } = [];
+        public List<Category> Categories { get; set; } = [];
+
         public int? LastTransactionId { get; private set; }
         public int? LastAmazonItemId { get; private set; }
         public int? LastCategoryId { get; private set; }
         public string? LastPattern { get; private set; }
 
-        public Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
+        public Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ReviewQueueData { TransactionGroups = TransactionGroups, AmazonItemGroups = AmazonItemGroups, Categories = Categories });
 
         public Task<int> CategorizeTransactionAsync(int transactionId, int categoryId, string? merchantPatternToCreate, CancellationToken cancellationToken = default)
         {
             LastTransactionId = transactionId;
             LastCategoryId = categoryId;
             LastPattern = merchantPatternToCreate;
+            TransactionGroups = TransactionGroups.Where(g => !g.TransactionIds.Contains(transactionId)).ToList();
             return Task.FromResult(0);
         }
 
@@ -30,13 +40,14 @@ public class ReviewQueueTests : BunitContext
             LastAmazonItemId = itemId;
             LastCategoryId = categoryId;
             LastPattern = productPatternToCreate;
+            AmazonItemGroups = AmazonItemGroups.Where(g => !g.ItemIds.Contains(itemId)).ToList();
             return Task.FromResult(0);
         }
     }
 
-    private static ReviewQueueData MakeData() => new()
+    private static FakeReviewQueueProvider MakeProvider() => new()
     {
-        Categories = [new Category { Id = 1, Name = "Groceries", IsBudgeted = true }],
+        Categories = [new Category { Id = 1, Name = "Groceries", IsBudgeted = true }, new Category { Id = 2, Name = "Restaurants", IsBudgeted = true }],
         TransactionGroups =
         [
             new PendingTransactionGroup
@@ -58,7 +69,7 @@ public class ReviewQueueTests : BunitContext
     [Fact]
     public void ReviewQueue_RendersGroupedRowsWithCountsAndPrefilledPattern()
     {
-        var provider = new FakeReviewQueueProvider(MakeData());
+        var provider = MakeProvider();
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
@@ -73,7 +84,7 @@ public class ReviewQueueTests : BunitContext
     [Fact]
     public void SelectingCategoryOnTransactionGroup_ImmediatelyCategorizesUsingTheDefaultPattern_NoExtraClick()
     {
-        var provider = new FakeReviewQueueProvider(MakeData());
+        var provider = MakeProvider();
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
@@ -87,7 +98,7 @@ public class ReviewQueueTests : BunitContext
     [Fact]
     public void EditingPatternBeforeSelectingCategory_UsesTheEditedPatternInstead()
     {
-        var provider = new FakeReviewQueueProvider(MakeData());
+        var provider = MakeProvider();
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
@@ -100,7 +111,7 @@ public class ReviewQueueTests : BunitContext
     [Fact]
     public void SelectingCategoryOnAmazonItemGroup_ImmediatelyCategorizesUsingTheDefaultPattern()
     {
-        var provider = new FakeReviewQueueProvider(MakeData());
+        var provider = MakeProvider();
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
@@ -110,4 +121,12 @@ public class ReviewQueueTests : BunitContext
         Assert.Equal(1, provider.LastCategoryId);
         Assert.Equal("Qunol Ultra CoQ10", provider.LastPattern);
     }
+
+    // Note: a real bug was found here in manual browser testing - categorizing one group
+    // could make a *different*, unrelated group's dropdown visually show the same category,
+    // because Blazor was reusing DOM elements by list position rather than identity when a
+    // group got removed. Fixed with @key in ReviewQueue.razor. No automated test for this
+    // is included: bUnit's headless rendering doesn't reproduce the underlying issue (a live
+    // browser's <select> retaining its own selected-option state across a partial DOM patch)
+    // - the same test passed whether @key was present or not, so it verified nothing.
 }

@@ -24,10 +24,16 @@ else
             </tr>
         </thead>
         <tbody>
+            @* @key is required here: without it, categorizing one group removes it from the
+               list, and the remaining rows shift up - Blazor then reuses the removed row's
+               DOM <select> (with whatever category the user had just picked still "selected"
+               in the live browser) for whichever group now occupies that position, making it
+               look like that group's category silently changed. Keying by representativeId
+               makes Blazor track each row by its real identity instead of its position. *@
             @foreach (var group in _data.TransactionGroups)
             {
                 var representativeId = group.TransactionIds[0];
-                <tr>
+                <tr @key="representativeId">
                     <td>@group.TransactionIds.Count</td>
                     <td>@group.SampleDescription</td>
                     <td>@group.TotalAmount.ToString("N2")</td>
@@ -62,10 +68,11 @@ else
             </tr>
         </thead>
         <tbody>
+            @* Same @key reasoning as the transactions table above. *@
             @foreach (var group in _data.AmazonItemGroups)
             {
                 var representativeId = group.ItemIds[0];
-                <tr>
+                <tr @key="representativeId">
                     <td>@group.ItemIds.Count</td>
                     <td>@group.ItemTitle</td>
                     <td>@group.TotalPrice.ToString("N2")</td>
