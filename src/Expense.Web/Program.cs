@@ -33,6 +33,9 @@ builder.Services.AddScoped<IReviewQueueProvider, ReviewQueueProvider>();
 builder.Services.AddScoped<CategoryManagementService>();
 builder.Services.AddScoped<ICategoriesPageProvider, CategoriesPageProvider>();
 
+builder.Services.AddScoped<BudgetManagementService>();
+builder.Services.AddScoped<IBudgetsPageProvider, BudgetsPageProvider>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

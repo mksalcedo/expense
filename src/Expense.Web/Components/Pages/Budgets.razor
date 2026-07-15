@@ -1,0 +1,79 @@
+@page "/budgets"
+@using Expense.Domain.Entities
+@using Expense.Domain.Services.Budgets
+@inject IBudgetsPageProvider BudgetsProvider
+
+<PageTitle>Budgets</PageTitle>
+
+<h1>Budgets</h1>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th>Amount</th>
+                <th>Frequency</th>
+                <th>Monthly equivalent</th>
+                <th>As of</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in _data.Budgets)
+            {
+                <tr @key="row.CategoryId">
+                    <td>@row.CategoryName</td>
+                    <td>
+                        <input id="budget-amount-@row.CategoryId" type="number" step="0.01"
+                               value="@(Amount(row.CategoryId)?.ToString() ?? "")"
+                               @onchange="e => SaveAsync(row.CategoryId, decimal.Parse((string)e.Value!), FrequencyValue(row.CategoryId))" />
+                    </td>
+                    <td>
+                        <select id="budget-frequency-@row.CategoryId"
+                                @onchange="e => SaveAsync(row.CategoryId, Amount(row.CategoryId) ?? 0m, Enum.Parse<Frequency>((string)e.Value!))">
+                            @foreach (var frequency in Enum.GetValues<Frequency>())
+                            {
+                                <option value="@frequency" selected="@(FrequencyValue(row.CategoryId) == frequency)">@frequency</option>
+                            }
+                        </select>
+                    </td>
+                    <td>@(row.MonthlyEquivalent?.ToString("N2") ?? "-")</td>
+                    <td>@(row.EffectiveFrom?.ToString("yyyy-MM-dd") ?? "-")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private BudgetsPageData? _data;
+    private readonly Dictionary<int, decimal?> _amounts = [];
+    private readonly Dictionary<int, Frequency> _frequencies = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _data = await BudgetsProvider.GetBudgetsAsync();
+        foreach (var row in _data.Budgets)
+        {
+            _amounts[row.CategoryId] = row.Amount;
+            _frequencies[row.CategoryId] = row.Frequency ?? Frequency.Weekly;
+        }
+    }
+
+    private decimal? Amount(int categoryId) => _amounts.GetValueOrDefault(categoryId);
+
+    private Frequency FrequencyValue(int categoryId) => _frequencies.GetValueOrDefault(categoryId, Frequency.Weekly);
+
+    private async Task SaveAsync(int categoryId, decimal amount, Frequency frequency)
+    {
+        _amounts[categoryId] = amount;
+        _frequencies[categoryId] = frequency;
+        await BudgetsProvider.SetBudgetAsync(categoryId, amount, frequency);
+        _data = await BudgetsProvider.GetBudgetsAsync();
+    }
+}

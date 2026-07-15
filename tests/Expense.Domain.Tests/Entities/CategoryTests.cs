@@ -22,6 +22,23 @@ public class CategoryTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task Category_InsertedViaRawSqlWithNoExplicitIsActive_DefaultsToActiveAtTheDatabaseLevel()
+    {
+        // Regression guard: the C# object initializer's `= true` only applies when EF
+        // constructs the object in memory - it does NOT become the database column's
+        // own default. A prior migration used `defaultValue: false` (the raw CLR bool
+        // default) instead of true, which silently flipped every existing category to
+        // inactive when applied to the real database. This test bypasses the C# object
+        // initializer entirely (raw SQL, exactly what happens to a pre-existing row when
+        // a new column is added) so it actually exercises the column-level default.
+        await Context.Database.ExecuteSqlRawAsync(
+            "INSERT INTO categories (name, is_budgeted) VALUES ('Raw Insert Test', true)");
+
+        var reloaded = await Context.Categories.SingleAsync(c => c.Name == "Raw Insert Test");
+        Assert.True(reloaded.IsActive);
+    }
+
+    [Fact]
     public async Task Category_NameMustBeUnique()
     {
         Context.Categories.Add(new Category { Name = "Restaurants", IsBudgeted = true });
