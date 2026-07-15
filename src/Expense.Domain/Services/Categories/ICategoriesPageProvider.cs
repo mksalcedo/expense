@@ -5,9 +5,9 @@ public interface ICategoriesPageProvider
 {
     Task<CategoriesPageData> GetCategoriesAsync(CancellationToken cancellationToken = default);
 
-    Task CreateCategoryAsync(string name, bool isBudgeted, string fundingStrategy, CancellationToken cancellationToken = default);
+    Task CreateCategoryAsync(string name, string fundingStrategy, DirectBudgetInput? directBudget = null, CancellationToken cancellationToken = default);
 
-    Task UpdateCategoryAsync(int categoryId, string name, bool isBudgeted, string fundingStrategy, CancellationToken cancellationToken = default);
+    Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, DirectBudgetInput? directBudget = null, CancellationToken cancellationToken = default);
 
     Task DeactivateCategoryAsync(int categoryId, CancellationToken cancellationToken = default);
 

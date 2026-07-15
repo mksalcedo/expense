@@ -9,7 +9,7 @@ public class BudgetPeriodTests : DatabaseTestBase
     [Fact]
     public async Task BudgetPeriod_SavedAndReloaded_RoundTripsCorrectly()
     {
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
+        var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 
@@ -35,8 +35,8 @@ public class BudgetPeriodTests : DatabaseTestBase
     [Fact]
     public async Task DifferentCategories_CanUseDifferentFrequencies()
     {
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
-        var gas = new Category { Name = "Gas", IsBudgeted = true };
+        var groceries = new Category { Name = "Groceries" };
+        var gas = new Category { Name = "Gas" };
         Context.Categories.AddRange(groceries, gas);
         await Context.SaveChangesAsync();
 
@@ -57,7 +57,7 @@ public class BudgetPeriodTests : DatabaseTestBase
     [Fact]
     public async Task HistoricalReport_FindsTheBudgetAmountInEffectAtASpecificDate()
     {
-        var supplements = new Category { Name = "Supplements", IsBudgeted = true };
+        var supplements = new Category { Name = "Supplements" };
         Context.Categories.Add(supplements);
         await Context.SaveChangesAsync();
 
@@ -77,5 +77,53 @@ public class BudgetPeriodTests : DatabaseTestBase
             .SingleAsync();
 
         Assert.Equal(130m, inEffect.Amount);
+    }
+
+    [Fact]
+    public async Task BudgetPeriod_WithDirectionAnchorAndAccount_RoundTripsCorrectly()
+    {
+        var account = new Account { Name = "Wells Fargo Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(account);
+        await Context.SaveChangesAsync();
+
+        var mortgage = new Category { Name = "Truist Mortgage" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+
+        var period = new BudgetPeriod
+        {
+            CategoryId = mortgage.Id,
+            Amount = 2681.22m,
+            Frequency = Frequency.Monthly,
+            Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 1, 4),
+            AccountId = account.Id,
+            EffectiveFrom = new DateOnly(2026, 1, 1)
+        };
+        Context.BudgetPeriods.Add(period);
+        await Context.SaveChangesAsync();
+
+        await using var reloadContext = CreateContextInSameTransaction();
+        var reloaded = await reloadContext.BudgetPeriods.SingleAsync(p => p.Id == period.Id);
+
+        Assert.Equal(Direction.Expense, reloaded.Direction);
+        Assert.Equal(new DateOnly(2026, 1, 4), reloaded.Anchor);
+        Assert.Equal(account.Id, reloaded.AccountId);
+    }
+
+    [Fact]
+    public async Task BudgetPeriod_InsertedViaRawSqlWithNoExplicitDirection_DefaultsToExpenseAtTheDatabaseLevel()
+    {
+        // Regression guard for the exact class of bug hit with Category.IsActive: verify
+        // the DATABASE column's own default, not just the C# object initializer's.
+        var category = new Category { Name = "Raw Insert Category" };
+        Context.Categories.Add(category);
+        await Context.SaveChangesAsync();
+
+        await Context.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO budget_periods (category_id, amount, frequency, effective_from) VALUES ({category.Id}, 100, 'Monthly', '2026-01-01')");
+
+        var reloaded = await Context.BudgetPeriods.SingleAsync(p => p.CategoryId == category.Id);
+        Assert.Equal(Direction.Expense, reloaded.Direction);
     }
 }

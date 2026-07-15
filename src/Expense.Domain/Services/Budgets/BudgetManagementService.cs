@@ -13,7 +13,8 @@ namespace Expense.Domain.Services.Budgets;
 /// </summary>
 public class BudgetManagementService
 {
-    public async Task SetBudgetAsync(ExpenseDbContext context, int categoryId, decimal amount, Frequency frequency, DateOnly effectiveFrom)
+    public async Task SetBudgetAsync(ExpenseDbContext context, int categoryId, decimal amount, Frequency frequency, DateOnly effectiveFrom,
+        Direction direction = Direction.Expense, DateOnly? anchor = null, int? accountId = null)
     {
         var currentPeriod = await context.BudgetPeriods
             .SingleOrDefaultAsync(p => p.CategoryId == categoryId && p.EffectiveThrough == null);
@@ -28,6 +29,9 @@ public class BudgetManagementService
             CategoryId = categoryId,
             Amount = amount,
             Frequency = frequency,
+            Direction = direction,
+            Anchor = anchor,
+            AccountId = accountId,
             EffectiveFrom = effectiveFrom,
             EffectiveThrough = null
         });

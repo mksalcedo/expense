@@ -11,36 +11,37 @@ public class CategoriesTests : BunitContext
     private class FakeCategoriesPageProvider : ICategoriesPageProvider
     {
         public List<CategoryRow> Rows { get; set; } = [];
+        public List<AccountOption> Accounts { get; set; } = [];
 
         public string? LastCreatedName { get; private set; }
-        public bool? LastCreatedIsBudgeted { get; private set; }
         public string? LastCreatedFundingStrategy { get; private set; }
+        public DirectBudgetInput? LastCreatedDirectBudget { get; private set; }
 
         public int? LastUpdatedId { get; private set; }
         public string? LastUpdatedName { get; private set; }
-        public bool? LastUpdatedIsBudgeted { get; private set; }
         public string? LastUpdatedFundingStrategy { get; private set; }
+        public DirectBudgetInput? LastUpdatedDirectBudget { get; private set; }
 
         public int? LastDeactivatedId { get; private set; }
         public int? LastReactivatedId { get; private set; }
 
         public Task<CategoriesPageData> GetCategoriesAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new CategoriesPageData { Categories = Rows });
+            Task.FromResult(new CategoriesPageData { Categories = Rows, Accounts = Accounts });
 
-        public Task CreateCategoryAsync(string name, bool isBudgeted, string fundingStrategy, CancellationToken cancellationToken = default)
+        public Task CreateCategoryAsync(string name, string fundingStrategy, DirectBudgetInput? directBudget = null, CancellationToken cancellationToken = default)
         {
             LastCreatedName = name;
-            LastCreatedIsBudgeted = isBudgeted;
             LastCreatedFundingStrategy = fundingStrategy;
+            LastCreatedDirectBudget = directBudget;
             return Task.CompletedTask;
         }
 
-        public Task UpdateCategoryAsync(int categoryId, string name, bool isBudgeted, string fundingStrategy, CancellationToken cancellationToken = default)
+        public Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, DirectBudgetInput? directBudget = null, CancellationToken cancellationToken = default)
         {
             LastUpdatedId = categoryId;
             LastUpdatedName = name;
-            LastUpdatedIsBudgeted = isBudgeted;
             LastUpdatedFundingStrategy = fundingStrategy;
+            LastUpdatedDirectBudget = directBudget;
             return Task.CompletedTask;
         }
 
@@ -61,10 +62,18 @@ public class CategoriesTests : BunitContext
     {
         Rows =
         [
-            new CategoryRow { Id = 1, Name = "Groceries", IsBudgeted = true, IsActive = true, FundingStrategy = FundingStrategies.PayInFullAmex },
-            new CategoryRow { Id = 2, Name = "Off-Budget/Misc", IsBudgeted = false, IsActive = true, FundingStrategy = FundingStrategies.None },
-            new CategoryRow { Id = 3, Name = "Discontinued Thing", IsBudgeted = false, IsActive = false, FundingStrategy = FundingStrategies.None }
-        ]
+            new CategoryRow { Id = 1, Name = "Groceries", IsActive = true, FundingStrategy = FundingStrategies.PayInFullAmex },
+            new CategoryRow { Id = 2, Name = "Off-Budget/Misc", IsActive = true, FundingStrategy = FundingStrategies.None },
+            new CategoryRow { Id = 3, Name = "Discontinued Thing", IsActive = false, FundingStrategy = FundingStrategies.None },
+            new CategoryRow
+            {
+                Id = 4, Name = "Truist Mortgage", IsActive = true, FundingStrategy = FundingStrategies.Direct,
+                BudgetAmount = 2681.22m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense,
+                BudgetAnchor = new DateOnly(2026, 1, 4), BudgetAccountId = 10
+            },
+            new CategoryRow { Id = 5, Name = "Discover Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment }
+        ],
+        Accounts = [new AccountOption { Id = 10, Name = "Wells Fargo Checking" }]
     };
 
     [Fact]
@@ -90,26 +99,24 @@ public class CategoriesTests : BunitContext
         cut.Find("#category-row-1").Click();
 
         Assert.Equal("Groceries", cut.Find("#detail-name").GetAttribute("value"));
-        Assert.NotNull(cut.Find("#detail-budgeted").GetAttribute("checked"));
-        Assert.NotNull(cut.Find("#detail-funding").GetAttribute("checked")); // Groceries is pay-in-full-amex
+        Assert.Equal(FundingStrategies.PayInFullAmex,
+            cut.Find("#detail-funding-strategy option[selected]").GetAttribute("value"));
     }
 
     [Fact]
-    public void EditingAndSaving_CallsUpdateWithAllThreeFieldsTogether()
+    public void EditingAndSaving_CallsUpdateWithNameAndFundingStrategyTogether()
     {
         var provider = MakeProvider();
         Services.AddSingleton<ICategoriesPageProvider>(provider);
 
         var cut = Render<Categories>();
-        cut.Find("#category-row-2").Click(); // Off-Budget/Misc: not budgeted, not funded
+        cut.Find("#category-row-2").Click(); // Off-Budget/Misc: not funded
         cut.Find("#detail-name").Change("Off-Budget & Misc");
-        cut.Find("#detail-budgeted").Change(true);
-        cut.Find("#detail-funding").Change(true);
+        cut.Find("#detail-funding-strategy").Change(FundingStrategies.PayInFullAmex);
         cut.Find("#detail-save").Click();
 
         Assert.Equal(2, provider.LastUpdatedId);
         Assert.Equal("Off-Budget & Misc", provider.LastUpdatedName);
-        Assert.True(provider.LastUpdatedIsBudgeted);
         Assert.Equal(FundingStrategies.PayInFullAmex, provider.LastUpdatedFundingStrategy);
     }
 
@@ -122,12 +129,10 @@ public class CategoriesTests : BunitContext
         var cut = Render<Categories>();
         cut.Find("#new-category-button").Click();
         cut.Find("#detail-name").Change("Home Improvement");
-        cut.Find("#detail-budgeted").Change(true);
         cut.Find("#detail-save").Click();
 
         Assert.Equal("Home Improvement", provider.LastCreatedName);
-        Assert.True(provider.LastCreatedIsBudgeted);
-        Assert.Equal(FundingStrategies.None, provider.LastCreatedFundingStrategy); // checkbox left unchecked
+        Assert.Equal(FundingStrategies.None, provider.LastCreatedFundingStrategy); // left at default
     }
 
     [Fact]
@@ -167,5 +172,91 @@ public class CategoriesTests : BunitContext
 
         Assert.Contains("Groceries", cut.Markup);
         Assert.DoesNotContain("Off-Budget/Misc", cut.Markup);
+    }
+
+    [Fact]
+    public void SelectingANonDirectCategory_HidesTheDirectBudgetFields()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click(); // Groceries: pay-in-full-amex, not Direct
+
+        Assert.Empty(cut.FindAll("#detail-amount"));
+    }
+
+    [Fact]
+    public void SelectingADirectCategory_PopulatesTheDirectBudgetFields()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-4").Click(); // Truist Mortgage: Direct
+
+        Assert.Equal("2681.22", cut.Find("#detail-amount").GetAttribute("value"));
+        Assert.Equal("2026-01-04", cut.Find("#detail-anchor").GetAttribute("value"));
+        Assert.Equal("10", cut.Find("#detail-account option[selected]").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void SavingADirectCategory_PassesAllFiveBudgetFieldsTogether()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-4").Click();
+        cut.Find("#detail-amount").Change("2750.00");
+        cut.Find("#detail-save").Click();
+
+        Assert.Equal(4, provider.LastUpdatedId);
+        Assert.NotNull(provider.LastUpdatedDirectBudget);
+        Assert.Equal(2750.00m, provider.LastUpdatedDirectBudget!.Amount);
+        Assert.Equal(Frequency.Monthly, provider.LastUpdatedDirectBudget.Frequency);
+        Assert.Equal(Direction.Expense, provider.LastUpdatedDirectBudget.Direction);
+        Assert.Equal(new DateOnly(2026, 1, 4), provider.LastUpdatedDirectBudget.Anchor);
+        Assert.Equal(10, provider.LastUpdatedDirectBudget.AccountId);
+    }
+
+    [Fact]
+    public void SavingANonDirectCategory_PassesNoBudgetInput()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click();
+        cut.Find("#detail-save").Click();
+
+        Assert.Null(provider.LastUpdatedDirectBudget);
+    }
+
+    [Fact]
+    public void SelectingAnAccountPaymentCategory_ShowsNoEditableAmountField()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-5").Click(); // Discover Payment: account_payment
+
+        Assert.Empty(cut.FindAll("#detail-amount"));
+        Assert.Contains("linked account", cut.Markup);
+    }
+
+    [Fact]
+    public void ChoosingDirectStrategyOnANewCategory_ShowsTheBudgetFieldsForEntry()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#new-category-button").Click();
+        cut.Find("#detail-funding-strategy").Change(FundingStrategies.Direct);
+
+        Assert.NotNull(cut.Find("#detail-amount"));
+        Assert.NotNull(cut.Find("#detail-account"));
     }
 }

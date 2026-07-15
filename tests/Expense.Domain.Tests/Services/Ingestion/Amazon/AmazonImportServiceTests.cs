@@ -30,7 +30,7 @@ public class AmazonImportServiceTests : DatabaseTestBase
     [Fact]
     public async Task ImportOrder_NewOrder_AddsItemsAndAppliesProductMatch()
     {
-        var supplements = new Category { Name = "Supplements", IsBudgeted = true };
+        var supplements = new Category { Name = "Supplements" };
         Context.Categories.Add(supplements);
         await Context.SaveChangesAsync();
         Context.Products.Add(new Product { ProductPattern = "%QUNOL%", CategoryId = supplements.Id });

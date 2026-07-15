@@ -1,10 +1,9 @@
 namespace Expense.Domain.Entities;
 
 /// <summary>
-/// Income (paychecks, SS, pension) and genuinely fixed bills (mortgage, internet,
-/// power, insurance) only - deliberately does NOT cover the Variable Spending Budget
-/// line (computed from BudgetPeriod at generation time) or any debt payment including
-/// Amex (computed from Account.MinPayment/ExtraPayment plus actual cycle charges).
+/// Plain in-memory DTO consumed by RecurrenceExpander - not an EF entity/table. Built at
+/// forecast-generation time from Category + BudgetPeriod (FundingRule.Strategy == Direct)
+/// and, for debt accounts, synthesized directly in ForecastEngine.
 /// </summary>
 public class RecurringRule
 {

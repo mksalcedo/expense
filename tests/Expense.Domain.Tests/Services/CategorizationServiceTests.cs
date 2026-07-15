@@ -16,7 +16,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     public async Task Transaction_MatchingAMerchantRule_GetsCategorizedOnImport()
     {
         var account = await CreateAccountAsync();
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
+        var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
         Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "%INGLES%", CategoryId = groceries.Id });
@@ -56,7 +56,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     public async Task AmazonMerchantTransaction_NeverGetsCategorized_EvenIfAPatternWouldMatch()
     {
         var account = await CreateAccountAsync();
-        var misc = new Category { Name = "Off-Budget/Misc", IsBudgeted = false };
+        var misc = new Category { Name = "Off-Budget/Misc" };
         Context.Categories.Add(misc);
         await Context.SaveChangesAsync();
         Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "%AMAZON%", CategoryId = misc.Id });
@@ -78,7 +78,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     public async Task MerchantRuleMatching_IsCaseInsensitive()
     {
         var account = await CreateAccountAsync();
-        var restaurants = new Category { Name = "Restaurants", IsBudgeted = true };
+        var restaurants = new Category { Name = "Restaurants" };
         Context.Categories.Add(restaurants);
         await Context.SaveChangesAsync();
         Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "%chipotle%", CategoryId = restaurants.Id });
@@ -100,7 +100,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     public async Task GetPendingBankTransactionsAsync_ExcludesCategorizedAndAmazonRows()
     {
         var account = await CreateAccountAsync();
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
+        var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 
@@ -119,7 +119,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     [Fact]
     public async Task GetPendingAmazonOrderItemsAsync_ExcludesItemsWithAProduct()
     {
-        var supplements = new Category { Name = "Supplements", IsBudgeted = true };
+        var supplements = new Category { Name = "Supplements" };
         Context.Categories.Add(supplements);
         await Context.SaveChangesAsync();
         var product = new Product { ProductPattern = "%KNOWN%", CategoryId = supplements.Id };
@@ -141,7 +141,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     public async Task CategorizeTransactionAsync_WithoutCreatingARule_OnlySetsThatOneTransaction()
     {
         var account = await CreateAccountAsync();
-        var misc = new Category { Name = "Off-Budget/Misc", IsBudgeted = false };
+        var misc = new Category { Name = "Off-Budget/Misc" };
         Context.Categories.Add(misc);
         await Context.SaveChangesAsync();
 
@@ -161,7 +161,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     public async Task CategorizeTransactionAsync_CreatingARule_AppliesRetroactivelyToOtherPendingMatches()
     {
         var account = await CreateAccountAsync();
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
+        var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 
@@ -182,7 +182,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     [Fact]
     public async Task CategorizeAmazonItemAsync_WithoutCreatingAProduct_OnlySetsThatOneItem()
     {
-        var misc = new Category { Name = "Off-Budget/Misc", IsBudgeted = false };
+        var misc = new Category { Name = "Off-Budget/Misc" };
         Context.Categories.Add(misc);
         await Context.SaveChangesAsync();
 
@@ -202,7 +202,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     [Fact]
     public async Task CategorizeAmazonItemAsync_CreatingAProduct_AppliesRetroactivelyToOtherPendingMatches()
     {
-        var supplements = new Category { Name = "Supplements", IsBudgeted = true };
+        var supplements = new Category { Name = "Supplements" };
         Context.Categories.Add(supplements);
         await Context.SaveChangesAsync();
 

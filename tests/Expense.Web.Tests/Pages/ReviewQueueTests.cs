@@ -47,7 +47,7 @@ public class ReviewQueueTests : BunitContext
 
     private static FakeReviewQueueProvider MakeProvider() => new()
     {
-        Categories = [new Category { Id = 1, Name = "Groceries", IsBudgeted = true }, new Category { Id = 2, Name = "Restaurants", IsBudgeted = true }],
+        Categories = [new Category { Id = 1, Name = "Groceries" }, new Category { Id = 2, Name = "Restaurants" }],
         TransactionGroups =
         [
             new PendingTransactionGroup

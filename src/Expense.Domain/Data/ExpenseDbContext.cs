@@ -15,7 +15,6 @@ public class ExpenseDbContext(DbContextOptions<ExpenseDbContext> options) : DbCo
     public DbSet<BankTransaction> BankTransactions => Set<BankTransaction>();
     public DbSet<AmazonOrderItem> AmazonOrderItems => Set<AmazonOrderItem>();
     public DbSet<BudgetPeriod> BudgetPeriods => Set<BudgetPeriod>();
-    public DbSet<RecurringRule> RecurringRules => Set<RecurringRule>();
     public DbSet<OneTimeEvent> OneTimeEvents => Set<OneTimeEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

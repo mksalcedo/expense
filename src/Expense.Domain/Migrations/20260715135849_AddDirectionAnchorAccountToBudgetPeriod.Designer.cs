@@ -3,6 +3,7 @@ using System;
 using Expense.Domain.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Expense.Domain.Migrations
 {
     [DbContext(typeof(ExpenseDbContext))]
-    partial class ExpenseDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260715135849_AddDirectionAnchorAccountToBudgetPeriod")]
+    partial class AddDirectionAnchorAccountToBudgetPeriod
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -251,6 +254,7 @@ namespace Expense.Domain.Migrations
 
                     b.Property<string>("Direction")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)")
                         .HasDefaultValue("Expense")
@@ -292,9 +296,14 @@ namespace Expense.Domain.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(true)
                         .HasColumnName("is_active");
+
+                    b.Property<bool>("IsBudgeted")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_budgeted");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -498,6 +507,69 @@ namespace Expense.Domain.Migrations
                     b.ToTable("products", (string)null);
                 });
 
+            modelBuilder.Entity("Expense.Domain.Entities.RecurringRule", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("AccountId")
+                        .HasColumnType("integer")
+                        .HasColumnName("account_id");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean")
+                        .HasColumnName("active");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("numeric(12,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<DateOnly>("Anchor")
+                        .HasColumnType("date")
+                        .HasColumnName("anchor");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("direction");
+
+                    b.Property<DateOnly?>("EndDate")
+                        .HasColumnType("date")
+                        .HasColumnName("end_date");
+
+                    b.Property<string>("Frequency")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("frequency");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("name");
+
+                    b.Property<DateOnly>("StartDate")
+                        .HasColumnType("date")
+                        .HasColumnName("start_date");
+
+                    b.HasKey("Id")
+                        .HasName("pk_recurring_rules");
+
+                    b.HasIndex("AccountId")
+                        .HasDatabaseName("ix_recurring_rules_account_id");
+
+                    b.HasIndex("Active")
+                        .HasDatabaseName("ix_recurring_rules_active");
+
+                    b.ToTable("recurring_rules", (string)null);
+                });
+
             modelBuilder.Entity("Expense.Domain.Entities.AmazonOrderItem", b =>
                 {
                     b.HasOne("Expense.Domain.Entities.Category", "Category")
@@ -611,6 +683,18 @@ namespace Expense.Domain.Migrations
                         .HasConstraintName("fk_products_categories_category_id");
 
                     b.Navigation("Category");
+                });
+
+            modelBuilder.Entity("Expense.Domain.Entities.RecurringRule", b =>
+                {
+                    b.HasOne("Expense.Domain.Entities.Account", "Account")
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_recurring_rules_accounts_account_id");
+
+                    b.Navigation("Account");
                 });
 #pragma warning restore 612, 618
         }

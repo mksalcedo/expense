@@ -21,11 +21,11 @@ public class DbSeeder
     {
         if (await context.Categories.AnyAsync()) return;
 
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
-        var restaurants = new Category { Name = "Restaurants", IsBudgeted = true };
-        var supplements = new Category { Name = "Supplements", IsBudgeted = true };
-        var gas = new Category { Name = "Gas", IsBudgeted = true };
-        var offBudget = new Category { Name = "Off-Budget/Misc", IsBudgeted = false };
+        var groceries = new Category { Name = "Groceries" };
+        var restaurants = new Category { Name = "Restaurants" };
+        var supplements = new Category { Name = "Supplements" };
+        var gas = new Category { Name = "Gas" };
+        var offBudget = new Category { Name = "Off-Budget/Misc" };
         context.Categories.AddRange(groceries, restaurants, supplements, gas, offBudget);
         await context.SaveChangesAsync();
 

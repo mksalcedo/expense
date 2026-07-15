@@ -9,7 +9,7 @@ public class ProductTests : DatabaseTestBase
     [Fact]
     public async Task Product_SavedAndReloaded_RoundTripsWithItsCategory()
     {
-        var category = new Category { Name = "Supplements", IsBudgeted = true };
+        var category = new Category { Name = "Supplements" };
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 

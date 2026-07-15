@@ -21,7 +21,26 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             .Select(s => s.Balance)
             .FirstOrDefaultAsync(cancellationToken);
 
-        var recurringRules = await context.RecurringRules.Where(r => r.Active).ToListAsync(cancellationToken);
+        var directPeriods = await context.BudgetPeriods
+            .Where(p => p.EffectiveThrough == null && p.Anchor != null && p.AccountId != null)
+            .Join(context.FundingRules.Where(f => f.Strategy == FundingStrategies.Direct),
+                p => p.CategoryId, f => f.CategoryId, (p, _) => p)
+            .Include(p => p.Category)
+            .Where(p => p.Category.IsActive)
+            .ToListAsync(cancellationToken);
+
+        var recurringRules = directPeriods.Select(p => new RecurringRule
+        {
+            Name = p.Category.Name,
+            Direction = p.Direction,
+            Amount = p.Amount,
+            Frequency = p.Frequency,
+            Anchor = p.Anchor!.Value,
+            AccountId = p.AccountId!.Value,
+            Active = true,
+            StartDate = DateOnly.MinValue
+        }).ToList();
+
         var oneTimeEvents = await context.OneTimeEvents.ToListAsync(cancellationToken);
 
         var lines = recurrenceExpander.Expand(recurringRules, oneTimeEvents, asOfDate, windowEnd);

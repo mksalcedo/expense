@@ -24,7 +24,6 @@ else
                 <thead>
                     <tr>
                         <th @onclick='() => Sort("Name")' style="cursor:pointer;">Name</th>
-                        <th @onclick='() => Sort("Budgeted")' style="cursor:pointer;">Budgeted</th>
                         <th @onclick='() => Sort("Funding")' style="cursor:pointer;">Funding strategy</th>
                         <th @onclick='() => Sort("Status")' style="cursor:pointer;">Status</th>
                     </tr>
@@ -35,8 +34,7 @@ else
                         <tr @key="category.Id" id="category-row-@category.Id" @onclick="() => SelectAsync(category)"
                             style="cursor:pointer; @(category.Id == _selectedId ? "font-weight:bold;" : "")">
                             <td>@category.Name</td>
-                            <td>@(category.IsBudgeted ? "Yes" : "No")</td>
-                            <td>@(category.FundingStrategy == FundingStrategies.PayInFullAmex ? "Pay in full (Amex)" : "None")</td>
+                            <td>@FundingStrategyLabel(category.FundingStrategy)</td>
                             <td>@(category.IsActive ? "Active" : "Inactive")</td>
                         </tr>
                     }
@@ -56,13 +54,65 @@ else
                     <label>Name <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" /></label>
                 </div>
                 <div>
-                    <label><input id="detail-budgeted" type="checkbox" checked="@_formIsBudgeted"
-                                  @onchange="e => _formIsBudgeted = (bool)e.Value!" /> Budgeted</label>
+                    <label>Funding strategy
+                        <select id="detail-funding-strategy" @onchange="e => _formFundingStrategy = (string)e.Value!">
+                            <option value="@FundingStrategies.None" selected="@(_formFundingStrategy == FundingStrategies.None)">None</option>
+                            <option value="@FundingStrategies.PayInFullAmex" selected="@(_formFundingStrategy == FundingStrategies.PayInFullAmex)">Pay in full (Amex)</option>
+                            <option value="@FundingStrategies.Direct" selected="@(_formFundingStrategy == FundingStrategies.Direct)">Direct (recurring income/bill)</option>
+                            <option value="@FundingStrategies.AccountPayment" selected="@(_formFundingStrategy == FundingStrategies.AccountPayment)">Account payment (debt account)</option>
+                        </select>
+                    </label>
                 </div>
-                <div>
-                    <label><input id="detail-funding" type="checkbox" checked="@_formPayInFullAmex"
-                                  @onchange="e => _formPayInFullAmex = (bool)e.Value!" /> Pay in full via Amex</label>
-                </div>
+                @if (_formFundingStrategy == FundingStrategies.AccountPayment)
+                {
+                    <p><em>This category's expected amount comes from its linked account's min/extra payment, set on the Accounts page - not entered here.</em></p>
+                }
+                @if (_formFundingStrategy == FundingStrategies.Direct)
+                {
+                    <div>
+                        <label>Direction
+                            <select id="detail-direction" @onchange="e => _formDirection = Enum.Parse<Direction>((string)e.Value!)">
+                                @foreach (var direction in Enum.GetValues<Direction>())
+                                {
+                                    <option value="@direction" selected="@(_formDirection == direction)">@direction</option>
+                                }
+                            </select>
+                        </label>
+                    </div>
+                    <div>
+                        <label>Amount
+                            <input id="detail-amount" type="number" step="0.01" value="@_formAmount"
+                                   @onchange="e => _formAmount = decimal.Parse((string)e.Value!)" />
+                        </label>
+                    </div>
+                    <div>
+                        <label>Frequency
+                            <select id="detail-frequency" @onchange="e => _formFrequency = Enum.Parse<Frequency>((string)e.Value!)">
+                                @foreach (var frequency in Enum.GetValues<Frequency>())
+                                {
+                                    <option value="@frequency" selected="@(_formFrequency == frequency)">@frequency</option>
+                                }
+                            </select>
+                        </label>
+                    </div>
+                    <div>
+                        <label>Anchor date
+                            <input id="detail-anchor" type="date" value="@_formAnchor.ToString("yyyy-MM-dd")"
+                                   @onchange="e => _formAnchor = DateOnly.Parse((string)e.Value!)" />
+                        </label>
+                    </div>
+                    <div>
+                        <label>Account
+                            <select id="detail-account" @onchange="e => _formAccountId = int.Parse((string)e.Value!)">
+                                <option value="">Select an account...</option>
+                                @foreach (var account in _data!.Accounts)
+                                {
+                                    <option value="@account.Id" selected="@(_formAccountId == account.Id)">@account.Name</option>
+                                }
+                            </select>
+                        </label>
+                    </div>
+                }
                 <button id="detail-save" @onclick="SaveAsync">Save</button>
                 @if (_mode == DetailMode.Editing)
                 {
@@ -92,13 +142,25 @@ else
     private bool _sortAscending = true;
 
     private string _formName = "";
-    private bool _formIsBudgeted;
-    private bool _formPayInFullAmex;
+    private string _formFundingStrategy = FundingStrategies.None;
+    private Direction _formDirection = Direction.Expense;
+    private decimal _formAmount;
+    private Frequency _formFrequency = Frequency.Monthly;
+    private DateOnly _formAnchor = DateOnly.FromDateTime(DateTime.Today);
+    private int? _formAccountId;
 
     protected override async Task OnInitializedAsync()
     {
         _data = await CategoriesProvider.GetCategoriesAsync();
     }
+
+    private static string FundingStrategyLabel(string strategy) => strategy switch
+    {
+        FundingStrategies.PayInFullAmex => "Pay in full (Amex)",
+        FundingStrategies.Direct => "Direct",
+        FundingStrategies.AccountPayment => "Account payment",
+        _ => "None"
+    };
 
     private List<CategoryRow> VisibleCategories()
     {
@@ -107,7 +169,6 @@ else
 
         Func<CategoryRow, object> keySelector = _sortColumn switch
         {
-            "Budgeted" => c => c.IsBudgeted,
             "Funding" => c => c.FundingStrategy,
             "Status" => c => c.IsActive,
             _ => c => c.Name
@@ -135,8 +196,12 @@ else
         _mode = DetailMode.Creating;
         _selectedId = null;
         _formName = "";
-        _formIsBudgeted = false;
-        _formPayInFullAmex = false;
+        _formFundingStrategy = FundingStrategies.None;
+        _formDirection = Direction.Expense;
+        _formAmount = 0m;
+        _formFrequency = Frequency.Monthly;
+        _formAnchor = DateOnly.FromDateTime(DateTime.Today);
+        _formAccountId = null;
     }
 
     private Task SelectAsync(CategoryRow category)
@@ -145,23 +210,30 @@ else
         _selectedId = category.Id;
         _selectedIsActive = category.IsActive;
         _formName = category.Name;
-        _formIsBudgeted = category.IsBudgeted;
-        _formPayInFullAmex = category.FundingStrategy == FundingStrategies.PayInFullAmex;
+        _formFundingStrategy = category.FundingStrategy;
+        _formDirection = category.BudgetDirection ?? Direction.Expense;
+        _formAmount = category.BudgetAmount ?? 0m;
+        _formFrequency = category.BudgetFrequency ?? Frequency.Monthly;
+        _formAnchor = category.BudgetAnchor ?? DateOnly.FromDateTime(DateTime.Today);
+        _formAccountId = category.BudgetAccountId;
         return Task.CompletedTask;
     }
 
     private async Task SaveAsync()
     {
         if (string.IsNullOrWhiteSpace(_formName)) return;
-        var strategy = _formPayInFullAmex ? FundingStrategies.PayInFullAmex : FundingStrategies.None;
+
+        DirectBudgetInput? directBudget = _formFundingStrategy == FundingStrategies.Direct && _formAccountId is { } accountId
+            ? new DirectBudgetInput(_formAmount, _formFrequency, _formDirection, _formAnchor, accountId)
+            : null;
 
         if (_mode == DetailMode.Creating)
         {
-            await CategoriesProvider.CreateCategoryAsync(_formName, _formIsBudgeted, strategy);
+            await CategoriesProvider.CreateCategoryAsync(_formName, _formFundingStrategy, directBudget);
         }
         else if (_selectedId is { } id)
         {
-            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formIsBudgeted, strategy);
+            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formFundingStrategy, directBudget);
         }
 
         _mode = DetailMode.None;

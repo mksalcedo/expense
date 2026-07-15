@@ -13,6 +13,21 @@ public class BudgetPeriod
 
     public decimal Amount { get; set; }
     public Frequency Frequency { get; set; }
+    public Direction Direction { get; set; } = Direction.Expense;
+
+    /// <summary>
+    /// A reference date the recurrence is computed from, for categories whose funding
+    /// strategy is Direct (RecurrenceExpander needs this to place dated ledger lines).
+    /// Null for categories that aren't directly expanded (e.g. ordinary spending budgets).
+    /// </summary>
+    public DateOnly? Anchor { get; set; }
+
+    /// <summary>
+    /// The account this budget period directly affects, for Direct-strategy categories
+    /// (e.g. which checking account a paycheck lands in or a bill is paid from).
+    /// </summary>
+    public int? AccountId { get; set; }
+    public Account? Account { get; set; }
 
     public DateOnly EffectiveFrom { get; set; }
 

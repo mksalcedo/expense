@@ -9,4 +9,11 @@ public static class FundingStrategies
 {
     public const string PayInFullAmex = "pay_in_full_amex";
     public const string None = "none";
+    public const string Direct = "direct";
+
+    /// <summary>
+    /// This category's expected amount is entered on its linked Account (MinPayment +
+    /// ExtraPayment), not here - the debt-payment categories (Discover Payment, etc.).
+    /// </summary>
+    public const string AccountPayment = "account_payment";
 }

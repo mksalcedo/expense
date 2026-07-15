@@ -14,9 +14,9 @@ namespace Expense.Domain.Services.Categories;
 /// </summary>
 public class CategoryManagementService
 {
-    public async Task<Category> CreateCategoryAsync(ExpenseDbContext context, string name, bool isBudgeted, string fundingStrategy)
+    public async Task<Category> CreateCategoryAsync(ExpenseDbContext context, string name, string fundingStrategy)
     {
-        var category = new Category { Name = name, IsBudgeted = isBudgeted };
+        var category = new Category { Name = name };
         context.Categories.Add(category);
         await context.SaveChangesAsync();
 
@@ -61,12 +61,11 @@ public class CategoryManagementService
         await context.SaveChangesAsync();
     }
 
-    /// <summary>Combined save for the master-detail edit form: name, budgeted flag, and funding strategy all commit together.</summary>
-    public async Task UpdateCategoryAsync(ExpenseDbContext context, int categoryId, string name, bool isBudgeted, string fundingStrategy)
+    /// <summary>Combined save for the master-detail edit form: name and funding strategy commit together.</summary>
+    public async Task UpdateCategoryAsync(ExpenseDbContext context, int categoryId, string name, string fundingStrategy)
     {
         var category = await context.Categories.SingleAsync(c => c.Id == categoryId);
         category.Name = name;
-        category.IsBudgeted = isBudgeted;
         await context.SaveChangesAsync();
 
         await SetFundingStrategyAsync(context, categoryId, fundingStrategy);

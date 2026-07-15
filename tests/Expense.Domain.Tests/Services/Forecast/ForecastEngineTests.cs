@@ -27,17 +27,22 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task RecurringIncomeRule_AppearsAsALedgerLineAndUpdatesRunningBalance()
+    public async Task DirectCategory_AppearsAsALedgerLineAndUpdatesRunningBalance()
     {
         await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));
         var checking = new Account { Name = "Checking", Type = AccountType.Checking };
         Context.Accounts.Add(checking);
         await Context.SaveChangesAsync();
 
-        Context.RecurringRules.Add(new RecurringRule
+        var paycheck = new Category { Name = "Paycheck" };
+        Context.Categories.Add(paycheck);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = paycheck.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            Name = "Paycheck", Direction = Direction.Income, Amount = 2000m, Frequency = Frequency.Biweekly,
-            Anchor = new DateOnly(2026, 7, 17), AccountId = checking.Id, Active = true, StartDate = new DateOnly(2026, 1, 1)
+            CategoryId = paycheck.Id, Amount = 2000m, Frequency = Frequency.Biweekly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 7, 17), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
         });
         await Context.SaveChangesAsync();
 
@@ -48,6 +53,30 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal("Paycheck", row.Description);
         Assert.Equal(2000m, row.Amount);
         Assert.Equal(3000m, row.RunningBalance);
+    }
+
+    [Fact]
+    public async Task DirectCategory_WithNoAnchorOrAccountYetConfigured_ProducesNoLine()
+    {
+        // A category can be marked Direct before its budget period has an anchor/account set
+        // (e.g. mid-edit in the UI) - it must not blow up the forecast, just be excluded.
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));
+
+        var category = new Category { Name = "Incomplete Direct Item" };
+        Context.Categories.Add(category);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = category.Id, Amount = 500m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Empty(result.Rows);
     }
 
     [Fact]
@@ -117,8 +146,8 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.Accounts.Add(amex);
         await Context.SaveChangesAsync();
 
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
-        var offBudget = new Category { Name = "Off-Budget/Misc", IsBudgeted = false };
+        var groceries = new Category { Name = "Groceries" };
+        var offBudget = new Category { Name = "Off-Budget/Misc" };
         Context.Categories.AddRange(groceries, offBudget);
         await Context.SaveChangesAsync();
 
@@ -151,7 +180,7 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.Accounts.Add(amex);
         await Context.SaveChangesAsync();
 
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
+        var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 

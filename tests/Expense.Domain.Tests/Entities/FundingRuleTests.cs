@@ -9,7 +9,7 @@ public class FundingRuleTests : DatabaseTestBase
     [Fact]
     public async Task FundingRule_SavedAndReloaded_RoundTripsWithItsCategory()
     {
-        var category = new Category { Name = "Groceries", IsBudgeted = true };
+        var category = new Category { Name = "Groceries" };
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 
@@ -29,9 +29,9 @@ public class FundingRuleTests : DatabaseTestBase
     [Fact]
     public async Task Query_PayInFullAmexCategories_NeverHardcodesNamesInTheQuery()
     {
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
-        var restaurants = new Category { Name = "Restaurants", IsBudgeted = true };
-        var amexPayment = new Category { Name = "Amex Payment", IsBudgeted = true };
+        var groceries = new Category { Name = "Groceries" };
+        var restaurants = new Category { Name = "Restaurants" };
+        var amexPayment = new Category { Name = "Amex Payment" };
         Context.Categories.AddRange(groceries, restaurants, amexPayment);
         await Context.SaveChangesAsync();
 

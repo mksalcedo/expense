@@ -11,7 +11,10 @@ public class CategoryConfiguration : IEntityTypeConfiguration<Category>
         builder.ToTable("categories");
         builder.HasKey(c => c.Id);
         builder.Property(c => c.Name).IsRequired().HasMaxLength(100);
-        builder.Property(c => c.IsActive).HasDefaultValue(true);
+        // ValueGeneratedNever: without it, inserting a new Category with IsActive explicitly
+        // set to false (the bool CLR default) would be silently overridden by the column
+        // default (true) - the same EF gotcha hit with BudgetPeriod.Direction/Income.
+        builder.Property(c => c.IsActive).HasDefaultValue(true).ValueGeneratedNever();
         builder.HasIndex(c => c.Name).IsUnique();
     }
 }

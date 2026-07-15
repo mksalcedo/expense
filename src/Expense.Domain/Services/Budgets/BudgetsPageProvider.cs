@@ -12,8 +12,14 @@ public class BudgetsPageProvider(
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
 
+        // Only categories whose amount is actually entered via BudgetPeriod belong on this
+        // (currently still editable) page - AccountPayment categories' amounts live on their
+        // linked Account instead, and editing them here would silently do nothing.
+        var budgetableStrategies = new[] { FundingStrategies.Direct, FundingStrategies.PayInFullAmex };
         var budgetedCategories = await context.Categories
-            .Where(c => c.IsBudgeted && c.IsActive)
+            .Where(c => c.IsActive)
+            .Join(context.FundingRules.Where(r => budgetableStrategies.Contains(r.Strategy)),
+                c => c.Id, r => r.CategoryId, (c, _) => c)
             .OrderBy(c => c.Name)
             .ToListAsync(cancellationToken);
 

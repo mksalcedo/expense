@@ -98,7 +98,7 @@ public class BankTransactionTests : DatabaseTestBase
     public async Task PendingCategorizationQuery_FindsOnlyUncategorizedRows()
     {
         var checking = await CreateAccountAsync("Wells Fargo Checking", AccountType.Checking);
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
+        var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 

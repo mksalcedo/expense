@@ -9,7 +9,7 @@ public class MerchantRuleTests : DatabaseTestBase
     [Fact]
     public async Task MerchantRule_SavedAndReloaded_RoundTripsWithItsCategory()
     {
-        var category = new Category { Name = "Groceries", IsBudgeted = true };
+        var category = new Category { Name = "Groceries" };
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 

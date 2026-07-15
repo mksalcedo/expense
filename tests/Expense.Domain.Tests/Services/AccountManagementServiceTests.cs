@@ -24,8 +24,8 @@ public class AccountManagementServiceTests : DatabaseTestBase
 
         Assert.Equal(AccountType.Debt, account.Type);
         Assert.Equal(173m, account.MinPayment);
-        Assert.True(category.IsBudgeted);
-        Assert.Equal(FundingStrategies.None, fundingRule.Strategy);
+        Assert.True(category.IsActive);
+        Assert.Equal(FundingStrategies.AccountPayment, fundingRule.Strategy);
         Assert.Contains("DISCOVER", merchantRule.MerchantPattern.ToUpperInvariant());
     }
 

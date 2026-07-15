@@ -9,7 +9,7 @@ public class CategoryTests : DatabaseTestBase
     [Fact]
     public async Task Category_SavedAndReloaded_RoundTripsCorrectly()
     {
-        var category = new Category { Name = "Groceries", IsBudgeted = true };
+        var category = new Category { Name = "Groceries" };
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 
@@ -17,7 +17,6 @@ public class CategoryTests : DatabaseTestBase
         var reloaded = await reloadContext.Categories.SingleAsync(c => c.Id == category.Id);
 
         Assert.Equal("Groceries", reloaded.Name);
-        Assert.True(reloaded.IsBudgeted);
         Assert.True(reloaded.IsActive); // defaults to active
     }
 
@@ -32,7 +31,7 @@ public class CategoryTests : DatabaseTestBase
         // initializer entirely (raw SQL, exactly what happens to a pre-existing row when
         // a new column is added) so it actually exercises the column-level default.
         await Context.Database.ExecuteSqlRawAsync(
-            "INSERT INTO categories (name, is_budgeted) VALUES ('Raw Insert Test', true)");
+            "INSERT INTO categories (name) VALUES ('Raw Insert Test')");
 
         var reloaded = await Context.Categories.SingleAsync(c => c.Name == "Raw Insert Test");
         Assert.True(reloaded.IsActive);
@@ -41,10 +40,10 @@ public class CategoryTests : DatabaseTestBase
     [Fact]
     public async Task Category_NameMustBeUnique()
     {
-        Context.Categories.Add(new Category { Name = "Restaurants", IsBudgeted = true });
+        Context.Categories.Add(new Category { Name = "Restaurants" });
         await Context.SaveChangesAsync();
 
-        Context.Categories.Add(new Category { Name = "Restaurants", IsBudgeted = false });
+        Context.Categories.Add(new Category { Name = "Restaurants" });
 
         await Assert.ThrowsAsync<DbUpdateException>(() => Context.SaveChangesAsync());
     }

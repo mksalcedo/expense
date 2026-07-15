@@ -10,7 +10,7 @@ public class DbSeederTests : DatabaseTestBase
     private readonly DbSeeder _sut = new();
 
     [Fact]
-    public async Task SeedAsync_CreatesTheFiveStartingCategories_WithCorrectIsBudgeted()
+    public async Task SeedAsync_CreatesTheFiveStartingCategories()
     {
         await _sut.SeedAsync(Context);
 
@@ -20,11 +20,6 @@ public class DbSeederTests : DatabaseTestBase
             .ToListAsync();
 
         Assert.Equal(5, categories.Count);
-        Assert.True(categories.Single(c => c.Name == "Groceries").IsBudgeted);
-        Assert.True(categories.Single(c => c.Name == "Restaurants").IsBudgeted);
-        Assert.True(categories.Single(c => c.Name == "Supplements").IsBudgeted);
-        Assert.True(categories.Single(c => c.Name == "Gas").IsBudgeted);
-        Assert.False(categories.Single(c => c.Name == "Off-Budget/Misc").IsBudgeted);
     }
 
     [Fact]

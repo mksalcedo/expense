@@ -11,7 +11,7 @@ public class BudgetManagementServiceTests : DatabaseTestBase
 
     private async Task<Category> CreateCategoryAsync(string name = "Groceries")
     {
-        var category = new Category { Name = name, IsBudgeted = true };
+        var category = new Category { Name = name };
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
         return category;
@@ -87,5 +87,35 @@ public class BudgetManagementServiceTests : DatabaseTestBase
         var current = await _sut.GetCurrentBudgetsAsync(Context);
 
         Assert.Empty(current);
+    }
+
+    [Fact]
+    public async Task SetBudgetAsync_ForADirectCategory_CanSpecifyDirectionAnchorAndAccount()
+    {
+        var account = new Account { Name = "Wells Fargo Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(account);
+        await Context.SaveChangesAsync();
+        var category = await CreateCategoryAsync("Truist Mortgage");
+
+        await _sut.SetBudgetAsync(Context, category.Id, 2681.22m, Frequency.Monthly, new DateOnly(2026, 1, 1),
+            direction: Direction.Expense, anchor: new DateOnly(2026, 1, 4), accountId: account.Id);
+
+        var period = await Context.BudgetPeriods.SingleAsync(p => p.CategoryId == category.Id);
+        Assert.Equal(Direction.Expense, period.Direction);
+        Assert.Equal(new DateOnly(2026, 1, 4), period.Anchor);
+        Assert.Equal(account.Id, period.AccountId);
+    }
+
+    [Fact]
+    public async Task SetBudgetAsync_WithNoDirectionSpecified_DefaultsToExpense()
+    {
+        var category = await CreateCategoryAsync();
+
+        await _sut.SetBudgetAsync(Context, category.Id, 450m, Frequency.Weekly, new DateOnly(2026, 1, 1));
+
+        var period = await Context.BudgetPeriods.SingleAsync(p => p.CategoryId == category.Id);
+        Assert.Equal(Direction.Expense, period.Direction);
+        Assert.Null(period.Anchor);
+        Assert.Null(period.AccountId);
     }
 }

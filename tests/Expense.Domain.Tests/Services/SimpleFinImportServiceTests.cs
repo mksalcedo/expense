@@ -67,7 +67,7 @@ public class SimpleFinImportServiceTests : DatabaseTestBase
     public async Task Import_ActiveSpendingAccount_CreatesTransactionsAndAppliesCategorization()
     {
         var (amex, discover) = await CreateAccountsAsync();
-        var groceries = new Category { Name = "Groceries", IsBudgeted = true };
+        var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
         Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "%TRADER JOE%", CategoryId = groceries.Id });

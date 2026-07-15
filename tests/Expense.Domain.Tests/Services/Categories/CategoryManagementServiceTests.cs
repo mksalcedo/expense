@@ -12,10 +12,9 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     [Fact]
     public async Task CreateCategoryAsync_CreatesCategoryAndItsFundingRuleTogether()
     {
-        var category = await _sut.CreateCategoryAsync(Context, "Home Improvement", isBudgeted: true, fundingStrategy: FundingStrategies.None);
+        var category = await _sut.CreateCategoryAsync(Context, "Home Improvement", fundingStrategy: FundingStrategies.None);
 
         Assert.Equal("Home Improvement", category.Name);
-        Assert.True(category.IsBudgeted);
         Assert.True(category.IsActive);
 
         var rule = await Context.FundingRules.SingleAsync(r => r.CategoryId == category.Id);
@@ -25,7 +24,7 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     [Fact]
     public async Task CreateCategoryAsync_WithPayInFullAmexStrategy_CreatesRuleAccordingly()
     {
-        var category = await _sut.CreateCategoryAsync(Context, "Medical", isBudgeted: true, fundingStrategy: FundingStrategies.PayInFullAmex);
+        var category = await _sut.CreateCategoryAsync(Context, "Medical", fundingStrategy: FundingStrategies.PayInFullAmex);
 
         var rule = await Context.FundingRules.SingleAsync(r => r.CategoryId == category.Id);
         Assert.Equal(FundingStrategies.PayInFullAmex, rule.Strategy);
@@ -34,7 +33,7 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     [Fact]
     public async Task RenameCategoryAsync_UpdatesTheName()
     {
-        var category = await _sut.CreateCategoryAsync(Context, "Groceries", isBudgeted: true, fundingStrategy: FundingStrategies.PayInFullAmex);
+        var category = await _sut.CreateCategoryAsync(Context, "Groceries", fundingStrategy: FundingStrategies.PayInFullAmex);
 
         await _sut.RenameCategoryAsync(Context, category.Id, "Groceries & Household");
 
@@ -45,7 +44,7 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     [Fact]
     public async Task SetFundingStrategyAsync_WhenRuleAlreadyExists_UpdatesItInPlace()
     {
-        var category = await _sut.CreateCategoryAsync(Context, "Groceries", isBudgeted: true, fundingStrategy: FundingStrategies.None);
+        var category = await _sut.CreateCategoryAsync(Context, "Groceries", fundingStrategy: FundingStrategies.None);
 
         await _sut.SetFundingStrategyAsync(Context, category.Id, FundingStrategies.PayInFullAmex);
 
@@ -57,7 +56,7 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     public async Task SetFundingStrategyAsync_WhenNoRuleExistsYet_CreatesOne()
     {
         // Mirrors real data: Off-Budget/Misc was seeded with no funding_rules row at all
-        var category = new Category { Name = "Off-Budget/Misc", IsBudgeted = false };
+        var category = new Category { Name = "Off-Budget/Misc" };
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 
@@ -70,7 +69,7 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     [Fact]
     public async Task DeactivateCategoryAsync_SoftDeletesOnly()
     {
-        var category = await _sut.CreateCategoryAsync(Context, "Discontinued", isBudgeted: false, fundingStrategy: FundingStrategies.None);
+        var category = await _sut.CreateCategoryAsync(Context, "Discontinued", fundingStrategy: FundingStrategies.None);
 
         await _sut.DeactivateCategoryAsync(Context, category.Id);
 
@@ -81,7 +80,7 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     [Fact]
     public async Task ReactivateCategoryAsync_UndoesADeactivation()
     {
-        var category = await _sut.CreateCategoryAsync(Context, "Reconsidered", isBudgeted: false, fundingStrategy: FundingStrategies.None);
+        var category = await _sut.CreateCategoryAsync(Context, "Reconsidered", fundingStrategy: FundingStrategies.None);
         await _sut.DeactivateCategoryAsync(Context, category.Id);
 
         await _sut.ReactivateCategoryAsync(Context, category.Id);
@@ -91,15 +90,14 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task UpdateCategoryAsync_SavesNameBudgetedAndFundingStrategyTogether()
+    public async Task UpdateCategoryAsync_SavesNameAndFundingStrategyTogether()
     {
-        var category = await _sut.CreateCategoryAsync(Context, "Groceries", isBudgeted: true, fundingStrategy: FundingStrategies.None);
+        var category = await _sut.CreateCategoryAsync(Context, "Groceries", fundingStrategy: FundingStrategies.None);
 
-        await _sut.UpdateCategoryAsync(Context, category.Id, "Groceries & Household", isBudgeted: false, fundingStrategy: FundingStrategies.PayInFullAmex);
+        await _sut.UpdateCategoryAsync(Context, category.Id, "Groceries & Household", fundingStrategy: FundingStrategies.PayInFullAmex);
 
         var reloaded = await Context.Categories.SingleAsync(c => c.Id == category.Id);
         Assert.Equal("Groceries & Household", reloaded.Name);
-        Assert.False(reloaded.IsBudgeted);
 
         var rule = await Context.FundingRules.SingleAsync(r => r.CategoryId == category.Id);
         Assert.Equal(FundingStrategies.PayInFullAmex, rule.Strategy);
