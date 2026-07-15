@@ -13,95 +13,177 @@
 }
 else
 {
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Budgeted</th>
-                <th>Funding strategy</th>
-                <th>Status</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var category in _data.Categories)
-            {
-                <tr @key="category.Id">
-                    <td>
-                        <input id="category-name-@category.Id" value="@category.Name"
-                               @onchange="e => RenameAsync(category.Id, (string)e.Value!)" />
-                    </td>
-                    <td>@(category.IsBudgeted ? "Yes" : "No")</td>
-                    <td>
-                        <select id="category-funding-@category.Id"
-                                @onchange="e => SetFundingStrategyAsync(category.Id, (string)e.Value!)">
-                            <option value="@FundingStrategies.None" selected="@(category.FundingStrategy == FundingStrategies.None)">None</option>
-                            <option value="@FundingStrategies.PayInFullAmex" selected="@(category.FundingStrategy == FundingStrategies.PayInFullAmex)">Pay in full (Amex)</option>
-                        </select>
-                    </td>
-                    <td>@(category.IsActive ? "Active" : "Inactive")</td>
-                    <td>
-                        @if (category.IsActive)
-                        {
-                            <button id="category-deactivate-@category.Id" @onclick="() => DeactivateAsync(category.Id)">Deactivate</button>
-                        }
-                    </td>
-                </tr>
-            }
-        </tbody>
-    </table>
+    <div style="display:flex; gap:2rem; align-items:flex-start;">
+        <div style="flex:1;">
+            <div>
+                <input id="category-filter" placeholder="Filter by name..." value="@_filterText"
+                       @oninput="e => _filterText = (string)e.Value!" />
+                <button id="new-category-button" @onclick="StartCreating">+ New Category</button>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th @onclick='() => Sort("Name")' style="cursor:pointer;">Name</th>
+                        <th @onclick='() => Sort("Budgeted")' style="cursor:pointer;">Budgeted</th>
+                        <th @onclick='() => Sort("Funding")' style="cursor:pointer;">Funding strategy</th>
+                        <th @onclick='() => Sort("Status")' style="cursor:pointer;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var category in VisibleCategories())
+                    {
+                        <tr @key="category.Id" id="category-row-@category.Id" @onclick="() => SelectAsync(category)"
+                            style="cursor:pointer; @(category.Id == _selectedId ? "font-weight:bold;" : "")">
+                            <td>@category.Name</td>
+                            <td>@(category.IsBudgeted ? "Yes" : "No")</td>
+                            <td>@(category.FundingStrategy == FundingStrategies.PayInFullAmex ? "Pay in full (Amex)" : "None")</td>
+                            <td>@(category.IsActive ? "Active" : "Inactive")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
 
-    <h2>New category</h2>
-    <div>
-        <input id="new-category-name" @bind="_newName" placeholder="Name" />
-        <label>
-            Budgeted <input id="new-category-budgeted" type="checkbox" @bind="_newIsBudgeted" />
-        </label>
-        <select id="new-category-funding" @bind="_newFundingStrategy">
-            <option value="@FundingStrategies.None">None</option>
-            <option value="@FundingStrategies.PayInFullAmex">Pay in full (Amex)</option>
-        </select>
-        <button id="new-category-submit" @onclick="CreateAsync">Create</button>
+        <div style="flex:1;">
+            @if (_mode == DetailMode.None)
+            {
+                <p>Select a category on the left to edit it, or click "New Category" to create one.</p>
+            }
+            else
+            {
+                <h2>@(_mode == DetailMode.Creating ? "New category" : "Edit category")</h2>
+                <div>
+                    <label>Name <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" /></label>
+                </div>
+                <div>
+                    <label><input id="detail-budgeted" type="checkbox" checked="@_formIsBudgeted"
+                                  @onchange="e => _formIsBudgeted = (bool)e.Value!" /> Budgeted</label>
+                </div>
+                <div>
+                    <label><input id="detail-funding" type="checkbox" checked="@_formPayInFullAmex"
+                                  @onchange="e => _formPayInFullAmex = (bool)e.Value!" /> Pay in full via Amex</label>
+                </div>
+                <button id="detail-save" @onclick="SaveAsync">Save</button>
+                @if (_mode == DetailMode.Editing)
+                {
+                    @if (_selectedIsActive)
+                    {
+                        <button id="detail-deactivate" @onclick="DeactivateAsync">Deactivate</button>
+                    }
+                    else
+                    {
+                        <button id="detail-reactivate" @onclick="ReactivateAsync">Reactivate</button>
+                    }
+                }
+            }
+        </div>
     </div>
 }
 
 @code {
+    private enum DetailMode { None, Editing, Creating }
+
     private CategoriesPageData? _data;
-    private string _newName = "";
-    private bool _newIsBudgeted;
-    private string _newFundingStrategy = FundingStrategies.None;
+    private DetailMode _mode = DetailMode.None;
+    private int? _selectedId;
+    private bool _selectedIsActive;
+    private string _filterText = "";
+    private string _sortColumn = "Name";
+    private bool _sortAscending = true;
+
+    private string _formName = "";
+    private bool _formIsBudgeted;
+    private bool _formPayInFullAmex;
 
     protected override async Task OnInitializedAsync()
     {
         _data = await CategoriesProvider.GetCategoriesAsync();
     }
 
-    private async Task RenameAsync(int categoryId, string newName)
+    private List<CategoryRow> VisibleCategories()
     {
-        await CategoriesProvider.RenameCategoryAsync(categoryId, newName);
+        var filtered = _data!.Categories
+            .Where(c => string.IsNullOrWhiteSpace(_filterText) || c.Name.Contains(_filterText, StringComparison.OrdinalIgnoreCase));
+
+        Func<CategoryRow, object> keySelector = _sortColumn switch
+        {
+            "Budgeted" => c => c.IsBudgeted,
+            "Funding" => c => c.FundingStrategy,
+            "Status" => c => c.IsActive,
+            _ => c => c.Name
+        };
+
+        var sorted = _sortAscending ? filtered.OrderBy(keySelector) : filtered.OrderByDescending(keySelector);
+        return sorted.ToList();
+    }
+
+    private void Sort(string column)
+    {
+        if (_sortColumn == column)
+        {
+            _sortAscending = !_sortAscending;
+        }
+        else
+        {
+            _sortColumn = column;
+            _sortAscending = true;
+        }
+    }
+
+    private void StartCreating()
+    {
+        _mode = DetailMode.Creating;
+        _selectedId = null;
+        _formName = "";
+        _formIsBudgeted = false;
+        _formPayInFullAmex = false;
+    }
+
+    private Task SelectAsync(CategoryRow category)
+    {
+        _mode = DetailMode.Editing;
+        _selectedId = category.Id;
+        _selectedIsActive = category.IsActive;
+        _formName = category.Name;
+        _formIsBudgeted = category.IsBudgeted;
+        _formPayInFullAmex = category.FundingStrategy == FundingStrategies.PayInFullAmex;
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_formName)) return;
+        var strategy = _formPayInFullAmex ? FundingStrategies.PayInFullAmex : FundingStrategies.None;
+
+        if (_mode == DetailMode.Creating)
+        {
+            await CategoriesProvider.CreateCategoryAsync(_formName, _formIsBudgeted, strategy);
+        }
+        else if (_selectedId is { } id)
+        {
+            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formIsBudgeted, strategy);
+        }
+
+        _mode = DetailMode.None;
+        _selectedId = null;
         _data = await CategoriesProvider.GetCategoriesAsync();
     }
 
-    private async Task SetFundingStrategyAsync(int categoryId, string strategy)
+    private async Task DeactivateAsync()
     {
-        await CategoriesProvider.SetFundingStrategyAsync(categoryId, strategy);
+        if (_selectedId is not { } id) return;
+        await CategoriesProvider.DeactivateCategoryAsync(id);
+        _mode = DetailMode.None;
+        _selectedId = null;
         _data = await CategoriesProvider.GetCategoriesAsync();
     }
 
-    private async Task DeactivateAsync(int categoryId)
+    private async Task ReactivateAsync()
     {
-        await CategoriesProvider.DeactivateCategoryAsync(categoryId);
-        _data = await CategoriesProvider.GetCategoriesAsync();
-    }
-
-    private async Task CreateAsync()
-    {
-        if (string.IsNullOrWhiteSpace(_newName)) return;
-
-        await CategoriesProvider.CreateCategoryAsync(_newName, _newIsBudgeted, _newFundingStrategy);
-        _newName = "";
-        _newIsBudgeted = false;
-        _newFundingStrategy = FundingStrategies.None;
+        if (_selectedId is not { } id) return;
+        await CategoriesProvider.ReactivateCategoryAsync(id);
+        _mode = DetailMode.None;
+        _selectedId = null;
         _data = await CategoriesProvider.GetCategoriesAsync();
     }
 }

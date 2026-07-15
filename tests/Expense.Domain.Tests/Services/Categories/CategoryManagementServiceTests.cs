@@ -77,4 +77,31 @@ public class CategoryManagementServiceTests : DatabaseTestBase
         var reloaded = await Context.Categories.SingleAsync(c => c.Id == category.Id);
         Assert.False(reloaded.IsActive);
     }
+
+    [Fact]
+    public async Task ReactivateCategoryAsync_UndoesADeactivation()
+    {
+        var category = await _sut.CreateCategoryAsync(Context, "Reconsidered", isBudgeted: false, fundingStrategy: FundingStrategies.None);
+        await _sut.DeactivateCategoryAsync(Context, category.Id);
+
+        await _sut.ReactivateCategoryAsync(Context, category.Id);
+
+        var reloaded = await Context.Categories.SingleAsync(c => c.Id == category.Id);
+        Assert.True(reloaded.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateCategoryAsync_SavesNameBudgetedAndFundingStrategyTogether()
+    {
+        var category = await _sut.CreateCategoryAsync(Context, "Groceries", isBudgeted: true, fundingStrategy: FundingStrategies.None);
+
+        await _sut.UpdateCategoryAsync(Context, category.Id, "Groceries & Household", isBudgeted: false, fundingStrategy: FundingStrategies.PayInFullAmex);
+
+        var reloaded = await Context.Categories.SingleAsync(c => c.Id == category.Id);
+        Assert.Equal("Groceries & Household", reloaded.Name);
+        Assert.False(reloaded.IsBudgeted);
+
+        var rule = await Context.FundingRules.SingleAsync(r => r.CategoryId == category.Id);
+        Assert.Equal(FundingStrategies.PayInFullAmex, rule.Strategy);
+    }
 }

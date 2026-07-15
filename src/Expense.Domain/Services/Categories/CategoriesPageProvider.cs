@@ -35,21 +35,21 @@ public class CategoriesPageProvider(IDbContextFactory<ExpenseDbContext> contextF
         await categories.CreateCategoryAsync(context, name, isBudgeted, fundingStrategy);
     }
 
-    public async Task RenameCategoryAsync(int categoryId, string newName, CancellationToken cancellationToken = default)
+    public async Task UpdateCategoryAsync(int categoryId, string name, bool isBudgeted, string fundingStrategy, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await categories.RenameCategoryAsync(context, categoryId, newName);
-    }
-
-    public async Task SetFundingStrategyAsync(int categoryId, string strategy, CancellationToken cancellationToken = default)
-    {
-        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await categories.SetFundingStrategyAsync(context, categoryId, strategy);
+        await categories.UpdateCategoryAsync(context, categoryId, name, isBudgeted, fundingStrategy);
     }
 
     public async Task DeactivateCategoryAsync(int categoryId, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await categories.DeactivateCategoryAsync(context, categoryId);
+    }
+
+    public async Task ReactivateCategoryAsync(int categoryId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await categories.ReactivateCategoryAsync(context, categoryId);
     }
 }

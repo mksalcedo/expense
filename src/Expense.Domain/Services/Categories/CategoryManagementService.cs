@@ -53,4 +53,22 @@ public class CategoryManagementService
         category.IsActive = false;
         await context.SaveChangesAsync();
     }
+
+    public async Task ReactivateCategoryAsync(ExpenseDbContext context, int categoryId)
+    {
+        var category = await context.Categories.SingleAsync(c => c.Id == categoryId);
+        category.IsActive = true;
+        await context.SaveChangesAsync();
+    }
+
+    /// <summary>Combined save for the master-detail edit form: name, budgeted flag, and funding strategy all commit together.</summary>
+    public async Task UpdateCategoryAsync(ExpenseDbContext context, int categoryId, string name, bool isBudgeted, string fundingStrategy)
+    {
+        var category = await context.Categories.SingleAsync(c => c.Id == categoryId);
+        category.Name = name;
+        category.IsBudgeted = isBudgeted;
+        await context.SaveChangesAsync();
+
+        await SetFundingStrategyAsync(context, categoryId, fundingStrategy);
+    }
 }
