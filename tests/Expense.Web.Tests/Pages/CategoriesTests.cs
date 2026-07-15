@@ -123,6 +123,50 @@ public class CategoriesTests : BunitContext
     }
 
     [Fact]
+    public void Categories_ListShowsMinPlusExtraPayment_ForADebtAccountPaymentCategory()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        var discoverRow = cut.Find("#category-row-5"); // Discover Payment: MinPayment=173, no ExtraPayment
+
+        Assert.Contains("Expense", discoverRow.InnerHtml);
+        Assert.Contains("173.00", discoverRow.InnerHtml);
+        Assert.Contains("Monthly", discoverRow.InnerHtml);
+    }
+
+    [Fact]
+    public void Categories_ListShowsExtraPaymentOnly_ForAnActiveSpendingAccountPaymentCategory()
+    {
+        // Never folds in qualifying-spend categories' budgets (e.g. Groceries) - those
+        // already have their own rows on this list, so including them here would
+        // double-count if this column is ever summed.
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        var amexRow = cut.Find("#category-row-6"); // Amex Payment: no MinPayment, ExtraPayment=1100
+
+        Assert.Contains("Expense", amexRow.InnerHtml);
+        Assert.Contains(1100m.ToString("N2"), amexRow.InnerHtml);
+        Assert.Contains("Monthly", amexRow.InnerHtml);
+    }
+
+    [Fact]
+    public void Categories_ListShowsBlankBudgetColumns_ForAnAccountPaymentCategoryWithNoLinkedAccount()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        var newCardRow = cut.Find("#category-row-7"); // New Card Payment: no linked account yet
+
+        Assert.DoesNotContain("Expense", newCardRow.InnerHtml);
+        Assert.DoesNotContain("Monthly", newCardRow.InnerHtml);
+    }
+
+    [Fact]
     public void Categories_ListShowsBlankBudgetColumns_ForCategoriesWithNoBudget()
     {
         var provider = MakeProvider();

@@ -34,13 +34,14 @@ else
                 <tbody>
                     @foreach (var category in VisibleCategories())
                     {
+                        var columns = BudgetColumns(category);
                         <tr @key="category.Id" id="category-row-@category.Id" @onclick="() => SelectAsync(category)"
                             style="cursor:pointer; @(category.Id == _selectedId ? "font-weight:bold;" : "")">
                             <td>@category.Name</td>
                             <td>@FundingStrategyLabel(category.FundingStrategy)</td>
-                            <td>@category.BudgetDirection</td>
-                            <td>@(category.BudgetAmount?.ToString("N2") ?? "")</td>
-                            <td>@category.BudgetFrequency</td>
+                            <td>@columns.Direction</td>
+                            <td>@columns.Amount</td>
+                            <td>@columns.Frequency</td>
                             <td>@(category.IsActive ? "Active" : "Inactive")</td>
                         </tr>
                     }
@@ -221,6 +222,24 @@ else
         FundingStrategies.AccountPayment => "Account payment",
         _ => "None"
     };
+
+    private static (string? Direction, string? Amount, string? Frequency) BudgetColumns(CategoryRow category)
+    {
+        if (category.FundingStrategy == FundingStrategies.AccountPayment)
+        {
+            // MinPayment/ExtraPayment - whatever this account alone contributes. Never
+            // includes qualifying-spend categories' budgets (e.g. Groceries for Amex) -
+            // those already have their own rows on this same list, so folding them in
+            // here would double-count if this column is ever summed.
+            var amount = (category.LinkedAccountMinPayment ?? 0m) + (category.LinkedAccountExtraPayment ?? 0m);
+
+            return category.LinkedAccountId is null || amount == 0m
+                ? (null, null, null)
+                : ("Expense", amount.ToString("N2"), "Monthly");
+        }
+
+        return (category.BudgetDirection?.ToString(), category.BudgetAmount?.ToString("N2"), category.BudgetFrequency?.ToString());
+    }
 
     private List<CategoryRow> VisibleCategories()
     {

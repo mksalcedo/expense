@@ -8,7 +8,8 @@ namespace Expense.Domain.Services.Categories;
 
 /// <summary>Thin DI-composition wiring (like ForecastResultProvider) - all real logic lives in CategoryManagementService/BudgetManagementService/AccountManagementService.</summary>
 public class CategoriesPageProvider(
-    IDbContextFactory<ExpenseDbContext> contextFactory, CategoryManagementService categories, BudgetManagementService budgets, AccountManagementService accounts) : ICategoriesPageProvider
+    IDbContextFactory<ExpenseDbContext> contextFactory, CategoryManagementService categories,
+    BudgetManagementService budgets, AccountManagementService accounts) : ICategoriesPageProvider
 {
     public async Task<CategoriesPageData> GetCategoriesAsync(CancellationToken cancellationToken = default)
     {
