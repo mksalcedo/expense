@@ -18,6 +18,7 @@ public class CategoryTests : DatabaseTestBase
 
         Assert.Equal("Groceries", reloaded.Name);
         Assert.True(reloaded.IsBudgeted);
+        Assert.True(reloaded.IsActive); // defaults to active
     }
 
     [Fact]
