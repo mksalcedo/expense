@@ -4,6 +4,7 @@ using Expense.Domain.Services.Budgets;
 using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Forecast;
+using Expense.Domain.Services.OneTimeEvents;
 using Expense.Domain.Settings;
 using Expense.Web.Components;
 using Microsoft.EntityFrameworkCore;
@@ -39,6 +40,9 @@ builder.Services.AddScoped<IBudgetsPageProvider, BudgetsPageProvider>();
 
 builder.Services.AddScoped<AccountManagementService>();
 builder.Services.AddScoped<IAccountsPageProvider, AccountsPageProvider>();
+
+builder.Services.AddScoped<OneTimeEventManagementService>();
+builder.Services.AddScoped<IOneTimeEventsPageProvider, OneTimeEventsPageProvider>();
 
 var app = builder.Build();
 

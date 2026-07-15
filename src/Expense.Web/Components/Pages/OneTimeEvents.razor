@@ -1,0 +1,203 @@
+@page "/one-time-events"
+@using Expense.Domain.Entities
+@using Expense.Domain.Services.OneTimeEvents
+@inject IOneTimeEventsPageProvider EventsProvider
+
+<PageTitle>One-Time Events</PageTitle>
+
+<h1>One-Time Events</h1>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div style="display:flex; gap:2rem; align-items:flex-start;">
+        <div style="flex:1;">
+            <div>
+                <input id="event-filter" placeholder="Filter by name..." value="@_filterText"
+                       @oninput="e => _filterText = (string)e.Value!" />
+                <button id="new-event-button" @onclick="StartCreating">+ New Event</button>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th @onclick='() => Sort("Name")' style="cursor:pointer;">Name</th>
+                        <th @onclick='() => Sort("Direction")' style="cursor:pointer;">Direction</th>
+                        <th @onclick='() => Sort("Amount")' style="cursor:pointer;">Amount</th>
+                        <th @onclick='() => Sort("Date")' style="cursor:pointer;">Date</th>
+                        <th>Account</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var evt in VisibleEvents())
+                    {
+                        <tr @key="evt.Id" id="event-row-@evt.Id" @onclick="() => SelectAsync(evt)"
+                            style="cursor:pointer; @(evt.Id == _selectedId ? "font-weight:bold;" : "")">
+                            <td>@evt.Name</td>
+                            <td>@evt.Direction</td>
+                            <td>@evt.Amount.ToString("N2")</td>
+                            <td>@evt.Date.ToString("yyyy-MM-dd")</td>
+                            <td>@evt.AccountName</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div style="flex:1;">
+            @if (_mode == DetailMode.None)
+            {
+                <p>Select an event on the left to edit it, or click "New Event" to create one.</p>
+            }
+            else
+            {
+                <h2>@(_mode == DetailMode.Creating ? "New event" : "Edit event")</h2>
+                <div>
+                    <label>Name <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" /></label>
+                </div>
+                <div>
+                    <label>Direction
+                        <select id="detail-direction" @onchange="e => _formDirection = Enum.Parse<Direction>((string)e.Value!)">
+                            @foreach (var direction in Enum.GetValues<Direction>())
+                            {
+                                <option value="@direction" selected="@(_formDirection == direction)">@direction</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+                <div>
+                    <label>Amount
+                        <input id="detail-amount" type="number" step="0.01" value="@_formAmount"
+                               @onchange="e => _formAmount = decimal.Parse((string)e.Value!)" />
+                    </label>
+                </div>
+                <div>
+                    <label>Date
+                        <input id="detail-date" type="date" value="@_formDate.ToString("yyyy-MM-dd")"
+                               @onchange="e => _formDate = DateOnly.Parse((string)e.Value!)" />
+                    </label>
+                </div>
+                <div>
+                    <label>Account
+                        <select id="detail-account" @onchange="e => _formAccountId = int.Parse((string)e.Value!)">
+                            <option value="">Select an account...</option>
+                            @foreach (var account in _data!.Accounts)
+                            {
+                                <option value="@account.Id" selected="@(_formAccountId == account.Id)">@account.Name</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+                <button id="detail-save" @onclick="SaveAsync">Save</button>
+                @if (_mode == DetailMode.Editing)
+                {
+                    <button id="detail-delete" @onclick="DeleteAsync">Delete</button>
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private enum DetailMode { None, Editing, Creating }
+
+    private OneTimeEventsPageData? _data;
+    private DetailMode _mode = DetailMode.None;
+    private int? _selectedId;
+    private string _filterText = "";
+    private string _sortColumn = "Date";
+    private bool _sortAscending = true;
+
+    private string _formName = "";
+    private Direction _formDirection = Direction.Expense;
+    private decimal _formAmount;
+    private DateOnly _formDate = DateOnly.FromDateTime(DateTime.Today);
+    private int? _formAccountId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _data = await EventsProvider.GetEventsAsync();
+    }
+
+    private List<OneTimeEventRow> VisibleEvents()
+    {
+        var filtered = _data!.Events
+            .Where(e => string.IsNullOrWhiteSpace(_filterText) || e.Name.Contains(_filterText, StringComparison.OrdinalIgnoreCase));
+
+        Func<OneTimeEventRow, object> keySelector = _sortColumn switch
+        {
+            "Direction" => e => e.Direction,
+            "Amount" => e => e.Amount,
+            "Date" => e => e.Date,
+            _ => e => e.Name
+        };
+
+        var sorted = _sortAscending ? filtered.OrderBy(keySelector) : filtered.OrderByDescending(keySelector);
+        return sorted.ToList();
+    }
+
+    private void Sort(string column)
+    {
+        if (_sortColumn == column)
+        {
+            _sortAscending = !_sortAscending;
+        }
+        else
+        {
+            _sortColumn = column;
+            _sortAscending = true;
+        }
+    }
+
+    private void StartCreating()
+    {
+        _mode = DetailMode.Creating;
+        _selectedId = null;
+        _formName = "";
+        _formDirection = Direction.Expense;
+        _formAmount = 0m;
+        _formDate = DateOnly.FromDateTime(DateTime.Today);
+        _formAccountId = null;
+    }
+
+    private Task SelectAsync(OneTimeEventRow evt)
+    {
+        _mode = DetailMode.Editing;
+        _selectedId = evt.Id;
+        _formName = evt.Name;
+        _formDirection = evt.Direction;
+        _formAmount = evt.Amount;
+        _formDate = evt.Date;
+        _formAccountId = evt.AccountId;
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_formName) || _formAccountId is not { } accountId) return;
+
+        if (_mode == DetailMode.Creating)
+        {
+            await EventsProvider.CreateEventAsync(_formName, _formAmount, _formDirection, _formDate, accountId);
+        }
+        else if (_selectedId is { } id)
+        {
+            await EventsProvider.UpdateEventAsync(id, _formName, _formAmount, _formDirection, _formDate, accountId);
+        }
+
+        _mode = DetailMode.None;
+        _selectedId = null;
+        _data = await EventsProvider.GetEventsAsync();
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selectedId is not { } id) return;
+        await EventsProvider.DeleteEventAsync(id);
+        _mode = DetailMode.None;
+        _selectedId = null;
+        _data = await EventsProvider.GetEventsAsync();
+    }
+}
