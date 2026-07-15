@@ -1,0 +1,107 @@
+@page "/categories"
+@using Expense.Domain.Entities
+@using Expense.Domain.Services.Categories
+@inject ICategoriesPageProvider CategoriesProvider
+
+<PageTitle>Categories</PageTitle>
+
+<h1>Categories</h1>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Budgeted</th>
+                <th>Funding strategy</th>
+                <th>Status</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var category in _data.Categories)
+            {
+                <tr @key="category.Id">
+                    <td>
+                        <input id="category-name-@category.Id" value="@category.Name"
+                               @onchange="e => RenameAsync(category.Id, (string)e.Value!)" />
+                    </td>
+                    <td>@(category.IsBudgeted ? "Yes" : "No")</td>
+                    <td>
+                        <select id="category-funding-@category.Id"
+                                @onchange="e => SetFundingStrategyAsync(category.Id, (string)e.Value!)">
+                            <option value="@FundingStrategies.None" selected="@(category.FundingStrategy == FundingStrategies.None)">None</option>
+                            <option value="@FundingStrategies.PayInFullAmex" selected="@(category.FundingStrategy == FundingStrategies.PayInFullAmex)">Pay in full (Amex)</option>
+                        </select>
+                    </td>
+                    <td>@(category.IsActive ? "Active" : "Inactive")</td>
+                    <td>
+                        @if (category.IsActive)
+                        {
+                            <button id="category-deactivate-@category.Id" @onclick="() => DeactivateAsync(category.Id)">Deactivate</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <h2>New category</h2>
+    <div>
+        <input id="new-category-name" @bind="_newName" placeholder="Name" />
+        <label>
+            Budgeted <input id="new-category-budgeted" type="checkbox" @bind="_newIsBudgeted" />
+        </label>
+        <select id="new-category-funding" @bind="_newFundingStrategy">
+            <option value="@FundingStrategies.None">None</option>
+            <option value="@FundingStrategies.PayInFullAmex">Pay in full (Amex)</option>
+        </select>
+        <button id="new-category-submit" @onclick="CreateAsync">Create</button>
+    </div>
+}
+
+@code {
+    private CategoriesPageData? _data;
+    private string _newName = "";
+    private bool _newIsBudgeted;
+    private string _newFundingStrategy = FundingStrategies.None;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _data = await CategoriesProvider.GetCategoriesAsync();
+    }
+
+    private async Task RenameAsync(int categoryId, string newName)
+    {
+        await CategoriesProvider.RenameCategoryAsync(categoryId, newName);
+        _data = await CategoriesProvider.GetCategoriesAsync();
+    }
+
+    private async Task SetFundingStrategyAsync(int categoryId, string strategy)
+    {
+        await CategoriesProvider.SetFundingStrategyAsync(categoryId, strategy);
+        _data = await CategoriesProvider.GetCategoriesAsync();
+    }
+
+    private async Task DeactivateAsync(int categoryId)
+    {
+        await CategoriesProvider.DeactivateCategoryAsync(categoryId);
+        _data = await CategoriesProvider.GetCategoriesAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newName)) return;
+
+        await CategoriesProvider.CreateCategoryAsync(_newName, _newIsBudgeted, _newFundingStrategy);
+        _newName = "";
+        _newIsBudgeted = false;
+        _newFundingStrategy = FundingStrategies.None;
+        _data = await CategoriesProvider.GetCategoriesAsync();
+    }
+}

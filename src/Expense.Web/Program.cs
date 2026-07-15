@@ -1,5 +1,6 @@
 using Expense.Domain.Data;
 using Expense.Domain.Services.Budgets;
+using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Forecast;
 using Expense.Domain.Settings;
@@ -28,6 +29,9 @@ builder.Services.AddScoped<IForecastResultProvider, ForecastResultProvider>();
 
 builder.Services.AddScoped<CategorizationService>();
 builder.Services.AddScoped<IReviewQueueProvider, ReviewQueueProvider>();
+
+builder.Services.AddScoped<CategoryManagementService>();
+builder.Services.AddScoped<ICategoriesPageProvider, CategoriesPageProvider>();
 
 var app = builder.Build();
 
