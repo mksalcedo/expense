@@ -1,0 +1,244 @@
+@page "/accounts"
+@using Expense.Domain.Entities
+@using Expense.Domain.Services.Accounts
+@inject IAccountsPageProvider AccountsProvider
+
+<PageTitle>Accounts</PageTitle>
+
+<h1>Accounts</h1>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div style="display:flex; gap:2rem; align-items:flex-start;">
+        <div style="flex:1;">
+            <div>
+                <input id="account-filter" placeholder="Filter by name..." value="@_filterText"
+                       @oninput="e => _filterText = (string)e.Value!" />
+                <button id="new-account-button" @onclick="StartCreating">+ New Account</button>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th @onclick='() => Sort("Name")' style="cursor:pointer;">Name</th>
+                        <th @onclick='() => Sort("Type")' style="cursor:pointer;">Type</th>
+                        <th @onclick='() => Sort("Status")' style="cursor:pointer;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var account in VisibleAccounts())
+                    {
+                        <tr @key="account.Id" id="account-row-@account.Id" @onclick="() => SelectAsync(account)"
+                            style="cursor:pointer; @(account.Id == _selectedId ? "font-weight:bold;" : "")">
+                            <td>@account.Name</td>
+                            <td>@account.Type</td>
+                            <td>@(account.IsActive ? "Active" : "Inactive")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div style="flex:1;">
+            @if (_mode == DetailMode.None)
+            {
+                <p>Select an account on the left to edit it, or click "New Account" to create one.</p>
+            }
+            else
+            {
+                <h2>@(_mode == DetailMode.Creating ? "New account" : "Edit account")</h2>
+                <div>
+                    <label>Name <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" /></label>
+                </div>
+                @if (_mode == DetailMode.Creating)
+                {
+                    <div>
+                        <label>Type
+                            <select id="detail-type" @onchange="e => _formType = Enum.Parse<AccountType>((string)e.Value!)">
+                                @foreach (var type in Enum.GetValues<AccountType>())
+                                {
+                                    <option value="@type" selected="@(_formType == type)">@type</option>
+                                }
+                            </select>
+                        </label>
+                    </div>
+                }
+                else
+                {
+                    <p>Type: @_formType</p>
+                }
+                @if (_formType == AccountType.Debt || _formType == AccountType.ActiveSpending)
+                {
+                    @if (_formType == AccountType.Debt)
+                    {
+                        <div>
+                            <label>Min payment
+                                <input id="detail-min-payment" type="number" step="0.01" value="@_formMinPayment"
+                                       @onchange="e => _formMinPayment = ParseNullableDecimal((string)e.Value!)" />
+                            </label>
+                        </div>
+                    }
+                    <div>
+                        <label>Extra payment
+                            <input id="detail-extra-payment" type="number" step="0.01" value="@_formExtraPayment"
+                                   @onchange="e => _formExtraPayment = ParseNullableDecimal((string)e.Value!)" />
+                        </label>
+                    </div>
+                    <div>
+                        <label>Payment due day
+                            <input id="detail-payment-due-day" type="number" value="@_formPaymentDueDay"
+                                   @onchange="e => _formPaymentDueDay = ParseNullableInt((string)e.Value!)" />
+                        </label>
+                    </div>
+                    @if (_formType == AccountType.ActiveSpending)
+                    {
+                        <div>
+                            <label>Statement close day
+                                <input id="detail-statement-close-day" type="number" value="@_formStatementCloseDay"
+                                       @onchange="e => _formStatementCloseDay = ParseNullableInt((string)e.Value!)" />
+                            </label>
+                        </div>
+                    }
+                }
+                <button id="detail-save" @onclick="SaveAsync">Save</button>
+                @if (_mode == DetailMode.Editing)
+                {
+                    @if (_selectedIsActive)
+                    {
+                        <button id="detail-deactivate" @onclick="DeactivateAsync">Deactivate</button>
+                    }
+                    else
+                    {
+                        <button id="detail-reactivate" @onclick="ReactivateAsync">Reactivate</button>
+                    }
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private enum DetailMode { None, Editing, Creating }
+
+    private AccountsPageData? _data;
+    private DetailMode _mode = DetailMode.None;
+    private int? _selectedId;
+    private bool _selectedIsActive;
+    private string _filterText = "";
+    private string _sortColumn = "Name";
+    private bool _sortAscending = true;
+
+    private string _formName = "";
+    private AccountType _formType = AccountType.Debt;
+    private decimal? _formMinPayment;
+    private decimal? _formExtraPayment;
+    private int? _formPaymentDueDay;
+    private int? _formStatementCloseDay;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _data = await AccountsProvider.GetAccountsAsync();
+    }
+
+    private static decimal? ParseNullableDecimal(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : decimal.Parse(value);
+
+    private static int? ParseNullableInt(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : int.Parse(value);
+
+    private List<AccountRow> VisibleAccounts()
+    {
+        var filtered = _data!.Accounts
+            .Where(a => string.IsNullOrWhiteSpace(_filterText) || a.Name.Contains(_filterText, StringComparison.OrdinalIgnoreCase));
+
+        Func<AccountRow, object> keySelector = _sortColumn switch
+        {
+            "Type" => a => a.Type,
+            "Status" => a => a.IsActive,
+            _ => a => a.Name
+        };
+
+        var sorted = _sortAscending ? filtered.OrderBy(keySelector) : filtered.OrderByDescending(keySelector);
+        return sorted.ToList();
+    }
+
+    private void Sort(string column)
+    {
+        if (_sortColumn == column)
+        {
+            _sortAscending = !_sortAscending;
+        }
+        else
+        {
+            _sortColumn = column;
+            _sortAscending = true;
+        }
+    }
+
+    private void StartCreating()
+    {
+        _mode = DetailMode.Creating;
+        _selectedId = null;
+        _formName = "";
+        _formType = AccountType.Debt;
+        _formMinPayment = null;
+        _formExtraPayment = null;
+        _formPaymentDueDay = null;
+        _formStatementCloseDay = null;
+    }
+
+    private Task SelectAsync(AccountRow account)
+    {
+        _mode = DetailMode.Editing;
+        _selectedId = account.Id;
+        _selectedIsActive = account.IsActive;
+        _formName = account.Name;
+        _formType = account.Type;
+        _formMinPayment = account.MinPayment;
+        _formExtraPayment = account.ExtraPayment;
+        _formPaymentDueDay = account.PaymentDueDay;
+        _formStatementCloseDay = account.StatementCloseDay;
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_formName)) return;
+
+        if (_mode == DetailMode.Creating)
+        {
+            await AccountsProvider.CreateAccountAsync(
+                _formName, _formType, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay);
+        }
+        else if (_selectedId is { } id)
+        {
+            await AccountsProvider.UpdateAccountAsync(
+                id, _formName, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay);
+        }
+
+        _mode = DetailMode.None;
+        _selectedId = null;
+        _data = await AccountsProvider.GetAccountsAsync();
+    }
+
+    private async Task DeactivateAsync()
+    {
+        if (_selectedId is not { } id) return;
+        await AccountsProvider.DeactivateAccountAsync(id);
+        _mode = DetailMode.None;
+        _selectedId = null;
+        _data = await AccountsProvider.GetAccountsAsync();
+    }
+
+    private async Task ReactivateAsync()
+    {
+        if (_selectedId is not { } id) return;
+        await AccountsProvider.ReactivateAccountAsync(id);
+        _mode = DetailMode.None;
+        _selectedId = null;
+        _data = await AccountsProvider.GetAccountsAsync();
+    }
+}

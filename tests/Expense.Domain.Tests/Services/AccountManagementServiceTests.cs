@@ -71,4 +71,45 @@ public class AccountManagementServiceTests : DatabaseTestBase
         Assert.False(reloadedAccount.IsActive);
         Assert.Equal(-1107.24m, historicalTransaction.Amount);
     }
+
+    [Fact]
+    public async Task ReactivateAccountAsync_UndoesADeactivation()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "SoFi", type: AccountType.Debt);
+        await _sut.DeactivateAccountAsync(Context, account.Id);
+
+        await _sut.ReactivateAccountAsync(Context, account.Id);
+
+        var reloaded = await Context.Accounts.SingleAsync(a => a.Id == account.Id);
+        Assert.True(reloaded.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateAccountAsync_SavesNameAndPaymentFieldsTogether()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "Discover", type: AccountType.Debt);
+
+        await _sut.UpdateAccountAsync(Context, account.Id, "Discover It", minPayment: 173m, extraPayment: 50m,
+            paymentDueDay: 3, statementCloseDay: null);
+
+        var reloaded = await Context.Accounts.SingleAsync(a => a.Id == account.Id);
+        Assert.Equal("Discover It", reloaded.Name);
+        Assert.Equal(173m, reloaded.MinPayment);
+        Assert.Equal(50m, reloaded.ExtraPayment);
+        Assert.Equal(3, reloaded.PaymentDueDay);
+        Assert.Null(reloaded.StatementCloseDay);
+    }
+
+    [Fact]
+    public async Task UpdateAccountAsync_ForAmex_CanSetStatementCloseDay()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "Amex", type: AccountType.ActiveSpending);
+
+        await _sut.UpdateAccountAsync(Context, account.Id, "Amex", minPayment: null, extraPayment: 1100m,
+            paymentDueDay: 18, statementCloseDay: 24);
+
+        var reloaded = await Context.Accounts.SingleAsync(a => a.Id == account.Id);
+        Assert.Equal(24, reloaded.StatementCloseDay);
+        Assert.Equal(1100m, reloaded.ExtraPayment);
+    }
 }

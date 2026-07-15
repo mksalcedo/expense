@@ -1,4 +1,5 @@
 using Expense.Domain.Data;
+using Expense.Domain.Services.Accounts;
 using Expense.Domain.Services.Budgets;
 using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Categorization;
@@ -35,6 +36,9 @@ builder.Services.AddScoped<ICategoriesPageProvider, CategoriesPageProvider>();
 
 builder.Services.AddScoped<BudgetManagementService>();
 builder.Services.AddScoped<IBudgetsPageProvider, BudgetsPageProvider>();
+
+builder.Services.AddScoped<AccountManagementService>();
+builder.Services.AddScoped<IAccountsPageProvider, AccountsPageProvider>();
 
 var app = builder.Build();
 

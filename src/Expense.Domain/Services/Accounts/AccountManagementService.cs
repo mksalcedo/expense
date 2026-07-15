@@ -56,4 +56,25 @@ public class AccountManagementService
         account.IsActive = false;
         await context.SaveChangesAsync();
     }
+
+    public async Task ReactivateAccountAsync(ExpenseDbContext context, int accountId)
+    {
+        var account = await context.Accounts.SingleAsync(a => a.Id == accountId);
+        account.IsActive = true;
+        await context.SaveChangesAsync();
+    }
+
+    /// <summary>Combined save for the master-detail edit form: name and payment fields commit together. Type is fixed at creation.</summary>
+    public async Task UpdateAccountAsync(
+        ExpenseDbContext context, int accountId, string name,
+        decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay)
+    {
+        var account = await context.Accounts.SingleAsync(a => a.Id == accountId);
+        account.Name = name;
+        account.MinPayment = minPayment;
+        account.ExtraPayment = extraPayment;
+        account.PaymentDueDay = paymentDueDay;
+        account.StatementCloseDay = statementCloseDay;
+        await context.SaveChangesAsync();
+    }
 }
