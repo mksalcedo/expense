@@ -52,26 +52,26 @@ public class CategoriesPageProvider(
         return new CategoriesPageData { Categories = rows, Accounts = accounts };
     }
 
-    public async Task CreateCategoryAsync(string name, string fundingStrategy, DirectBudgetInput? directBudget = null, CancellationToken cancellationToken = default)
+    public async Task CreateCategoryAsync(string name, string fundingStrategy, BudgetInput? budget = null, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var category = await categories.CreateCategoryAsync(context, name, fundingStrategy);
-        await ApplyDirectBudgetAsync(context, category.Id, directBudget);
+        await ApplyBudgetAsync(context, category.Id, budget);
     }
 
-    public async Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, DirectBudgetInput? directBudget = null, CancellationToken cancellationToken = default)
+    public async Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, BudgetInput? budget = null, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await categories.UpdateCategoryAsync(context, categoryId, name, fundingStrategy);
-        await ApplyDirectBudgetAsync(context, categoryId, directBudget);
+        await ApplyBudgetAsync(context, categoryId, budget);
     }
 
-    private async Task ApplyDirectBudgetAsync(ExpenseDbContext context, int categoryId, DirectBudgetInput? directBudget)
+    private async Task ApplyBudgetAsync(ExpenseDbContext context, int categoryId, BudgetInput? budget)
     {
-        if (directBudget is null) return;
+        if (budget is null) return;
 
-        await budgets.SetBudgetAsync(context, categoryId, directBudget.Amount, directBudget.Frequency,
-            DateOnly.FromDateTime(DateTime.Today), directBudget.Direction, directBudget.Anchor, directBudget.AccountId);
+        await budgets.SetBudgetAsync(context, categoryId, budget.Amount, budget.Frequency,
+            DateOnly.FromDateTime(DateTime.Today), budget.Direction, budget.Anchor, budget.AccountId);
     }
 
     public async Task DeactivateCategoryAsync(int categoryId, CancellationToken cancellationToken = default)

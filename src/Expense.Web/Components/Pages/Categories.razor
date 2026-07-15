@@ -25,6 +25,9 @@ else
                     <tr>
                         <th @onclick='() => Sort("Name")' style="cursor:pointer;">Name</th>
                         <th @onclick='() => Sort("Funding")' style="cursor:pointer;">Funding strategy</th>
+                        <th>Direction</th>
+                        <th>Amount</th>
+                        <th>Frequency</th>
                         <th @onclick='() => Sort("Status")' style="cursor:pointer;">Status</th>
                     </tr>
                 </thead>
@@ -35,6 +38,9 @@ else
                             style="cursor:pointer; @(category.Id == _selectedId ? "font-weight:bold;" : "")">
                             <td>@category.Name</td>
                             <td>@FundingStrategyLabel(category.FundingStrategy)</td>
+                            <td>@category.BudgetDirection</td>
+                            <td>@(category.BudgetAmount?.ToString("N2") ?? "")</td>
+                            <td>@category.BudgetFrequency</td>
                             <td>@(category.IsActive ? "Active" : "Inactive")</td>
                         </tr>
                     }
@@ -79,6 +85,9 @@ else
                             </select>
                         </label>
                     </div>
+                }
+                @if (_formFundingStrategy == FundingStrategies.Direct || _formFundingStrategy == FundingStrategies.PayInFullAmex)
+                {
                     <div>
                         <label>Amount
                             <input id="detail-amount" type="number" step="0.01" value="@_formAmount"
@@ -95,6 +104,9 @@ else
                             </select>
                         </label>
                     </div>
+                }
+                @if (_formFundingStrategy == FundingStrategies.Direct)
+                {
                     <div>
                         <label>Anchor date
                             <input id="detail-anchor" type="date" value="@_formAnchor.ToString("yyyy-MM-dd")"
@@ -223,17 +235,22 @@ else
     {
         if (string.IsNullOrWhiteSpace(_formName)) return;
 
-        DirectBudgetInput? directBudget = _formFundingStrategy == FundingStrategies.Direct && _formAccountId is { } accountId
-            ? new DirectBudgetInput(_formAmount, _formFrequency, _formDirection, _formAnchor, accountId)
-            : null;
+        BudgetInput? budget = _formFundingStrategy switch
+        {
+            FundingStrategies.Direct when _formAccountId is { } accountId =>
+                new BudgetInput(_formAmount, _formFrequency, _formDirection, _formAnchor, accountId),
+            FundingStrategies.PayInFullAmex =>
+                new BudgetInput(_formAmount, _formFrequency),
+            _ => null
+        };
 
         if (_mode == DetailMode.Creating)
         {
-            await CategoriesProvider.CreateCategoryAsync(_formName, _formFundingStrategy, directBudget);
+            await CategoriesProvider.CreateCategoryAsync(_formName, _formFundingStrategy, budget);
         }
         else if (_selectedId is { } id)
         {
-            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formFundingStrategy, directBudget);
+            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formFundingStrategy, budget);
         }
 
         _mode = DetailMode.None;

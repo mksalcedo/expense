@@ -15,12 +15,12 @@ public class CategoriesTests : BunitContext
 
         public string? LastCreatedName { get; private set; }
         public string? LastCreatedFundingStrategy { get; private set; }
-        public DirectBudgetInput? LastCreatedDirectBudget { get; private set; }
+        public BudgetInput? LastCreatedBudget { get; private set; }
 
         public int? LastUpdatedId { get; private set; }
         public string? LastUpdatedName { get; private set; }
         public string? LastUpdatedFundingStrategy { get; private set; }
-        public DirectBudgetInput? LastUpdatedDirectBudget { get; private set; }
+        public BudgetInput? LastUpdatedBudget { get; private set; }
 
         public int? LastDeactivatedId { get; private set; }
         public int? LastReactivatedId { get; private set; }
@@ -28,20 +28,20 @@ public class CategoriesTests : BunitContext
         public Task<CategoriesPageData> GetCategoriesAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new CategoriesPageData { Categories = Rows, Accounts = Accounts });
 
-        public Task CreateCategoryAsync(string name, string fundingStrategy, DirectBudgetInput? directBudget = null, CancellationToken cancellationToken = default)
+        public Task CreateCategoryAsync(string name, string fundingStrategy, BudgetInput? budget = null, CancellationToken cancellationToken = default)
         {
             LastCreatedName = name;
             LastCreatedFundingStrategy = fundingStrategy;
-            LastCreatedDirectBudget = directBudget;
+            LastCreatedBudget = budget;
             return Task.CompletedTask;
         }
 
-        public Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, DirectBudgetInput? directBudget = null, CancellationToken cancellationToken = default)
+        public Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, BudgetInput? budget = null, CancellationToken cancellationToken = default)
         {
             LastUpdatedId = categoryId;
             LastUpdatedName = name;
             LastUpdatedFundingStrategy = fundingStrategy;
-            LastUpdatedDirectBudget = directBudget;
+            LastUpdatedBudget = budget;
             return Task.CompletedTask;
         }
 
@@ -62,7 +62,11 @@ public class CategoriesTests : BunitContext
     {
         Rows =
         [
-            new CategoryRow { Id = 1, Name = "Groceries", IsActive = true, FundingStrategy = FundingStrategies.PayInFullAmex },
+            new CategoryRow
+            {
+                Id = 1, Name = "Groceries", IsActive = true, FundingStrategy = FundingStrategies.PayInFullAmex,
+                BudgetAmount = 450m, BudgetFrequency = Frequency.Weekly, BudgetDirection = Direction.Expense
+            },
             new CategoryRow { Id = 2, Name = "Off-Budget/Misc", IsActive = true, FundingStrategy = FundingStrategies.None },
             new CategoryRow { Id = 3, Name = "Discontinued Thing", IsActive = false, FundingStrategy = FundingStrategies.None },
             new CategoryRow
@@ -87,6 +91,33 @@ public class CategoriesTests : BunitContext
         Assert.Contains("Groceries", cut.Markup);
         Assert.Contains("Off-Budget/Misc", cut.Markup);
         Assert.DoesNotContain("id=\"detail-name\"", cut.Markup);
+    }
+
+    [Fact]
+    public void Categories_ListShowsDirectionAmountAndFrequency_ForCategoriesThatHaveABudget()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        var groceriesRow = cut.Find("#category-row-1");
+
+        Assert.Contains("Expense", groceriesRow.InnerHtml);
+        Assert.Contains("450", groceriesRow.InnerHtml);
+        Assert.Contains("Weekly", groceriesRow.InnerHtml);
+    }
+
+    [Fact]
+    public void Categories_ListShowsBlankBudgetColumns_ForCategoriesWithNoBudget()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        var offBudgetRow = cut.Find("#category-row-2");
+
+        Assert.DoesNotContain("Expense", offBudgetRow.InnerHtml);
+        Assert.DoesNotContain("Income", offBudgetRow.InnerHtml);
     }
 
     [Fact]
@@ -175,13 +206,13 @@ public class CategoriesTests : BunitContext
     }
 
     [Fact]
-    public void SelectingANonDirectCategory_HidesTheDirectBudgetFields()
+    public void SelectingANoneStrategyCategory_HidesAllBudgetFields()
     {
         var provider = MakeProvider();
         Services.AddSingleton<ICategoriesPageProvider>(provider);
 
         var cut = Render<Categories>();
-        cut.Find("#category-row-1").Click(); // Groceries: pay-in-full-amex, not Direct
+        cut.Find("#category-row-2").Click(); // Off-Budget/Misc: None
 
         Assert.Empty(cut.FindAll("#detail-amount"));
     }
@@ -212,25 +243,25 @@ public class CategoriesTests : BunitContext
         cut.Find("#detail-save").Click();
 
         Assert.Equal(4, provider.LastUpdatedId);
-        Assert.NotNull(provider.LastUpdatedDirectBudget);
-        Assert.Equal(2750.00m, provider.LastUpdatedDirectBudget!.Amount);
-        Assert.Equal(Frequency.Monthly, provider.LastUpdatedDirectBudget.Frequency);
-        Assert.Equal(Direction.Expense, provider.LastUpdatedDirectBudget.Direction);
-        Assert.Equal(new DateOnly(2026, 1, 4), provider.LastUpdatedDirectBudget.Anchor);
-        Assert.Equal(10, provider.LastUpdatedDirectBudget.AccountId);
+        Assert.NotNull(provider.LastUpdatedBudget);
+        Assert.Equal(2750.00m, provider.LastUpdatedBudget!.Amount);
+        Assert.Equal(Frequency.Monthly, provider.LastUpdatedBudget.Frequency);
+        Assert.Equal(Direction.Expense, provider.LastUpdatedBudget.Direction);
+        Assert.Equal(new DateOnly(2026, 1, 4), provider.LastUpdatedBudget.Anchor);
+        Assert.Equal(10, provider.LastUpdatedBudget.AccountId);
     }
 
     [Fact]
-    public void SavingANonDirectCategory_PassesNoBudgetInput()
+    public void SavingANoneStrategyCategory_PassesNoBudgetInput()
     {
         var provider = MakeProvider();
         Services.AddSingleton<ICategoriesPageProvider>(provider);
 
         var cut = Render<Categories>();
-        cut.Find("#category-row-1").Click();
+        cut.Find("#category-row-2").Click(); // Off-Budget/Misc: None
         cut.Find("#detail-save").Click();
 
-        Assert.Null(provider.LastUpdatedDirectBudget);
+        Assert.Null(provider.LastUpdatedBudget);
     }
 
     [Fact]
@@ -258,5 +289,41 @@ public class CategoriesTests : BunitContext
 
         Assert.NotNull(cut.Find("#detail-amount"));
         Assert.NotNull(cut.Find("#detail-account"));
+    }
+
+    [Fact]
+    public void SelectingAPayInFullAmexCategory_ShowsAmountAndFrequencyButNotDirectionAnchorOrAccount()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click(); // Groceries: pay-in-full-amex
+
+        Assert.Equal("450", cut.Find("#detail-amount").GetAttribute("value"));
+        Assert.NotNull(cut.Find("#detail-frequency"));
+        Assert.Empty(cut.FindAll("#detail-direction"));
+        Assert.Empty(cut.FindAll("#detail-anchor"));
+        Assert.Empty(cut.FindAll("#detail-account"));
+    }
+
+    [Fact]
+    public void SavingAPayInFullAmexCategory_PassesOnlyAmountAndFrequency()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click(); // Groceries
+        cut.Find("#detail-amount").Change("500");
+        cut.Find("#detail-frequency").Change(nameof(Frequency.Weekly));
+        cut.Find("#detail-save").Click();
+
+        Assert.NotNull(provider.LastUpdatedBudget);
+        Assert.Equal(500m, provider.LastUpdatedBudget!.Amount);
+        Assert.Equal(Frequency.Weekly, provider.LastUpdatedBudget.Frequency);
+        Assert.Equal(Direction.Expense, provider.LastUpdatedBudget.Direction);
+        Assert.Null(provider.LastUpdatedBudget.Anchor);
+        Assert.Null(provider.LastUpdatedBudget.AccountId);
     }
 }
