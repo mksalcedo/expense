@@ -64,5 +64,9 @@ public class ForecastTests : BunitContext
 
         var link = cut.Find("#export-excel-link");
         Assert.Equal("/export/forecast.xlsx", link.GetAttribute("href"));
+        // target="_blank" so Blazor Server's SPA navigation interception doesn't try to
+        // treat this file-download endpoint as a page navigation (it isn't one, and
+        // otherwise the click throws a TaskCanceledException in the circuit).
+        Assert.Equal("_blank", link.GetAttribute("target"));
     }
 }

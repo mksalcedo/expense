@@ -269,6 +269,122 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         Assert.Equal(-850m, amountCell.GetValue<decimal>());
     }
 
+    [Fact]
+    public async Task Export_HeaderRows_AreBold()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var forecast = workbook.Worksheet("Forecast");
+
+        Assert.True(assumptions.Cell(1, 1).Style.Font.Bold);
+        Assert.True(forecast.Cell(1, 1).Style.Font.Bold);
+    }
+
+    [Fact]
+    public async Task Export_DateColumn_IsCenterAligned()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        Context.OneTimeEvents.Add(new OneTimeEvent
+        {
+            Name = "HVAC repair", Amount = 850m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 20), AccountId = checking.Id
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var forecast = workbook.Worksheet("Forecast");
+        var row = FindRowByDescription(forecast, "HVAC repair");
+
+        Assert.Equal(XLAlignmentHorizontalValues.Center, forecast.Cell(row, 1).Style.Alignment.Horizontal);
+    }
+
+    [Fact]
+    public async Task Export_AmountAndBalanceColumns_AreRightAlignedAndCurrencyFormatted()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        Context.OneTimeEvents.Add(new OneTimeEvent
+        {
+            Name = "HVAC repair", Amount = 850m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 20), AccountId = checking.Id
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var forecast = workbook.Worksheet("Forecast");
+        var row = FindRowByDescription(forecast, "HVAC repair");
+
+        var amountCell = forecast.Cell(row, 3);
+        var balanceCell = forecast.Cell(row, 4);
+
+        Assert.Equal(XLAlignmentHorizontalValues.Right, amountCell.Style.Alignment.Horizontal);
+        Assert.Equal(XLAlignmentHorizontalValues.Right, balanceCell.Style.Alignment.Horizontal);
+        Assert.Equal("$#,##0.00", amountCell.Style.NumberFormat.Format);
+        Assert.Equal("$#,##0.00", balanceCell.Style.NumberFormat.Format);
+    }
+
+    [Fact]
+    public async Task Export_AssumptionsAmountColumns_AreCurrencyFormatted()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var truist = new Category { Name = "Truist" };
+        Context.Categories.Add(truist);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = truist.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = truist.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 4), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var row = FindRowByName(assumptions, "Truist");
+
+        Assert.Equal("$#,##0.00", assumptions.Cell(row, 2).Style.NumberFormat.Format); // Amount
+        Assert.Equal("$#,##0.00", assumptions.Cell(row, 3).Style.NumberFormat.Format); // Extra
+        Assert.Equal("$#,##0.00", assumptions.Cell(row, 4).Style.NumberFormat.Format); // Total
+    }
+
+    [Fact]
+    public async Task Export_ColumnsAreWideEnoughForTheirContent()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var category = new Category { Name = "Chase Sapphire Reserve Payment" };
+        Context.Categories.Add(category);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = category.Id, Amount = 459m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 4), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var forecast = workbook.Worksheet("Forecast");
+        // ClosedXML's default column width (8.43) is far too narrow for a description
+        // this long - AdjustToContents must have actually run, not just be left at default.
+        Assert.True(forecast.Column(2).Width > 20);
+    }
+
     private static int FindRowByName(IXLWorksheet sheet, string name) =>
         sheet.RowsUsed().Single(r => r.Cell(1).GetString() == name).RowNumber();
 

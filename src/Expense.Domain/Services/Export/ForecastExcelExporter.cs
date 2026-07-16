@@ -191,7 +191,27 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
             excelRow++;
         }
 
+        ApplyFormatting(assumptions, forecast);
+
         return workbook;
+    }
+
+    private const string CurrencyFormat = "$#,##0.00";
+
+    private static void ApplyFormatting(IXLWorksheet assumptions, IXLWorksheet forecast)
+    {
+        assumptions.Row(1).Style.Font.Bold = true;
+        forecast.Row(1).Style.Font.Bold = true;
+
+        assumptions.Columns(AmountCol, TotalCol).Style.NumberFormat.Format = CurrencyFormat;
+        assumptions.Columns(AmountCol, TotalCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+
+        forecast.Column(DateCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        forecast.Columns(AmountColF, BalanceCol).Style.NumberFormat.Format = CurrencyFormat;
+        forecast.Columns(AmountColF, BalanceCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+
+        assumptions.Columns().AdjustToContents();
+        forecast.Columns().AdjustToContents();
     }
 
     private static void WriteAssumptionsRow(
