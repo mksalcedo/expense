@@ -1,0 +1,104 @@
+@page "/"
+@using Expense.Domain.Services.Categorization
+@using Expense.Domain.Services.Forecast
+@using Expense.Domain.Services.SpendingTracker
+@inject IForecastResultProvider ForecastProvider
+@inject ISpendingTrackerPageProvider SpendingTrackerProvider
+@inject IReviewQueueProvider ReviewQueueProvider
+
+<PageTitle>Dashboard</PageTitle>
+
+<h1>Dashboard</h1>
+
+@if (_forecast is null || _spendingTracker is null || _reviewQueue is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div style="display:flex; gap:3rem; align-items:flex-start; flex-wrap:wrap;">
+        <div>
+            <h2>Cash Flow</h2>
+            <p>Starting balance: @_forecast.StartingBalance.ToString("N2")</p>
+            <p>Lowest projected balance: @_forecast.LowestProjectedBalance.ToString("N2")</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Description</th>
+                        <th>Amount</th>
+                        <th>Running balance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in _forecast.Rows.Take(5))
+                    {
+                        <tr>
+                            <td>@row.Date.ToString("yyyy-MM-dd")</td>
+                            <td>@row.Description</td>
+                            <td>@row.Amount.ToString("N2")</td>
+                            <td>@row.RunningBalance.ToString("N2")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <p><a href="/forecast">View full forecast</a></p>
+        </div>
+
+        <div>
+            <h2>This Week's Spending</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Budget</th>
+                        <th>Actual</th>
+                        <th>Remaining</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var category in _spendingTracker.Week.Categories)
+                    {
+                        <tr>
+                            <td>@category.CategoryName</td>
+                            <td>@category.Budget.ToString("N2")</td>
+                            <td>@category.Actual.ToString("N2")</td>
+                            <td>@category.Remaining.ToString("N2")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <p>Pending / Uncategorized: @_spendingTracker.Week.PendingAmount.ToString("N2")</p>
+            <p><a href="/spending-tracker">View spending tracker</a></p>
+        </div>
+
+        <div>
+            <h2>Review Queue</h2>
+            <p>@PendingGroupCount item(s) need categorization</p>
+            <p><a href="/review-queue">Go to Review Queue</a></p>
+        </div>
+
+        <div>
+            <h2>Manage</h2>
+            <p><a href="/categories">Categories</a></p>
+            <p><a href="/budgets">Budgets</a></p>
+            <p><a href="/accounts">Accounts</a></p>
+            <p><a href="/one-time-events">One-Time Events</a></p>
+        </div>
+    </div>
+}
+
+@code {
+    private ForecastResult? _forecast;
+    private SpendingTrackerPageData? _spendingTracker;
+    private ReviewQueueData? _reviewQueue;
+
+    private int PendingGroupCount => (_reviewQueue?.TransactionGroups.Count ?? 0) + (_reviewQueue?.AmazonItemGroups.Count ?? 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _forecast = await ForecastProvider.GetForecastAsync();
+        _spendingTracker = await SpendingTrackerProvider.GetSpendingTrackerAsync();
+        _reviewQueue = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+}
