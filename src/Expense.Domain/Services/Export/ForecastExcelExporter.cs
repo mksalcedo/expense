@@ -153,8 +153,13 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
 
         foreach (var account in activeSpendingAccounts)
         {
-            var qualifyingTransactions = await context.BankTransactions
-                .Where(t => t.AccountId == account.Id && t.PostedDate != null && t.CategoryId != null && qualifyingCategoryIds.Contains(t.CategoryId.Value))
+            // Every real charge on the account this cycle counts toward "how much do I owe" -
+            // not just the ones already sorted into a PayInFullAmex category. This is a
+            // pay-in-full card: an uncategorized charge still needs to be paid, so it can't
+            // be invisible just because it hasn't been categorized yet. Amount < 0 excludes
+            // payments/credits (positive amounts) - those must never offset real spending.
+            var chargeTransactions = await context.BankTransactions
+                .Where(t => t.AccountId == account.Id && t.PostedDate != null && t.Amount < 0)
                 .ToListAsync(cancellationToken);
 
             var extraPrincipal = account.ExtraPayment ?? 0m;
@@ -164,7 +169,7 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
             WriteAssumptionsRow(assumptions, extraRow, extraName, 0m, extraPrincipal, Frequency.Monthly, Direction.Expense, extraAnchor);
 
             var cycles = amexCycleCalculator.CalculateDuePayments(
-                account.StatementCloseDay!.Value, account.PaymentDueDay!.Value, extraPrincipal, monthlyBudgetTotal, qualifyingTransactions, asOfDate, asOfDate, windowEnd);
+                account.StatementCloseDay!.Value, account.PaymentDueDay!.Value, extraPrincipal, monthlyBudgetTotal, chargeTransactions, asOfDate, asOfDate, windowEnd);
 
             var description = $"{account.Name} Payment";
             foreach (var cycle in cycles)

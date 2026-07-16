@@ -204,6 +204,94 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task AmexClosedCycle_CountsUncategorizedCharges_NotJustCategorizedOnes()
+    {
+        // Real bug: the payment amount used to only count charges already sorted into a
+        // PayInFullAmex category - an uncategorized charge (still sitting in the Review
+        // Queue backlog) was invisible to "how much do I owe", understating the forecast.
+        // The card is pay-in-full: every real charge needs to be paid regardless of whether
+        // it's been categorized yet.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+                Description = "TRADER JOE S", Amount = -200m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 5), PostedDate = new DateOnly(2026, 2, 5),
+                Description = "NETFLIX.COM", Amount = -15m, ImportSource = "Test", CategoryId = null, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment");
+        Assert.Equal(-215m, amexRow.Amount); // 200 (categorized) + 15 (uncategorized) - both are real charges
+    }
+
+    [Fact]
+    public async Task AmexClosedCycle_ExcludesPaymentsAndCredits_OnlyCountsActualCharges()
+    {
+        // A payment you already made toward the card this cycle (or a points credit) shows
+        // up as a positive amount - it must never be netted against your spending, or the
+        // forecast would understate what you still owe by whatever you've already paid.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+                Description = "TRADER JOE S", Amount = -200m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 10), PostedDate = new DateOnly(2026, 2, 10),
+                Description = "AUTOPAY PAYMENT - THANK YOU", Amount = 150m, ImportSource = "Test", CategoryId = null, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment");
+        Assert.Equal(-200m, amexRow.Amount); // the $150 payment must not offset the $200 charge
+    }
+
+    [Fact]
     public async Task LowestProjectedBalance_ReflectsTheMinimumRunningBalance()
     {
         await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));

@@ -223,6 +223,80 @@ public class ForecastExcelExporterTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task Export_AmexPayment_CountsUncategorizedCharges_NotJustCategorizedOnes()
+    {
+        // Real bug: the actual-charges literal used to only sum transactions already sorted
+        // into a PayInFullAmex category - an uncategorized charge (still in the Review Queue
+        // backlog) was invisible to "how much do I owe". The card is pay-in-full: every real
+        // charge needs to be paid regardless of whether it's been categorized yet.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
+        var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m, StatementCloseDay = 25, PaymentDueDay = 15 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+                Description = "TRADER JOE S", Amount = -200m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 5), PostedDate = new DateOnly(2026, 2, 5),
+                Description = "NETFLIX.COM", Amount = -15m, ImportSource = "Test", CategoryId = null, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
+
+        var forecast = workbook.Worksheet("Forecast");
+        var forecastRow = FindRowByDescription(forecast, "Amex Payment");
+        var formula = forecast.Cell(forecastRow, 3).FormulaA1;
+
+        Assert.Contains("MAX(215,", formula); // 200 (categorized) + 15 (uncategorized)
+    }
+
+    [Fact]
+    public async Task Export_AmexPayment_ExcludesPaymentsAndCredits_OnlyCountsActualCharges()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
+        var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m, StatementCloseDay = 25, PaymentDueDay = 15 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+                Description = "TRADER JOE S", Amount = -200m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 10), PostedDate = new DateOnly(2026, 2, 10),
+                Description = "AUTOPAY PAYMENT - THANK YOU", Amount = 150m, ImportSource = "Test", CategoryId = null, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
+
+        var forecast = workbook.Worksheet("Forecast");
+        var forecastRow = FindRowByDescription(forecast, "Amex Payment");
+        var formula = forecast.Cell(forecastRow, 3).FormulaA1;
+
+        Assert.Contains("MAX(200,", formula); // the $150 payment must not offset the $200 charge
+    }
+
+    [Fact]
     public async Task Export_AmexPayment_WeeklyBudgetedCategory_ProratesViaALiveFormula_NotARoundedLiteral()
     {
         // Weekly-to-monthly proration used to get pre-computed in C# and embedded as a raw

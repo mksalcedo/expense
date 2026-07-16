@@ -5,9 +5,11 @@ namespace Expense.Domain.Services.Forecast;
 /// <summary>
 /// Computes each Amex statement cycle's forecasted payment. A cycle that hasn't
 /// started yet uses the budgeted total only (there's no actual data). A cycle already
-/// in progress or closed uses MAX(actual qualifying charges, budgeted total) - the
-/// forecast never gets optimistic from underspending; real savings only show up later
-/// via the next actual checking-balance refresh.
+/// in progress or closed uses MAX(actual charges, budgeted total) - the forecast never
+/// gets optimistic from underspending; real savings only show up later via the next
+/// actual checking-balance refresh. chargeTransactions should be every real charge on
+/// the account (not filtered by category) - the caller is responsible for excluding
+/// payments/credits before passing them in.
 /// </summary>
 public class AmexCycleCalculator
 {
@@ -16,7 +18,7 @@ public class AmexCycleCalculator
         int paymentDueDay,
         decimal extraPrincipal,
         decimal monthlyBudgetTotal,
-        IReadOnlyList<BankTransaction> qualifyingTransactions,
+        IReadOnlyList<BankTransaction> chargeTransactions,
         DateOnly asOfDate,
         DateOnly windowStart,
         DateOnly windowEnd)
@@ -45,7 +47,7 @@ public class AmexCycleCalculator
                 }
                 else
                 {
-                    actualAmount = -qualifyingTransactions
+                    actualAmount = -chargeTransactions
                         .Where(t => t.PostedDate is { } posted && posted >= cycleStart && posted <= closeDate)
                         .Sum(t => t.Amount);
                     amount = Math.Max(actualAmount, monthlyBudgetTotal) + extraPrincipal;

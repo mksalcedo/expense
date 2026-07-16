@@ -24,7 +24,7 @@ public class AmexCycleCalculatorTests
         // close on the 5th, due on the 30th - due date is later the same month
         var results = _sut.CalculateDuePayments(
             statementCloseDay: 5, paymentDueDay: 30, extraPrincipal: 0m, monthlyBudgetTotal: 0m,
-            qualifyingTransactions: [], asOfDate: new DateOnly(2026, 1, 1),
+            chargeTransactions: [], asOfDate: new DateOnly(2026, 1, 1),
             windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 3, 31));
 
         var result = Assert.Single(results);
@@ -39,7 +39,7 @@ public class AmexCycleCalculatorTests
         // close on the 25th, due on the 15th - due date rolls into the following month
         var results = _sut.CalculateDuePayments(
             statementCloseDay: 25, paymentDueDay: 15, extraPrincipal: 0m, monthlyBudgetTotal: 0m,
-            qualifyingTransactions: [], asOfDate: new DateOnly(2026, 1, 1),
+            chargeTransactions: [], asOfDate: new DateOnly(2026, 1, 1),
             windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 3, 31));
 
         var result = Assert.Single(results);
@@ -54,7 +54,7 @@ public class AmexCycleCalculatorTests
 
         var results = _sut.CalculateDuePayments(
             statementCloseDay: 25, paymentDueDay: 15, extraPrincipal: 1100m, monthlyBudgetTotal: 900m,
-            qualifyingTransactions: qualifying, asOfDate: new DateOnly(2026, 1, 1), // before the cycle even starts (Jan 26)
+            chargeTransactions: qualifying, asOfDate: new DateOnly(2026, 1, 1), // before the cycle even starts (Jan 26)
             windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 3, 31));
 
         var result = Assert.Single(results);
@@ -71,7 +71,7 @@ public class AmexCycleCalculatorTests
 
         var results = _sut.CalculateDuePayments(
             statementCloseDay: 25, paymentDueDay: 15, extraPrincipal: 1100m, monthlyBudgetTotal: 900m,
-            qualifyingTransactions: qualifying, asOfDate: new DateOnly(2026, 2, 10), // mid-cycle
+            chargeTransactions: qualifying, asOfDate: new DateOnly(2026, 2, 10), // mid-cycle
             windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 3, 31));
 
         var result = Assert.Single(results);
@@ -90,7 +90,7 @@ public class AmexCycleCalculatorTests
 
         var results = _sut.CalculateDuePayments(
             statementCloseDay: 25, paymentDueDay: 15, extraPrincipal: 1100m, monthlyBudgetTotal: 900m,
-            qualifyingTransactions: qualifying, asOfDate: new DateOnly(2026, 3, 1), // cycle already closed
+            chargeTransactions: qualifying, asOfDate: new DateOnly(2026, 3, 1), // cycle already closed
             windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 3, 31));
 
         var result = Assert.Single(results);
@@ -113,7 +113,7 @@ public class AmexCycleCalculatorTests
 
         var results = _sut.CalculateDuePayments(
             statementCloseDay: 25, paymentDueDay: 15, extraPrincipal: 0m, monthlyBudgetTotal: 900m,
-            qualifyingTransactions: qualifying, asOfDate: new DateOnly(2026, 3, 1),
+            chargeTransactions: qualifying, asOfDate: new DateOnly(2026, 3, 1),
             windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 3, 31));
 
         var result = Assert.Single(results);
@@ -125,7 +125,7 @@ public class AmexCycleCalculatorTests
     {
         var results = _sut.CalculateDuePayments(
             statementCloseDay: 25, paymentDueDay: 15, extraPrincipal: 0m, monthlyBudgetTotal: 900m,
-            qualifyingTransactions: [], asOfDate: new DateOnly(2026, 1, 1),
+            chargeTransactions: [], asOfDate: new DateOnly(2026, 1, 1),
             windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 5, 31));
 
         var dueDates = results.Select(r => r.DueDate).OrderBy(d => d).ToList();
@@ -143,7 +143,7 @@ public class AmexCycleCalculatorTests
         // close day 31 - a February cycle must clamp to the 28th
         var results = _sut.CalculateDuePayments(
             statementCloseDay: 31, paymentDueDay: 20, extraPrincipal: 0m, monthlyBudgetTotal: 900m,
-            qualifyingTransactions: [], asOfDate: new DateOnly(2026, 1, 1),
+            chargeTransactions: [], asOfDate: new DateOnly(2026, 1, 1),
             windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 3, 31));
 
         var result = Assert.Single(results);
