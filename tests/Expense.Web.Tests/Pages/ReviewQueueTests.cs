@@ -22,6 +22,8 @@ public class ReviewQueueTests : BunitContext
         public int? LastAmazonItemId { get; private set; }
         public int? LastCategoryId { get; private set; }
         public string? LastPattern { get; private set; }
+        public int ReapplyRulesCallCount { get; private set; }
+        public ReapplyRulesResult NextReapplyResult { get; set; } = new();
 
         public Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new ReviewQueueData { TransactionGroups = TransactionGroups, AmazonItemGroups = AmazonItemGroups, Categories = Categories });
@@ -43,6 +45,12 @@ public class ReviewQueueTests : BunitContext
             AmazonItemGroups = AmazonItemGroups.Where(g => !g.ItemIds.Contains(itemId)).ToList();
             return Task.FromResult(0);
         }
+
+        public Task<ReapplyRulesResult> ReapplyRulesAsync(CancellationToken cancellationToken = default)
+        {
+            ReapplyRulesCallCount++;
+            return Task.FromResult(NextReapplyResult);
+        }
     }
 
     private static FakeReviewQueueProvider MakeProvider() => new()
@@ -52,7 +60,7 @@ public class ReviewQueueTests : BunitContext
         [
             new PendingTransactionGroup
             {
-                SuggestedPattern = "PUBLIX", SampleDescription = "PUBLIX NORCROSS GA",
+                SuggestedPattern = "PUBLIX", SampleDescription = "PUBLIX NORCROSS GA", SampleDate = new DateOnly(2026, 7, 13),
                 TransactionIds = [10, 11, 12], TotalAmount = -62m
             }
         ],
@@ -60,7 +68,7 @@ public class ReviewQueueTests : BunitContext
         [
             new PendingAmazonItemGroup
             {
-                SuggestedPattern = "Qunol Ultra CoQ10", ItemTitle = "Qunol Ultra CoQ10",
+                SuggestedPattern = "Qunol Ultra CoQ10", ItemTitle = "Qunol Ultra CoQ10", SampleDate = new DateOnly(2026, 7, 10),
                 ItemIds = [20, 21], TotalPrice = 62m
             }
         ]
@@ -79,6 +87,8 @@ public class ReviewQueueTests : BunitContext
         Assert.Contains("Qunol Ultra CoQ10", cut.Markup);
         Assert.Equal("PUBLIX", cut.Find("#txn-pattern-10").GetAttribute("value"));
         Assert.Equal("Qunol Ultra CoQ10", cut.Find("#item-pattern-20").GetAttribute("value"));
+        Assert.Contains("07/13/2026", cut.Markup);
+        Assert.Contains("07/10/2026", cut.Markup);
     }
 
     [Fact]
@@ -120,6 +130,33 @@ public class ReviewQueueTests : BunitContext
         Assert.Equal(20, provider.LastAmazonItemId); // the group's first (representative) item id
         Assert.Equal(1, provider.LastCategoryId);
         Assert.Equal("Qunol Ultra CoQ10", provider.LastPattern);
+    }
+
+    [Fact]
+    public void ClickingReapplyRulesButton_CallsTheProviderAndShowsHowManyWereRecategorized()
+    {
+        var provider = MakeProvider();
+        provider.NextReapplyResult = new ReapplyRulesResult { TransactionsUpdated = 2, ItemsUpdated = 1 };
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#reapply-rules-btn").Click();
+
+        Assert.Equal(1, provider.ReapplyRulesCallCount);
+        Assert.Contains("Re-categorized 3 previously pending row(s)", cut.Markup);
+    }
+
+    [Fact]
+    public void ClickingReapplyRulesButton_WhenNothingMatched_SaysSo()
+    {
+        var provider = MakeProvider();
+        provider.NextReapplyResult = new ReapplyRulesResult { TransactionsUpdated = 0, ItemsUpdated = 0 };
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#reapply-rules-btn").Click();
+
+        Assert.Contains("Nothing else matched the current rules", cut.Markup);
     }
 
     // Note: a real bug was found here in manual browser testing - categorizing one group

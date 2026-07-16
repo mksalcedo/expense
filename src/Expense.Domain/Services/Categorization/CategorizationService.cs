@@ -28,7 +28,7 @@ public class CategorizationService
         var searchText = (transaction.Merchant ?? transaction.Description).ToUpperInvariant();
         var rules = await context.MerchantRules.ToListAsync();
 
-        var match = rules.FirstOrDefault(r => Matches(searchText, r.MerchantPattern));
+        var match = rules.FirstOrDefault(r => MerchantPatternMatcher.Matches(searchText, r.MerchantPattern));
         transaction.CategoryId = match?.CategoryId;
     }
 
@@ -70,7 +70,7 @@ public class CategorizationService
         foreach (var other in otherPending)
         {
             var searchText = (other.Merchant ?? other.Description).ToUpperInvariant();
-            if (Matches(searchText, rule.MerchantPattern))
+            if (MerchantPatternMatcher.Matches(searchText, rule.MerchantPattern))
             {
                 other.CategoryId = categoryId;
                 retroactiveCount++;
@@ -106,7 +106,7 @@ public class CategorizationService
         var retroactiveCount = 0;
         foreach (var other in otherPending)
         {
-            if (other.Id != item.Id && Matches(other.ItemTitle, product.ProductPattern))
+            if (other.Id != item.Id && MerchantPatternMatcher.Matches(other.ItemTitle, product.ProductPattern))
             {
                 other.ProductId = product.Id;
                 other.CategoryId = categoryId;
@@ -115,6 +115,48 @@ public class CategorizationService
         }
         await context.SaveChangesAsync();
         return retroactiveCount;
+    }
+
+    /// <summary>
+    /// Re-checks every currently-pending transaction/item against all current
+    /// merchant_rules/products, categorizing any that now match. Unlike the retroactive
+    /// apply inside CategorizeTransactionAsync/CategorizeAmazonItemAsync (which only
+    /// checks the one rule/product just created), this checks everything against
+    /// everything - the safety net for rows a bug, or a rule created after they became
+    /// pending, previously left stuck.
+    /// </summary>
+    public async Task<ReapplyRulesResult> ReapplyRulesToPendingAsync(ExpenseDbContext context)
+    {
+        var result = new ReapplyRulesResult();
+
+        var pendingTransactions = await GetPendingBankTransactionsAsync(context);
+        var rules = await context.MerchantRules.ToListAsync();
+        foreach (var transaction in pendingTransactions)
+        {
+            var searchText = (transaction.Merchant ?? transaction.Description).ToUpperInvariant();
+            var match = rules.FirstOrDefault(r => MerchantPatternMatcher.Matches(searchText, r.MerchantPattern));
+            if (match is not null)
+            {
+                transaction.CategoryId = match.CategoryId;
+                result.TransactionsUpdated++;
+            }
+        }
+
+        var pendingItems = await GetPendingAmazonOrderItemsAsync(context);
+        var products = await context.Products.ToListAsync();
+        foreach (var item in pendingItems)
+        {
+            var match = products.FirstOrDefault(p => MerchantPatternMatcher.Matches(item.ItemTitle, p.ProductPattern));
+            if (match is not null)
+            {
+                item.ProductId = match.Id;
+                item.CategoryId = match.CategoryId;
+                result.ItemsUpdated++;
+            }
+        }
+
+        await context.SaveChangesAsync();
+        return result;
     }
 
     /// <summary>
@@ -130,6 +172,7 @@ public class CategorizationService
             {
                 SuggestedPattern = g.Key,
                 SampleDescription = g.First().Description,
+                SampleDate = g.First().TransactionDate,
                 TransactionIds = g.Select(t => t.Id).ToList(),
                 TotalAmount = g.Sum(t => t.Amount)
             })
@@ -147,6 +190,7 @@ public class CategorizationService
             {
                 SuggestedPattern = g.Key,
                 ItemTitle = g.Key,
+                SampleDate = g.First().OrderDate,
                 ItemIds = g.Select(i => i.Id).ToList(),
                 TotalPrice = g.Sum(i => i.Price)
             })
@@ -181,7 +225,4 @@ public class CategorizationService
         if (prefix.Count > 0) return string.Join(' ', prefix);
         return words.Length > 0 ? words[0] : collapsed;
     }
-
-    private static bool Matches(string text, string pattern) =>
-        text.Contains(pattern.Trim('%'), StringComparison.OrdinalIgnoreCase);
 }

@@ -6,6 +6,16 @@
 
 <h1>Review Queue</h1>
 
+<p>
+    <button id="reapply-rules-btn" @onclick="ReapplyRulesAsync" disabled="@_reapplyingRules">
+        @(_reapplyingRules ? "Re-applying..." : "Re-apply Rules Now")
+    </button>
+    @if (_reapplyMessage is not null)
+    {
+        <span> @_reapplyMessage</span>
+    }
+</p>
+
 @if (_data is null)
 {
     <p>Loading...</p>
@@ -18,6 +28,7 @@ else
             <tr>
                 <th>Count</th>
                 <th>Sample description</th>
+                <th>Date</th>
                 <th>Total</th>
                 <th>Pattern (edit if needed)</th>
                 <th>Category</th>
@@ -36,6 +47,7 @@ else
                 <tr @key="representativeId">
                     <td>@group.TransactionIds.Count</td>
                     <td>@group.SampleDescription</td>
+                    <td>@group.SampleDate.ToString("MM/dd/yyyy")</td>
                     <td>@group.TotalAmount.ToString("N2")</td>
                     <td>
                         <input id="txn-pattern-@representativeId" value="@group.SuggestedPattern"
@@ -62,6 +74,7 @@ else
             <tr>
                 <th>Count</th>
                 <th>Item</th>
+                <th>Date</th>
                 <th>Total</th>
                 <th>Pattern (edit if needed)</th>
                 <th>Category</th>
@@ -75,6 +88,7 @@ else
                 <tr @key="representativeId">
                     <td>@group.ItemIds.Count</td>
                     <td>@group.ItemTitle</td>
+                    <td>@group.SampleDate.ToString("MM/dd/yyyy")</td>
                     <td>@group.TotalPrice.ToString("N2")</td>
                     <td>
                         <input id="item-pattern-@representativeId" value="@group.SuggestedPattern"
@@ -100,10 +114,31 @@ else
     private ReviewQueueData? _data;
     private readonly Dictionary<int, string?> _transactionPattern = [];
     private readonly Dictionary<int, string?> _itemPattern = [];
+    private bool _reapplyingRules;
+    private string? _reapplyMessage;
 
     protected override async Task OnInitializedAsync()
     {
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
+    private async Task ReapplyRulesAsync()
+    {
+        _reapplyingRules = true;
+        _reapplyMessage = null;
+        try
+        {
+            var result = await ReviewQueueProvider.ReapplyRulesAsync();
+            var total = result.TransactionsUpdated + result.ItemsUpdated;
+            _reapplyMessage = total > 0
+                ? $"Re-categorized {total} previously pending row(s)."
+                : "Nothing else matched the current rules.";
+            _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        }
+        finally
+        {
+            _reapplyingRules = false;
+        }
     }
 
     private async Task CategorizeTransactionGroupAsync(PendingTransactionGroup group, int categoryId)

@@ -58,6 +58,37 @@ public class SimpleFinSyncServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task RunAsync_OnSuccess_AlsoSweepsUpOtherStillPendingRowsAgainstCurrentRules()
+    {
+        var discover = new Account { Name = "Discover", Type = AccountType.Debt };
+        Context.Accounts.Add(discover);
+        var truist = new Category { Name = "Truist" };
+        Context.Categories.Add(truist);
+        await Context.SaveChangesAsync();
+        Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "TRUIST MORTG OLB MTGPMT", CategoryId = truist.Id });
+
+        // Simulates a row a bug (since fixed) previously left stuck: it matches the
+        // existing rule now, but wasn't touched by this particular import at all.
+        var stuckTransaction = new BankTransaction
+        {
+            AccountId = discover.Id, TransactionDate = new DateOnly(2026, 6, 8),
+            Description = "TRUIST MORTG     OLB MTGPMT 260604 3001469588      MARK SALCEDO",
+            Amount = -2681.22m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(stuckTransaction);
+        await Context.SaveChangesAsync();
+
+        var accountMap = new Dictionary<string, int> { ["ACT-amex-test"] = discover.Id };
+        var sut = CreateSut(OneAccountResponse);
+
+        var run = await sut.RunAsync(Context, "https://u:p@beta-bridge.simplefin.org/simplefin/access/abc", accountMap, DateTimeOffset.UtcNow.AddDays(-45));
+
+        Assert.True(run.Success);
+        Assert.Equal(truist.Id, stuckTransaction.CategoryId);
+        Assert.Contains("re-categorized 1 previously pending", run.Summary);
+    }
+
+    [Fact]
     public async Task RunAsync_OnHttpFailure_RecordsAFailedRunWithAnErrorMessage_InsteadOfThrowing()
     {
         var sut = CreateSut("Internal Server Error", HttpStatusCode.InternalServerError);

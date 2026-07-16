@@ -1,4 +1,5 @@
 using Expense.Domain.Data;
+using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Ingestion.Amazon;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -29,7 +30,7 @@ if (gmail is null)
 
 var messageSource = new GoogleGmailMessageSource(gmail);
 var importService = new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser());
-var syncService = new AmazonGmailSyncService(messageSource, importService);
+var syncService = new AmazonGmailSyncService(messageSource, importService, new CategorizationService());
 
 Console.WriteLine("Searching Gmail for Amazon order confirmation and refund emails...");
 var result = await syncService.RunAsync(context);

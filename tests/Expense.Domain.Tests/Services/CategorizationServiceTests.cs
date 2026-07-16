@@ -180,6 +180,64 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task CategorizeTransactionAsync_CreatingARule_MatchesOtherRowsDespiteDifferentInternalWhitespacePadding()
+    {
+        // Real bank exports pad heavily and inconsistently (e.g. Truist's own mortgage
+        // description varies its internal spacing statement to statement). The rule's
+        // pattern is derived from a whitespace-collapsed description, so matching against
+        // other rows' raw (uncollapsed) text must also collapse whitespace first, or a
+        // pattern like "TRUIST MORTG OLB MTGPMT" never matches "TRUIST MORTG     OLB MTGPMT".
+        var account = await CreateAccountAsync();
+        var mortgage = new Category { Name = "Truist" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+
+        var transaction = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 8),
+            Description = "TRUIST MORTG     OLB MTGPMT 260706 3001469588      MARK SALCEDO",
+            Amount = -2681.22m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        };
+        var otherPending = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 8),
+            Description = "TRUIST MORTG     OLB MTGPMT 260604 3001469588      MARK SALCEDO",
+            Amount = -2681.22m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.AddRange(transaction, otherPending);
+        await Context.SaveChangesAsync();
+
+        var retroactiveCount = await _sut.CategorizeTransactionAsync(
+            Context, transaction.Id, mortgage.Id, merchantPatternToCreate: "TRUIST MORTG OLB MTGPMT");
+
+        Assert.Equal(mortgage.Id, transaction.CategoryId);
+        Assert.Equal(mortgage.Id, otherPending.CategoryId);
+        Assert.Equal(1, retroactiveCount);
+    }
+
+    [Fact]
+    public async Task ApplyMerchantRuleAsync_MatchesDespiteDifferentInternalWhitespacePadding()
+    {
+        var account = await CreateAccountAsync();
+        var mortgage = new Category { Name = "Truist" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+        Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "TRUIST MORTG OLB MTGPMT", CategoryId = mortgage.Id });
+        await Context.SaveChangesAsync();
+
+        var transaction = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 8),
+            Description = "TRUIST MORTG     OLB MTGPMT 260806 3001469588      MARK SALCEDO",
+            Amount = -2681.22m, ImportSource = "SimpleFin", CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        await _sut.ApplyMerchantRuleAsync(Context, transaction);
+
+        Assert.Equal(mortgage.Id, transaction.CategoryId);
+    }
+
+    [Fact]
     public async Task CategorizeAmazonItemAsync_WithoutCreatingAProduct_OnlySetsThatOneItem()
     {
         var misc = new Category { Name = "Off-Budget/Misc" };
@@ -223,6 +281,76 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ReapplyRulesToPendingAsync_CategorizesAPendingTransactionThatNowMatchesAnExistingRule()
+    {
+        // Simulates the real Truist bug: a rule already exists, but a pending transaction
+        // didn't match it at the time (e.g. a matching bug since fixed, or the rule was
+        // created after this row became pending) - re-running the check should catch it.
+        var account = await CreateAccountAsync();
+        var mortgage = new Category { Name = "Truist" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+        Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "TRUIST MORTG OLB MTGPMT", CategoryId = mortgage.Id });
+
+        var stillPending = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 8),
+            Description = "TRUIST MORTG     OLB MTGPMT 260604 3001469588      MARK SALCEDO",
+            Amount = -2681.22m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(stillPending);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.ReapplyRulesToPendingAsync(Context);
+
+        Assert.Equal(1, result.TransactionsUpdated);
+        Assert.Equal(mortgage.Id, stillPending.CategoryId);
+    }
+
+    [Fact]
+    public async Task ReapplyRulesToPendingAsync_CategorizesAPendingAmazonItemThatNowMatchesAnExistingProduct()
+    {
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+        Context.Products.Add(new Product { ProductPattern = "%QUNOL%", CategoryId = supplements.Id });
+
+        var stillPending = new AmazonOrderItem
+        {
+            OrderId = "1", OrderDate = new DateOnly(2026, 7, 1), ItemTitle = "Qunol Ultra CoQ10 100mg",
+            Price = 30m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.Add(stillPending);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.ReapplyRulesToPendingAsync(Context);
+
+        Assert.Equal(1, result.ItemsUpdated);
+        Assert.Equal(supplements.Id, stillPending.CategoryId);
+        Assert.NotNull(stillPending.ProductId);
+    }
+
+    [Fact]
+    public async Task ReapplyRulesToPendingAsync_LeavesTrulyUnmatchedRowsPending()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+
+        var unmatched = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 1),
+            Description = "BRAND NEW MERCHANT NOBODY HAS A RULE FOR", Amount = -10m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(unmatched);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.ReapplyRulesToPendingAsync(Context);
+
+        Assert.Equal(0, result.TransactionsUpdated);
+        Assert.Null(unmatched.CategoryId);
+    }
+
+    [Fact]
     public async Task GetPendingTransactionGroupsAsync_GroupsRepeatedMerchantsIntoOneRow()
     {
         var account = await CreateAccountAsync();
@@ -239,6 +367,7 @@ public class CategorizationServiceTests : DatabaseTestBase
         var publix = groups.Single(g => g.SuggestedPattern == "PUBLIX NORCROSS GA");
         Assert.Equal(2, publix.TransactionIds.Count);
         Assert.Equal(-62m, publix.TotalAmount);
+        Assert.Equal(new DateOnly(2026, 7, 5), publix.SampleDate); // most recent of the two, since pending rows are ordered by date descending
         var traderJoes = groups.Single(g => g.SuggestedPattern == "TRADER JOE S");
         Assert.Single(traderJoes.TransactionIds);
     }
@@ -259,5 +388,6 @@ public class CategorizationServiceTests : DatabaseTestBase
         Assert.Equal(2, qunol.ItemIds.Count);
         Assert.Equal(62m, qunol.TotalPrice);
         Assert.Equal("Qunol Ultra CoQ10", qunol.SuggestedPattern);
+        Assert.Equal(new DateOnly(2026, 7, 5), qunol.SampleDate); // most recent of the two, since pending rows are ordered by date descending
     }
 }

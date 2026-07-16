@@ -30,4 +30,10 @@ public class ReviewQueueProvider(IDbContextFactory<ExpenseDbContext> contextFact
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         return await categorization.CategorizeAmazonItemAsync(context, itemId, categoryId, productPatternToCreate);
     }
+
+    public async Task<ReapplyRulesResult> ReapplyRulesAsync(CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await categorization.ReapplyRulesToPendingAsync(context);
+    }
 }

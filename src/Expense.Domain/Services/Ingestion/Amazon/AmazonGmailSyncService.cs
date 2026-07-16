@@ -1,5 +1,6 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
+using Expense.Domain.Services.Categorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Ingestion.Amazon;
@@ -13,7 +14,7 @@ namespace Expense.Domain.Services.Ingestion.Amazon;
 /// a real Gmail connection; the OAuth/network-fetching side stays a thin, un-mocked
 /// implementation of that interface, same pragmatic exception as Program.cs composition.
 /// </summary>
-public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImportService importService)
+public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImportService importService, CategorizationService categorization)
 {
     // 400-day lookback window: generous enough to backfill roughly a year of history for
     // Historical Analysis on the first run, while dedup (order_id + item_title) makes
@@ -69,10 +70,16 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
                 }
             }
 
+            // Also sweep every still-pending item against current products, not just the
+            // ones this sync just touched - catches items a prior bug, or a product created
+            // since, left stuck.
+            var reapplied = await categorization.ReapplyRulesToPendingAsync(context);
+
             run.Success = true;
             run.Summary = $"Order items added: {result.ItemsAdded}, duplicates skipped: {result.DuplicatesSkipped}, refunds applied: {result.RefundsApplied}"
                 + (result.UnmatchedRefunds.Count > 0 ? $"; unmatched refunds: {result.UnmatchedRefunds.Count}" : "")
-                + (result.ParseFailures.Count > 0 ? $"; {result.ParseFailures.Count} email(s) failed to parse" : "");
+                + (result.ParseFailures.Count > 0 ? $"; {result.ParseFailures.Count} email(s) failed to parse" : "")
+                + (reapplied.ItemsUpdated > 0 ? $"; re-categorized {reapplied.ItemsUpdated} previously pending item(s)" : "");
         }
         catch (Exception ex)
         {

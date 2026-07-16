@@ -28,9 +28,15 @@ public class SimpleFinSyncService(HttpClient httpClient, DedupService dedup, Cat
             var importService = new SimpleFinImportService(client, dedup, categorization);
             var summary = await importService.ImportAsync(context, accountMap, startDate, cancellationToken);
 
+            // Also sweep every still-pending row against current rules, not just the ones
+            // this import just touched - catches rows a prior bug, or a rule created since,
+            // left stuck (see the Truist whitespace-matching bug for a real example).
+            var reapplied = await categorization.ReapplyRulesToPendingAsync(context);
+
             run.Success = true;
             run.Summary = $"Transactions added: {summary.TransactionsAdded}, duplicates skipped: {summary.DuplicatesSkipped}, balance snapshots added: {summary.BalanceSnapshotsAdded}"
-                + (summary.UnmappedAccounts.Count > 0 ? $"; unmapped accounts: {string.Join(", ", summary.UnmappedAccounts)}" : "");
+                + (summary.UnmappedAccounts.Count > 0 ? $"; unmapped accounts: {string.Join(", ", summary.UnmappedAccounts)}" : "")
+                + (reapplied.TransactionsUpdated > 0 ? $"; re-categorized {reapplied.TransactionsUpdated} previously pending transaction(s)" : "");
         }
         catch (Exception ex)
         {

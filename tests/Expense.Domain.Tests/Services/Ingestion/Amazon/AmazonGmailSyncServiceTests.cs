@@ -1,4 +1,5 @@
 using Expense.Domain.Entities;
+using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
@@ -36,7 +37,8 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
         IReadOnlyList<GmailMessage>? orderMessages = null, IReadOnlyList<GmailMessage>? refundMessages = null) =>
         new(
             new FakeGmailMessageSource(orderMessages ?? [], refundMessages ?? []),
-            new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser()));
+            new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser()),
+            new CategorizationService());
 
     [Fact]
     public async Task RunAsync_ImportsOrderEmails_AndRecordsASuccessfulRunWithASummary()
@@ -86,5 +88,32 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
         Assert.Single(result.ParseFailures);
         Assert.Contains("could not extract a plain-text body", result.ParseFailures[0]);
         Assert.Contains("1 email(s) failed to parse", result.Run.Summary);
+    }
+
+    [Fact]
+    public async Task RunAsync_OnSuccess_AlsoSweepsUpOtherStillPendingItemsAgainstCurrentProducts()
+    {
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+        Context.Products.Add(new Product { ProductPattern = "%QUNOL%", CategoryId = supplements.Id });
+
+        // A row a prior bug (or a product created since) previously left stuck - untouched
+        // by this particular sync's own messages, but it should still get swept up.
+        var stuckItem = new AmazonOrderItem
+        {
+            OrderId = "999", OrderDate = new DateOnly(2026, 6, 1), ItemTitle = "Qunol Ultra CoQ10 200mg",
+            Price = 45m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.Add(stuckItem);
+        await Context.SaveChangesAsync();
+
+        var sut = CreateSut();
+
+        var result = await sut.RunAsync(Context);
+
+        Assert.True(result.Run.Success);
+        Assert.Equal(supplements.Id, stuckItem.CategoryId);
+        Assert.Contains("re-categorized 1 previously pending item(s)", result.Run.Summary);
     }
 }

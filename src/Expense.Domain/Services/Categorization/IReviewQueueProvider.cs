@@ -8,4 +8,6 @@ public interface IReviewQueueProvider
     Task<int> CategorizeTransactionAsync(int transactionId, int categoryId, string? merchantPatternToCreate, CancellationToken cancellationToken = default);
 
     Task<int> CategorizeAmazonItemAsync(int itemId, int categoryId, string? productPatternToCreate, CancellationToken cancellationToken = default);
+
+    Task<ReapplyRulesResult> ReapplyRulesAsync(CancellationToken cancellationToken = default);
 }

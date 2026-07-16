@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
+using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Ingestion;
 using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Services.Ingestion.SimpleFin;
@@ -20,6 +21,7 @@ public class SyncStatusProvider(
     IDbContextFactory<ExpenseDbContext> contextFactory,
     SimpleFinSyncService simpleFinSync,
     AmazonImportService amazonImportService,
+    CategorizationService categorization,
     IConfiguration configuration) : ISyncStatusProvider
 {
     public async Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default)
@@ -72,7 +74,7 @@ public class SyncStatusProvider(
                 cancellationToken);
         }
 
-        var syncService = new AmazonGmailSyncService(new GoogleGmailMessageSource(gmail), amazonImportService);
+        var syncService = new AmazonGmailSyncService(new GoogleGmailMessageSource(gmail), amazonImportService, categorization);
         var result = await syncService.RunAsync(context, cancellationToken);
         return result.Run;
     }

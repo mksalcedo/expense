@@ -1,5 +1,6 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
+using Expense.Domain.Services.Categorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Ingestion.Amazon;
@@ -31,7 +32,7 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
                 continue;
             }
 
-            var match = products.FirstOrDefault(p => Matches(item.ItemTitle, p.ProductPattern));
+            var match = products.FirstOrDefault(p => MerchantPatternMatcher.Matches(item.ItemTitle, p.ProductPattern));
             if (match is not null)
             {
                 item.ProductId = match.Id;
@@ -69,7 +70,4 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
         await context.SaveChangesAsync(cancellationToken);
         return summary;
     }
-
-    private static bool Matches(string text, string pattern) =>
-        text.Contains(pattern.Trim('%'), StringComparison.OrdinalIgnoreCase);
 }

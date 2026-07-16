@@ -26,6 +26,7 @@ public class DashboardTests : BunitContext
         public Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
         public Task<int> CategorizeTransactionAsync(int transactionId, int categoryId, string? merchantPatternToCreate, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<int> CategorizeAmazonItemAsync(int itemId, int categoryId, string? productPatternToCreate, CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<ReapplyRulesResult> ReapplyRulesAsync(CancellationToken cancellationToken = default) => Task.FromResult(new ReapplyRulesResult());
     }
 
     private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null) : ISyncStatusProvider
@@ -83,12 +84,12 @@ public class DashboardTests : BunitContext
     {
         TransactionGroups =
         [
-            new PendingTransactionGroup { SuggestedPattern = "COSTCO", SampleDescription = "COSTCO WHSE", TransactionIds = [1, 2], TotalAmount = -212.99m }
+            new PendingTransactionGroup { SuggestedPattern = "COSTCO", SampleDescription = "COSTCO WHSE", SampleDate = new DateOnly(2026, 7, 10), TransactionIds = [1, 2], TotalAmount = -212.99m }
         ],
         AmazonItemGroups =
         [
-            new PendingAmazonItemGroup { SuggestedPattern = "VITAMIN", ItemTitle = "Vitamins", ItemIds = [10], TotalPrice = 25m },
-            new PendingAmazonItemGroup { SuggestedPattern = "GADGET", ItemTitle = "New gadget", ItemIds = [11], TotalPrice = 40m }
+            new PendingAmazonItemGroup { SuggestedPattern = "VITAMIN", ItemTitle = "Vitamins", SampleDate = new DateOnly(2026, 7, 8), ItemIds = [10], TotalPrice = 25m },
+            new PendingAmazonItemGroup { SuggestedPattern = "GADGET", ItemTitle = "New gadget", SampleDate = new DateOnly(2026, 7, 9), ItemIds = [11], TotalPrice = 40m }
         ],
         Categories = []
     };
