@@ -38,9 +38,13 @@ public class CategorizationService
             .OrderByDescending(t => t.TransactionDate)
             .ToListAsync();
 
+    // CategoryId, not ProductId, is the real "pending" signal - a bulk-categorized item
+    // (see BulkCategorizeAmazonItemsAsync) deliberately only ever gets a CategoryId, never
+    // a ProductId, so filtering on ProductId here left bulk-categorized items looking
+    // pending forever even though they'd genuinely been categorized.
     public async Task<List<AmazonOrderItem>> GetPendingAmazonOrderItemsAsync(ExpenseDbContext context) =>
         await context.AmazonOrderItems
-            .Where(i => i.ProductId == null)
+            .Where(i => i.CategoryId == null)
             .OrderByDescending(i => i.OrderDate)
             .ToListAsync();
 

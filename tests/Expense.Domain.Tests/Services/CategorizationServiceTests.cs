@@ -117,7 +117,7 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task GetPendingAmazonOrderItemsAsync_ExcludesItemsWithAProduct()
+    public async Task GetPendingAmazonOrderItemsAsync_ExcludesItemsWithAProductAndCategory()
     {
         var supplements = new Category { Name = "Supplements" };
         Context.Categories.Add(supplements);
@@ -135,6 +135,36 @@ public class CategorizationServiceTests : DatabaseTestBase
 
         var pendingItem = Assert.Single(pending);
         Assert.Equal("Unknown Product", pendingItem.ItemTitle);
+    }
+
+    [Fact]
+    public async Task GetPendingAmazonOrderItemsAsync_ExcludesItemsThatHaveACategoryButNoProduct()
+    {
+        // Real bug: BulkCategorizeAmazonItemsAsync deliberately sets CategoryId only, never
+        // ProductId (a bulk selection has no single pattern to build a product from) - but
+        // this query used to filter on ProductId == null, so a bulk-categorized item kept
+        // showing up as "pending" forever even though it had a real category.
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+
+        var bulkCategorized = new AmazonOrderItem
+        {
+            OrderId = "1", OrderDate = new DateOnly(2026, 7, 1), ItemTitle = "Vitamin C",
+            Price = 15m, Quantity = 1, CategoryId = supplements.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        var stillPending = new AmazonOrderItem
+        {
+            OrderId = "2", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Random Gadget",
+            Price = 12m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.AddRange(bulkCategorized, stillPending);
+        await Context.SaveChangesAsync();
+
+        var pending = await _sut.GetPendingAmazonOrderItemsAsync(Context);
+
+        var pendingItem = Assert.Single(pending);
+        Assert.Equal("Random Gadget", pendingItem.ItemTitle);
     }
 
     [Fact]

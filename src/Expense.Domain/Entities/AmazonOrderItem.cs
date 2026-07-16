@@ -15,10 +15,11 @@ public class AmazonOrderItem
     /// <summary>This item's proportional share of the order's tax/shipping leftover.</summary>
     public decimal TaxAllocated { get; set; }
 
-    /// <summary>NULL means "pending categorization" for this item (new/unrecognized product).</summary>
+    /// <summary>NULL for a new/unrecognized product, or for anything bulk-categorized (see BulkCategorizeAmazonItemsAsync) - not the "pending" signal, see CategoryId.</summary>
     public int? ProductId { get; set; }
     public Product? Product { get; set; }
 
+    /// <summary>NULL means "pending categorization" for this item - the real status signal, same convention as BankTransaction.CategoryId.</summary>
     public int? CategoryId { get; set; }
     public Category? Category { get; set; }
 
