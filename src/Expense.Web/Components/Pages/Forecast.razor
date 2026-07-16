@@ -13,7 +13,13 @@
 else
 {
     <p>Starting balance: @_result.StartingBalance.ToString("N2")</p>
-    <p>Lowest projected balance: @_result.LowestProjectedBalance.ToString("N2")</p>
+    <p>
+        Lowest projected balance: @_result.LowestProjectedBalance.ToString("N2")
+        @if (_result.LowestProjectedBalanceDate is { } lowestDate)
+        {
+            <text> (Occurs on @lowestDate.ToString("MM/dd/yyyy"))</text>
+        }
+    </p>
     <p><a id="export-excel-link" href="/export/forecast.xlsx" target="_blank">Export to Excel</a></p>
 
     <table>
@@ -28,8 +34,8 @@ else
         <tbody>
             @foreach (var row in _result.Rows)
             {
-                <tr>
-                    <td>@row.Date.ToString("yyyy-MM-dd")</td>
+                <tr style="@(row == _lowestRow ? "background-color: yellow" : null)">
+                    <td>@row.Date.ToString("MM/dd/yyyy")</td>
                     <td>@row.Description</td>
                     <td>@row.Amount.ToString("N2")</td>
                     <td>@row.RunningBalance.ToString("N2")</td>
@@ -41,9 +47,11 @@ else
 
 @code {
     private ForecastResult? _result;
+    private ForecastLedgerRow? _lowestRow;
 
     protected override async Task OnInitializedAsync()
     {
         _result = await ForecastResultProvider.GetForecastAsync();
+        _lowestRow = _result.Rows.FirstOrDefault(r => r.RunningBalance == _result.LowestProjectedBalance);
     }
 }

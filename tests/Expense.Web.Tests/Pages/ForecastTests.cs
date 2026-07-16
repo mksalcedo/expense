@@ -55,6 +55,64 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
+    public void Forecast_ShowsWhenTheLowestProjectedBalanceOccurs()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows =
+            [
+                new ForecastLedgerRow { Date = new DateOnly(2026, 7, 20), Description = "Big expense", Amount = -900m, RunningBalance = 100m },
+                new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Bigger expense", Amount = -50m, RunningBalance = 50m }
+            ]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Contains("Occurs on 08/20/2026", cut.Markup);
+    }
+
+    [Fact]
+    public void Forecast_HighlightsTheLowestBalanceRow()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows =
+            [
+                new ForecastLedgerRow { Date = new DateOnly(2026, 7, 20), Description = "Big expense", Amount = -900m, RunningBalance = 100m },
+                new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Bigger expense", Amount = -50m, RunningBalance = 50m },
+                new ForecastLedgerRow { Date = new DateOnly(2026, 8, 25), Description = "Refund", Amount = 200m, RunningBalance = 250m }
+            ]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var rows = cut.FindAll("tbody tr");
+        Assert.Contains("background-color: yellow", rows[1].GetAttribute("style"));
+        Assert.DoesNotContain("background-color: yellow", rows[0].GetAttribute("style") ?? "");
+        Assert.DoesNotContain("background-color: yellow", rows[2].GetAttribute("style") ?? "");
+    }
+
+    [Fact]
+    public void Forecast_FormatsDatesAsMonthDayYear()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 7, 20), Description = "Big expense", Amount = -900m, RunningBalance = 100m }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Contains("07/20/2026", cut.Markup);
+        Assert.DoesNotContain("2026-07-20", cut.Markup);
+    }
+
+    [Fact]
     public void Forecast_HasAnExportToExcelLink()
     {
         var result = new ForecastResult { StartingBalance = 1000m, Rows = [] };

@@ -385,6 +385,123 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         Assert.True(forecast.Column(2).Width > 20);
     }
 
+    [Fact]
+    public async Task Export_AssumptionsDateColumn_ShowsWhenADirectCategoryOccurs()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var truist = new Category { Name = "Truist" };
+        Context.Categories.Add(truist);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = truist.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = truist.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 4), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        Assert.Equal("Date", assumptions.Cell(1, 7).GetString());
+        var row = FindRowByName(assumptions, "Truist");
+        Assert.Equal(new DateTime(2026, 7, 4), assumptions.Cell(row, 7).GetValue<DateTime>());
+    }
+
+    [Fact]
+    public async Task Export_AssumptionsDateColumn_ShowsADebtAccountsPaymentDueDate()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        Context.Accounts.Add(new Account
+        {
+            Name = "Discover", Type = AccountType.Debt, MinPayment = 50m, ExtraPayment = 100m, PaymentDueDay = 20
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var row = FindRowByName(assumptions, "Discover Payment");
+        Assert.Equal(new DateTime(2026, 7, 20), assumptions.Cell(row, 7).GetValue<DateTime>());
+    }
+
+    [Fact]
+    public async Task Export_FrequencyAndDirectionColumns_AreCenterAligned()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var truist = new Category { Name = "Truist" };
+        Context.Categories.Add(truist);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = truist.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = truist.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 4), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var row = FindRowByName(assumptions, "Truist");
+
+        Assert.Equal(XLAlignmentHorizontalValues.Center, assumptions.Cell(row, 5).Style.Alignment.Horizontal);
+        Assert.Equal(XLAlignmentHorizontalValues.Center, assumptions.Cell(row, 6).Style.Alignment.Horizontal);
+    }
+
+    [Fact]
+    public async Task Export_MoneyColumns_AreWidenedBeyondATightAutofit()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var truist = new Category { Name = "Truist" };
+        Context.Categories.Add(truist);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = truist.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = truist.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 4), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var forecast = workbook.Worksheet("Forecast");
+
+        // Build same-content baseline sheets with a plain autofit (no extra widening) to
+        // prove the money columns really got wider than a tight fit would produce.
+        using var baselineBook = new XLWorkbook();
+        var baselineAssumptions = baselineBook.Worksheets.Add("Assumptions");
+        foreach (var row in assumptions.RowsUsed())
+        {
+            for (var c = 1; c <= 4; c++) baselineAssumptions.Cell(row.RowNumber(), c).Value = row.Cell(c).GetFormattedString();
+        }
+        baselineAssumptions.Columns().AdjustToContents();
+
+        var baselineForecast = baselineBook.Worksheets.Add("Forecast");
+        foreach (var row in forecast.RowsUsed())
+        {
+            for (var c = 1; c <= 4; c++) baselineForecast.Cell(row.RowNumber(), c).Value = row.Cell(c).GetFormattedString();
+        }
+        baselineForecast.Columns().AdjustToContents();
+
+        Assert.True(assumptions.Column(2).Width > baselineAssumptions.Column(2).Width);
+        Assert.True(assumptions.Column(3).Width > baselineAssumptions.Column(3).Width);
+        Assert.True(assumptions.Column(4).Width > baselineAssumptions.Column(4).Width);
+        Assert.True(forecast.Column(3).Width > baselineForecast.Column(3).Width);
+        Assert.True(forecast.Column(4).Width > baselineForecast.Column(4).Width);
+    }
+
     private static int FindRowByName(IXLWorksheet sheet, string name) =>
         sheet.RowsUsed().Single(r => r.Cell(1).GetString() == name).RowNumber();
 

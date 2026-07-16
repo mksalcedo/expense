@@ -27,7 +27,7 @@ namespace Expense.Domain.Services.Export;
 /// </summary>
 public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceExpander recurrenceExpander, AmexCycleCalculator amexCycleCalculator)
 {
-    private const int NameCol = 1, AmountCol = 2, ExtraCol = 3, TotalCol = 4, FrequencyCol = 5, DirectionCol = 6;
+    private const int NameCol = 1, AmountCol = 2, ExtraCol = 3, TotalCol = 4, FrequencyCol = 5, DirectionCol = 6, DateAssumptionsCol = 7;
     private const int DateCol = 1, DescriptionCol = 2, AmountColF = 3, BalanceCol = 4;
 
     public async Task<XLWorkbook> ExportAsync(
@@ -43,6 +43,7 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         assumptions.Cell(1, TotalCol).Value = "Total";
         assumptions.Cell(1, FrequencyCol).Value = "Frequency";
         assumptions.Cell(1, DirectionCol).Value = "Direction";
+        assumptions.Cell(1, DateAssumptionsCol).Value = "Date";
         var nextAssumptionsRow = 2;
 
         var startingBalance = await context.CheckingBalanceSnapshots
@@ -65,7 +66,7 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         foreach (var period in directPeriods)
         {
             var row = nextAssumptionsRow++;
-            WriteAssumptionsRow(assumptions, row, period.Category.Name, period.Amount, 0m, period.Frequency, period.Direction);
+            WriteAssumptionsRow(assumptions, row, period.Category.Name, period.Amount, 0m, period.Frequency, period.Direction, period.Anchor!.Value);
             directionByName[period.Category.Name] = period.Direction;
 
             recurringRules.Add(new RecurringRule
@@ -87,14 +88,15 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
             if (minPayment + extraPayment == 0m) continue;
 
             var name = $"{account.Name} Payment";
+            var anchor = ClampedDate(asOfDate.Year, asOfDate.Month, account.PaymentDueDay!.Value);
             var row = nextAssumptionsRow++;
-            WriteAssumptionsRow(assumptions, row, name, minPayment, extraPayment, Frequency.Monthly, Direction.Expense);
+            WriteAssumptionsRow(assumptions, row, name, minPayment, extraPayment, Frequency.Monthly, Direction.Expense, anchor);
             directionByName[name] = Direction.Expense;
 
             recurringRules.Add(new RecurringRule
             {
                 Name = name, Direction = Direction.Expense, Amount = minPayment + extraPayment, Frequency = Frequency.Monthly,
-                Anchor = ClampedDate(asOfDate.Year, asOfDate.Month, account.PaymentDueDay!.Value), AccountId = account.Id,
+                Anchor = anchor, AccountId = account.Id,
                 Active = true, StartDate = DateOnly.MinValue
             });
         }
@@ -139,8 +141,9 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
 
             var extraPrincipal = account.ExtraPayment ?? 0m;
             var extraName = $"{account.Name} Extra Payment";
+            var extraAnchor = ClampedDate(asOfDate.Year, asOfDate.Month, account.PaymentDueDay!.Value);
             var extraRow = nextAssumptionsRow++;
-            WriteAssumptionsRow(assumptions, extraRow, extraName, 0m, extraPrincipal, Frequency.Monthly, Direction.Expense);
+            WriteAssumptionsRow(assumptions, extraRow, extraName, 0m, extraPrincipal, Frequency.Monthly, Direction.Expense, extraAnchor);
 
             var cycles = amexCycleCalculator.CalculateDuePayments(
                 account.StatementCloseDay!.Value, account.PaymentDueDay!.Value, extraPrincipal, monthlyBudgetTotal, qualifyingTransactions, asOfDate, asOfDate, windowEnd);
@@ -198,6 +201,8 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
 
     private const string CurrencyFormat = "$#,##0.00";
 
+    private const double MoneyColumnWidthMultiplier = 1.10;
+
     private static void ApplyFormatting(IXLWorksheet assumptions, IXLWorksheet forecast)
     {
         assumptions.Row(1).Style.Font.Bold = true;
@@ -205,6 +210,8 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
 
         assumptions.Columns(AmountCol, TotalCol).Style.NumberFormat.Format = CurrencyFormat;
         assumptions.Columns(AmountCol, TotalCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+        assumptions.Columns(FrequencyCol, DirectionCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        assumptions.Column(DateAssumptionsCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
 
         forecast.Column(DateCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
         forecast.Columns(AmountColF, BalanceCol).Style.NumberFormat.Format = CurrencyFormat;
@@ -212,10 +219,20 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
 
         assumptions.Columns().AdjustToContents();
         forecast.Columns().AdjustToContents();
+
+        // A tight autofit leaves money columns looking squished next to each other - a
+        // little extra breathing room makes the sheet easier to scan.
+        WidenForCurrency(assumptions.Column(AmountCol));
+        WidenForCurrency(assumptions.Column(ExtraCol));
+        WidenForCurrency(assumptions.Column(TotalCol));
+        WidenForCurrency(forecast.Column(AmountColF));
+        WidenForCurrency(forecast.Column(BalanceCol));
     }
 
+    private static void WidenForCurrency(IXLColumn column) => column.Width *= MoneyColumnWidthMultiplier;
+
     private static void WriteAssumptionsRow(
-        IXLWorksheet sheet, int row, string name, decimal amount, decimal extra, Frequency frequency, Direction direction)
+        IXLWorksheet sheet, int row, string name, decimal amount, decimal extra, Frequency frequency, Direction direction, DateOnly anchorDate)
     {
         sheet.Cell(row, NameCol).Value = name;
         sheet.Cell(row, AmountCol).Value = amount;
@@ -223,6 +240,7 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         sheet.Cell(row, TotalCol).FormulaA1 = $"=B{row}+C{row}";
         sheet.Cell(row, FrequencyCol).Value = frequency.ToString();
         sheet.Cell(row, DirectionCol).Value = direction.ToString();
+        sheet.Cell(row, DateAssumptionsCol).Value = anchorDate.ToDateTime(TimeOnly.MinValue);
     }
 
     private static string FormatNumber(decimal value) => Math.Round(value, 2).ToString(System.Globalization.CultureInfo.InvariantCulture);

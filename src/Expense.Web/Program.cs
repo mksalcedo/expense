@@ -55,6 +55,7 @@ builder.Services.AddScoped<HistoricalAnalysisService>();
 builder.Services.AddScoped<IHistoricalAnalysisPageProvider, HistoricalAnalysisPageProvider>();
 
 builder.Services.AddScoped<ForecastExcelExporter>();
+builder.Services.AddSingleton<ExportFileNamer>();
 
 var app = builder.Build();
 
@@ -67,7 +68,7 @@ app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages:
 app.UseAntiforgery();
 
 app.MapGet("/export/forecast.xlsx", async (
-    IDbContextFactory<ExpenseDbContext> contextFactory, ForecastExcelExporter exporter, IOptions<AppSettings> options) =>
+    IDbContextFactory<ExpenseDbContext> contextFactory, ForecastExcelExporter exporter, ExportFileNamer fileNamer, IOptions<AppSettings> options) =>
 {
     await using var context = await contextFactory.CreateDbContextAsync();
     var asOfDate = DateOnly.FromDateTime(DateTime.Today);
@@ -78,7 +79,7 @@ app.MapGet("/export/forecast.xlsx", async (
     workbook.SaveAs(stream);
 
     return Results.File(stream.ToArray(),
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "forecast.xlsx");
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileNamer.GetNextFileName(asOfDate));
 });
 
 app.MapStaticAssets();

@@ -15,4 +15,14 @@ public class ForecastResult
 
     public decimal LowestProjectedBalance =>
         Rows.Count == 0 ? StartingBalance : Rows.Min(r => r.RunningBalance);
+
+    public DateOnly? LowestProjectedBalanceDate
+    {
+        get
+        {
+            if (Rows.Count == 0) return null;
+            var lowest = Rows.Min(r => r.RunningBalance);
+            return Rows.First(r => r.RunningBalance == lowest).Date;
+        }
+    }
 }
