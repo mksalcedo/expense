@@ -28,7 +28,7 @@ namespace Expense.Domain.Services.Export;
 /// </summary>
 public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceExpander recurrenceExpander, AmexCycleCalculator amexCycleCalculator)
 {
-    private const int NameCol = 1, AmountCol = 2, ExtraCol = 3, TotalCol = 4, FrequencyCol = 5, DirectionCol = 6, DateAssumptionsCol = 7;
+    private const int NameCol = 1, AmountCol = 2, ExtraCol = 3, TotalCol = 4, FrequencyCol = 5, DirectionCol = 6, DateAssumptionsCol = 7, MonthlyAmountCol = 8;
     private const int DateCol = 1, DescriptionCol = 2, AmountColF = 3, BalanceCol = 4;
 
     public async Task<XLWorkbook> ExportAsync(
@@ -45,6 +45,7 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         assumptions.Cell(1, FrequencyCol).Value = "Frequency";
         assumptions.Cell(1, DirectionCol).Value = "Direction";
         assumptions.Cell(1, DateAssumptionsCol).Value = "Date";
+        assumptions.Cell(1, MonthlyAmountCol).Value = "Monthly Amount";
         var nextAssumptionsRow = 2;
 
         var startingBalance = await context.CheckingBalanceSnapshots
@@ -178,6 +179,12 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
             }
         }
 
+        var lastAssumptionsRow = nextAssumptionsRow - 1;
+        var totalRow = nextAssumptionsRow++;
+        assumptions.Cell(totalRow, NameCol).Value = "Net Monthly Cash Flow";
+        assumptions.Cell(totalRow, MonthlyAmountCol).FormulaA1 = $"=SUM(H2:H{lastAssumptionsRow})";
+        assumptions.Row(totalRow).Style.Font.Bold = true;
+
         forecast.Cell(1, DateCol).Value = "Date";
         forecast.Cell(1, DescriptionCol).Value = "Description";
         forecast.Cell(1, AmountColF).Value = "Amount";
@@ -232,6 +239,8 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         assumptions.Columns(AmountCol, TotalCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
         assumptions.Columns(FrequencyCol, DirectionCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
         assumptions.Column(DateAssumptionsCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        assumptions.Column(MonthlyAmountCol).Style.NumberFormat.Format = CurrencyFormat;
+        assumptions.Column(MonthlyAmountCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
 
         forecast.Column(DateCol).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
         forecast.Columns(AmountColF, BalanceCol).Style.NumberFormat.Format = CurrencyFormat;
@@ -247,6 +256,7 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         WidenForCurrency(assumptions.Column(TotalCol));
         WidenForCurrency(forecast.Column(AmountColF));
         WidenForCurrency(forecast.Column(BalanceCol));
+        WidenForCurrency(assumptions.Column(MonthlyAmountCol));
     }
 
     private static void WidenForCurrency(IXLColumn column) => column.Width *= MoneyColumnWidthMultiplier;
@@ -261,6 +271,7 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         sheet.Cell(row, FrequencyCol).Value = frequency.ToString();
         sheet.Cell(row, DirectionCol).Value = direction.ToString();
         if (anchorDate is { } date) sheet.Cell(row, DateAssumptionsCol).Value = date.ToDateTime(TimeOnly.MinValue);
+        sheet.Cell(row, MonthlyAmountCol).FormulaA1 = MonthlyAmountFormula(row, frequency);
     }
 
     // Matches BudgetProrationService's own day-count constants (30.4375 = 365.25/12), written
@@ -278,6 +289,25 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
             Frequency.Annual => $"{cell}/12",
             _ => throw new ArgumentOutOfRangeException(nameof(frequency), frequency, null)
         };
+    }
+
+    // A simpler, occurrence-count-based monthly conversion (e.g. 26 biweekly paychecks/year
+    // over 12 months) than MonthlyEquivalentFormula's day-based one - this is what the user
+    // asked for specifically for this column, so the two conventions differ slightly (by a
+    // fraction of a percent for Weekly/Biweekly rows) from the rest of the app's own math.
+    private static string MonthlyAmountFormula(int row, Frequency frequency)
+    {
+        var factor = frequency switch
+        {
+            Frequency.Weekly => "52/12",
+            Frequency.Biweekly => "26/12",
+            Frequency.Monthly => null,
+            Frequency.Quarterly => "4/12",
+            Frequency.Annual => "1/12",
+            _ => throw new ArgumentOutOfRangeException(nameof(frequency), frequency, null)
+        };
+        var magnitude = factor is null ? $"D{row}" : $"D{row}*{factor}";
+        return $"=IF(F{row}=\"Income\",1,-1)*{magnitude}";
     }
 
     private static string FormatNumber(decimal value) => Math.Round(value, 2).ToString(System.Globalization.CultureInfo.InvariantCulture);

@@ -113,6 +113,59 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
+    public void Forecast_AmountAndBalanceHeaders_AreRightAligned()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var headers = cut.FindAll("th");
+        Assert.Equal("Amount", headers[2].TextContent);
+        Assert.Equal("Running balance", headers[3].TextContent);
+        Assert.Contains("text-align: right", headers[2].GetAttribute("style"));
+        Assert.Contains("text-align: right", headers[3].GetAttribute("style"));
+    }
+
+    [Fact]
+    public void Forecast_AmountAndBalanceCells_AreRightAligned()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 7, 20), Description = "Big expense", Amount = -900m, RunningBalance = 100m }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var cells = cut.FindAll("tbody td");
+        Assert.Contains("text-align: right", cells[2].GetAttribute("style")); // Amount
+        Assert.Contains("text-align: right", cells[3].GetAttribute("style")); // Running balance
+    }
+
+    [Fact]
+    public void Forecast_TableCells_HaveBordersAndSpacing()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 7, 20), Description = "Big expense", Amount = -900m, RunningBalance = 100m }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Contains("border-collapse: collapse", cut.Find("table").GetAttribute("style"));
+        foreach (var cell in cut.FindAll("th").Concat(cut.FindAll("td")))
+        {
+            var style = cell.GetAttribute("style") ?? "";
+            Assert.Contains("border:", style);
+            Assert.Contains("padding:", style);
+        }
+    }
+
+    [Fact]
     public void Forecast_HasAnExportToExcelLink()
     {
         var result = new ForecastResult { StartingBalance = 1000m, Rows = [] };

@@ -22,23 +22,23 @@ else
     </p>
     <p><a id="export-excel-link" href="/export/forecast.xlsx" target="_blank">Export to Excel</a></p>
 
-    <table>
+    <table style="border-collapse: collapse">
         <thead>
             <tr>
-                <th>Date</th>
-                <th>Description</th>
-                <th>Amount</th>
-                <th>Running balance</th>
+                <th style="@CellStyle()">Date</th>
+                <th style="@CellStyle()">Description</th>
+                <th style="@CellStyle(rightAlign: true)">Amount</th>
+                <th style="@CellStyle(rightAlign: true)">Running balance</th>
             </tr>
         </thead>
         <tbody>
             @foreach (var row in _result.Rows)
             {
                 <tr style="@(row == _lowestRow ? "background-color: yellow" : null)">
-                    <td>@row.Date.ToString("MM/dd/yyyy")</td>
-                    <td>@row.Description</td>
-                    <td>@row.Amount.ToString("N2")</td>
-                    <td>@row.RunningBalance.ToString("N2")</td>
+                    <td style="@CellStyle()">@row.Date.ToString("MM/dd/yyyy")</td>
+                    <td style="@CellStyle()">@row.Description</td>
+                    <td style="@CellStyle(rightAlign: true)">@row.Amount.ToString("N2")</td>
+                    <td style="@CellStyle(rightAlign: true)">@row.RunningBalance.ToString("N2")</td>
                 </tr>
             }
         </tbody>
@@ -54,4 +54,7 @@ else
         _result = await ForecastResultProvider.GetForecastAsync();
         _lowestRow = _result.Rows.FirstOrDefault(r => r.RunningBalance == _result.LowestProjectedBalance);
     }
+
+    private static string CellStyle(bool rightAlign = false) =>
+        $"border: 1px solid #ccc; padding: 6px 16px;{(rightAlign ? " text-align: right;" : "")}";
 }

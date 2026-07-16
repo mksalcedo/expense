@@ -572,6 +572,112 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         Assert.True(forecast.Column(4).Width > baselineForecast.Column(4).Width);
     }
 
+    [Fact]
+    public async Task Export_MonthlyAmountColumn_ForAMonthlyExpense_IsNegativeWithNoFactor()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var truist = new Category { Name = "Truist" };
+        Context.Categories.Add(truist);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = truist.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = truist.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 4), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        Assert.Equal("Monthly Amount", assumptions.Cell(1, 8).GetString());
+        var row = FindRowByName(assumptions, "Truist");
+
+        Assert.Equal($"IF(F{row}=\"Income\",1,-1)*D{row}", assumptions.Cell(row, 8).FormulaA1);
+    }
+
+    [Fact]
+    public async Task Export_MonthlyAmountColumn_ForABiweeklyIncome_UsesOccurrenceCountFactor()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var paycheck = new Category { Name = "EFX Paycheck" };
+        Context.Categories.Add(paycheck);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = paycheck.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = paycheck.Id, Amount = 2000m, Frequency = Frequency.Biweekly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 7, 17), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var row = FindRowByName(assumptions, "EFX Paycheck");
+
+        // 26 biweekly paychecks/year over 12 months - the user's own stated convention,
+        // deliberately simpler than (and slightly different from) BudgetProrationService's
+        // day-based 30.4375/14 used elsewhere in this export for the Amex budget sum.
+        Assert.Equal($"IF(F{row}=\"Income\",1,-1)*D{row}*26/12", assumptions.Cell(row, 8).FormulaA1);
+    }
+
+    [Fact]
+    public async Task Export_MonthlyAmountColumn_ForAWeeklyPayInFullAmexCategory_UsesWeeklyFactor()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
+        var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m, StatementCloseDay = 25, PaymentDueDay = 15 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var row = FindRowByName(assumptions, "Groceries");
+
+        Assert.Equal($"IF(F{row}=\"Income\",1,-1)*D{row}*52/12", assumptions.Cell(row, 8).FormulaA1);
+    }
+
+    [Fact]
+    public async Task Export_NetMonthlyCashFlow_SumsEveryMonthlyAmountRow()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var truist = new Category { Name = "Truist" };
+        Context.Categories.Add(truist);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = truist.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = truist.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 4), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var truistRow = FindRowByName(assumptions, "Truist");
+        var totalRow = FindRowByName(assumptions, "Net Monthly Cash Flow");
+
+        Assert.Equal($"SUM(H2:H{truistRow})", assumptions.Cell(totalRow, 8).FormulaA1);
+        Assert.True(assumptions.Cell(totalRow, 1).Style.Font.Bold);
+    }
+
     private static int FindRowByName(IXLWorksheet sheet, string name) =>
         sheet.RowsUsed().Single(r => r.Cell(1).GetString() == name).RowNumber();
 
