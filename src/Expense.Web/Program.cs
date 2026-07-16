@@ -3,9 +3,13 @@ using Expense.Domain.Services.Accounts;
 using Expense.Domain.Services.Budgets;
 using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Categorization;
+using Expense.Domain.Services.Dashboard;
 using Expense.Domain.Services.Export;
 using Expense.Domain.Services.Forecast;
 using Expense.Domain.Services.HistoricalAnalysis;
+using Expense.Domain.Services.Ingestion;
+using Expense.Domain.Services.Ingestion.Amazon;
+using Expense.Domain.Services.Ingestion.SimpleFin;
 using Expense.Domain.Services.OneTimeEvents;
 using Expense.Domain.Services.SpendingTracker;
 using Expense.Domain.Settings;
@@ -56,6 +60,15 @@ builder.Services.AddScoped<IHistoricalAnalysisPageProvider, HistoricalAnalysisPa
 
 builder.Services.AddScoped<ForecastExcelExporter>();
 builder.Services.AddSingleton<ExportFileNamer>();
+
+builder.Services.AddScoped<DedupService>();
+builder.Services.AddHttpClient<SimpleFinSyncService>();
+
+builder.Services.AddScoped<AmazonOrderEmailParser>();
+builder.Services.AddScoped<AmazonRefundEmailParser>();
+builder.Services.AddScoped<AmazonImportService>();
+
+builder.Services.AddScoped<ISyncStatusProvider, SyncStatusProvider>();
 
 var app = builder.Build();
 

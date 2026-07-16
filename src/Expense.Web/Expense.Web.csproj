@@ -4,6 +4,13 @@
     <ProjectReference Include="..\Expense.Domain\Expense.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Same source file the SimpleFin console importer uses - kept in one place so the
+         Dashboard's "Sync Now" button reads the exact same account mapping. -->
+    <None Include="..\Expense.Importers.SimpleFin\simplefin-account-map.json" Link="simplefin-account-map.json"
+          CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\Expense.Importers.SimpleFin\simplefin-account-map.json')" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>

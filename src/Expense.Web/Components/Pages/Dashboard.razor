@@ -1,10 +1,13 @@
 @page "/"
+@using Expense.Domain.Entities
 @using Expense.Domain.Services.Categorization
+@using Expense.Domain.Services.Dashboard
 @using Expense.Domain.Services.Forecast
 @using Expense.Domain.Services.SpendingTracker
 @inject IForecastResultProvider ForecastProvider
 @inject ISpendingTrackerPageProvider SpendingTrackerProvider
 @inject IReviewQueueProvider ReviewQueueProvider
+@inject ISyncStatusProvider SyncStatusProvider
 
 <PageTitle>Dashboard</PageTitle>
 
@@ -86,6 +89,23 @@ else
             <p><a href="/one-time-events">One-Time Events</a></p>
             <p><a href="/historical-analysis">Historical Analysis</a></p>
         </div>
+
+        <div>
+            <h2>Sync Now</h2>
+            <div>
+                <button id="sync-simplefin-btn" @onclick="RunSimpleFinSyncAsync" disabled="@_simpleFinRunning">
+                    @(_simpleFinRunning ? "Syncing..." : "Sync Bank Accounts (SimpleFin)")
+                </button>
+                <p id="sync-simplefin-status">@FormatRunStatus(_lastSimpleFinRun)</p>
+            </div>
+            <div>
+                <button id="sync-amazon-btn" @onclick="RunAmazonGmailSyncAsync" disabled="@_amazonRunning">
+                    @(_amazonRunning ? "Syncing..." : "Sync Amazon Orders (via Gmail)")
+                </button>
+                <p><em>Scans Gmail for Amazon order/refund emails - this is how Amazon purchases get into Expense.</em></p>
+                <p id="sync-amazon-status">@FormatRunStatus(_lastAmazonRun)</p>
+            </div>
+        </div>
     </div>
 }
 
@@ -93,6 +113,10 @@ else
     private ForecastResult? _forecast;
     private SpendingTrackerPageData? _spendingTracker;
     private ReviewQueueData? _reviewQueue;
+    private ImportRun? _lastSimpleFinRun;
+    private ImportRun? _lastAmazonRun;
+    private bool _simpleFinRunning;
+    private bool _amazonRunning;
 
     private int PendingGroupCount => (_reviewQueue?.TransactionGroups.Count ?? 0) + (_reviewQueue?.AmazonItemGroups.Count ?? 0);
 
@@ -101,5 +125,40 @@ else
         _forecast = await ForecastProvider.GetForecastAsync();
         _spendingTracker = await SpendingTrackerProvider.GetSpendingTrackerAsync();
         _reviewQueue = await ReviewQueueProvider.GetReviewQueueAsync();
+        _lastSimpleFinRun = await SyncStatusProvider.GetLastSimpleFinRunAsync();
+        _lastAmazonRun = await SyncStatusProvider.GetLastAmazonGmailRunAsync();
+    }
+
+    private async Task RunSimpleFinSyncAsync()
+    {
+        _simpleFinRunning = true;
+        try
+        {
+            _lastSimpleFinRun = await SyncStatusProvider.RunSimpleFinSyncAsync();
+        }
+        finally
+        {
+            _simpleFinRunning = false;
+        }
+    }
+
+    private async Task RunAmazonGmailSyncAsync()
+    {
+        _amazonRunning = true;
+        try
+        {
+            _lastAmazonRun = await SyncStatusProvider.RunAmazonGmailSyncAsync();
+        }
+        finally
+        {
+            _amazonRunning = false;
+        }
+    }
+
+    private static string FormatRunStatus(ImportRun? run)
+    {
+        if (run is null) return "Last synced: never";
+        var when = run.RanAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt");
+        return run.Success ? $"Last synced: {when}" : $"Last synced: {when} - FAILED: {run.ErrorMessage}";
     }
 }

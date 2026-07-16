@@ -16,6 +16,7 @@ public class ExpenseDbContext(DbContextOptions<ExpenseDbContext> options) : DbCo
     public DbSet<AmazonOrderItem> AmazonOrderItems => Set<AmazonOrderItem>();
     public DbSet<BudgetPeriod> BudgetPeriods => Set<BudgetPeriod>();
     public DbSet<OneTimeEvent> OneTimeEvents => Set<OneTimeEvent>();
+    public DbSet<ImportRun> ImportRuns => Set<ImportRun>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -38,12 +38,14 @@ if (!File.Exists(accountMapPath))
 var accountMap = JsonSerializer.Deserialize<Dictionary<string, int>>(await File.ReadAllTextAsync(accountMapPath))
     ?? throw new InvalidOperationException($"Could not parse {accountMapPath}");
 
-var client = new SimpleFinClient(new HttpClient(), accessUrl);
-var importService = new SimpleFinImportService(client, new DedupService(), new CategorizationService());
-var summary = await importService.ImportAsync(context, accountMap, DateTimeOffset.UtcNow.AddDays(-45));
+var syncService = new SimpleFinSyncService(new HttpClient(), new DedupService(), new CategorizationService());
+var run = await syncService.RunAsync(context, accessUrl, accountMap, DateTimeOffset.UtcNow.AddDays(-45));
 
-Console.WriteLine($"SimpleFin import complete. Transactions added: {summary.TransactionsAdded}, duplicates skipped: {summary.DuplicatesSkipped}, balance snapshots added: {summary.BalanceSnapshotsAdded}");
-if (summary.UnmappedAccounts.Count > 0)
+if (run.Success)
 {
-    Console.WriteLine($"Unmapped SimpleFin account IDs (not in account map): {string.Join(", ", summary.UnmappedAccounts)}");
+    Console.WriteLine($"SimpleFin import complete. {run.Summary}");
+}
+else
+{
+    Console.WriteLine($"SimpleFin import FAILED: {run.ErrorMessage}");
 }

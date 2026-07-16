@@ -1,6 +1,7 @@
 using Bunit;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Categorization;
+using Expense.Domain.Services.Dashboard;
 using Expense.Domain.Services.Forecast;
 using Expense.Domain.Services.SpendingTracker;
 using Expense.Web.Components.Pages;
@@ -25,6 +26,29 @@ public class DashboardTests : BunitContext
         public Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
         public Task<int> CategorizeTransactionAsync(int transactionId, int categoryId, string? merchantPatternToCreate, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<int> CategorizeAmazonItemAsync(int itemId, int categoryId, string? productPatternToCreate, CancellationToken cancellationToken = default) => Task.FromResult(0);
+    }
+
+    private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null) : ISyncStatusProvider
+    {
+        public int SimpleFinRunCount { get; private set; }
+        public int AmazonGmailRunCount { get; private set; }
+        public ImportRun NextSimpleFinRunResult { get; set; } = new() { Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" };
+        public ImportRun NextAmazonGmailRunResult { get; set; } = new() { Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" };
+
+        public Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastSimpleFinRun);
+        public Task<ImportRun?> GetLastAmazonGmailRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastAmazonRun);
+
+        public Task<ImportRun> RunSimpleFinSyncAsync(CancellationToken cancellationToken = default)
+        {
+            SimpleFinRunCount++;
+            return Task.FromResult(NextSimpleFinRunResult);
+        }
+
+        public Task<ImportRun> RunAmazonGmailSyncAsync(CancellationToken cancellationToken = default)
+        {
+            AmazonGmailRunCount++;
+            return Task.FromResult(NextAmazonGmailRunResult);
+        }
     }
 
     private static ForecastResult MakeForecast() => new()
@@ -69,11 +93,14 @@ public class DashboardTests : BunitContext
         Categories = []
     };
 
-    private void RegisterFakes()
+    private FakeSyncStatusProvider RegisterFakes(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null)
     {
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(MakeForecast()));
         Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeSpendingTracker()));
         Services.AddSingleton<IReviewQueueProvider>(new FakeReviewQueueProvider(MakeReviewQueue()));
+        var syncStatusProvider = new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun);
+        Services.AddSingleton<ISyncStatusProvider>(syncStatusProvider);
+        return syncStatusProvider;
     }
 
     [Fact]
@@ -124,5 +151,87 @@ public class DashboardTests : BunitContext
         Assert.Contains("href=\"/budgets\"", cut.Markup);
         Assert.Contains("href=\"/accounts\"", cut.Markup);
         Assert.Contains("href=\"/one-time-events\"", cut.Markup);
+    }
+
+    [Fact]
+    public void Dashboard_AmazonSyncButton_IsClearlyLabeledForAmazonOrders()
+    {
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        var button = cut.Find("#sync-amazon-btn");
+        Assert.Contains("Amazon", button.TextContent);
+        Assert.Contains("Amazon order/refund emails", cut.Markup);
+    }
+
+    [Fact]
+    public void Dashboard_WhenNeitherSourceHasEverSynced_ShowsNever()
+    {
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        Assert.Contains("Last synced: never", cut.Find("#sync-simplefin-status").TextContent);
+        Assert.Contains("Last synced: never", cut.Find("#sync-amazon-status").TextContent);
+    }
+
+    [Fact]
+    public void Dashboard_ShowsTheLastSuccessfulSyncTime()
+    {
+        var lastRun = new ImportRun
+        {
+            Source = ImportSource.SimpleFin, RanAt = new DateTimeOffset(2026, 7, 16, 8, 30, 0, TimeSpan.Zero), Success = true, Summary = "ok"
+        };
+        RegisterFakes(lastSimpleFinRun: lastRun);
+
+        var cut = Render<Dashboard>();
+
+        Assert.Contains("Last synced:", cut.Find("#sync-simplefin-status").TextContent);
+        Assert.DoesNotContain("FAILED", cut.Find("#sync-simplefin-status").TextContent);
+    }
+
+    [Fact]
+    public void Dashboard_ShowsTheErrorWhenTheLastSyncFailed()
+    {
+        var failedRun = new ImportRun
+        {
+            Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = false, ErrorMessage = "Gmail OAuth token expired"
+        };
+        RegisterFakes(lastAmazonRun: failedRun);
+
+        var cut = Render<Dashboard>();
+
+        Assert.Contains("FAILED: Gmail OAuth token expired", cut.Find("#sync-amazon-status").TextContent);
+    }
+
+    [Fact]
+    public void Dashboard_ClickingSimpleFinButton_TriggersASyncAndUpdatesTheDisplayedStatus()
+    {
+        var fake = RegisterFakes();
+        fake.NextSimpleFinRunResult = new ImportRun
+        {
+            Source = ImportSource.SimpleFin, RanAt = new DateTimeOffset(2026, 7, 16, 9, 0, 0, TimeSpan.Zero), Success = true,
+            Summary = "Transactions added: 5, duplicates skipped: 0, balance snapshots added: 2"
+        };
+
+        var cut = Render<Dashboard>();
+        cut.Find("#sync-simplefin-btn").Click();
+
+        Assert.Equal(1, fake.SimpleFinRunCount);
+        Assert.Equal(0, fake.AmazonGmailRunCount);
+        Assert.Contains("Last synced:", cut.Find("#sync-simplefin-status").TextContent);
+    }
+
+    [Fact]
+    public void Dashboard_ClickingAmazonButton_TriggersASyncIndependentlyOfSimpleFin()
+    {
+        var fake = RegisterFakes();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#sync-amazon-btn").Click();
+
+        Assert.Equal(1, fake.AmazonGmailRunCount);
+        Assert.Equal(0, fake.SimpleFinRunCount);
     }
 }
