@@ -4,6 +4,7 @@ using Expense.Domain.Services.Budgets;
 using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Forecast;
+using Expense.Domain.Services.HistoricalAnalysis;
 using Expense.Domain.Services.OneTimeEvents;
 using Expense.Domain.Services.SpendingTracker;
 using Expense.Domain.Settings;
@@ -47,6 +48,9 @@ builder.Services.AddScoped<IOneTimeEventsPageProvider, OneTimeEventsPageProvider
 
 builder.Services.AddScoped<SpendingTrackerService>();
 builder.Services.AddScoped<ISpendingTrackerPageProvider, SpendingTrackerPageProvider>();
+
+builder.Services.AddScoped<HistoricalAnalysisService>();
+builder.Services.AddScoped<IHistoricalAnalysisPageProvider, HistoricalAnalysisPageProvider>();
 
 var app = builder.Build();
 

@@ -1,0 +1,160 @@
+@page "/historical-analysis"
+@using Expense.Domain.Services.HistoricalAnalysis
+@inject IHistoricalAnalysisPageProvider AnalysisProvider
+
+<PageTitle>Historical Analysis</PageTitle>
+
+<h1>Historical Analysis</h1>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div style="display:flex; gap:3rem; flex-wrap:wrap; align-items:flex-start;">
+        <div>
+            <h2>This Week</h2>
+            @RenderPeriodTable(_data.WeeklyReport)
+        </div>
+
+        <div>
+            <h2>This Month</h2>
+            @RenderPeriodTable(_data.MonthlyReport)
+        </div>
+
+        <div>
+            <h2>Year to Date</h2>
+            @RenderPeriodTable(_data.YearToDate)
+        </div>
+
+        <div>
+            <h2>4-Week Average</h2>
+            @RenderAverageTable(_data.FourWeekAverage)
+        </div>
+
+        <div>
+            <h2>13-Week Average</h2>
+            @RenderAverageTable(_data.ThirteenWeekAverage)
+        </div>
+    </div>
+
+    <h2>Category Trend (13 weeks)</h2>
+    <select id="trend-category-select" @onchange="OnCategorySelectedAsync">
+        <option value="">Select a category...</option>
+        @foreach (var category in _data.Categories)
+        {
+            <option value="@category.Id">@category.Name</option>
+        }
+    </select>
+    @if (_trend is not null)
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>Week starting</th>
+                    <th>Actual</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var point in _trend)
+                {
+                    <tr>
+                        <td>@point.PeriodStart.ToString("yyyy-MM-dd")</td>
+                        <td>@point.Actual.ToString("N2")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <h2>Recurring Products</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Category</th>
+                <th>Purchases</th>
+                <th>Average price</th>
+                <th>Total spent</th>
+                <th>Last purchased</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var product in _data.RecurringProducts)
+            {
+                <tr>
+                    <td>@product.ProductPattern</td>
+                    <td>@product.CategoryName</td>
+                    <td>@product.Purchases</td>
+                    <td>@product.AveragePrice.ToString("N2")</td>
+                    <td>@product.TotalSpent.ToString("N2")</td>
+                    <td>@product.LastPurchased.ToString("yyyy-MM-dd")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private HistoricalAnalysisPageData? _data;
+    private List<PeriodSpendingSummary>? _trend;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _data = await AnalysisProvider.GetHistoricalAnalysisAsync();
+    }
+
+    private async Task OnCategorySelectedAsync(ChangeEventArgs e)
+    {
+        var value = (string)e.Value!;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            _trend = null;
+            return;
+        }
+        _trend = await AnalysisProvider.GetCategoryTrendAsync(int.Parse(value));
+    }
+
+    private static RenderFragment RenderPeriodTable(List<PeriodSpendingSummary> rows) => @<table>
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th>Budget</th>
+                <th>Actual</th>
+                <th>Remaining</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in rows)
+            {
+                <tr>
+                    <td>@row.CategoryName</td>
+                    <td>@(row.Budget?.ToString("N2") ?? "")</td>
+                    <td>@row.Actual.ToString("N2")</td>
+                    <td>@(row.Budget is { } budget ? (budget - row.Actual).ToString("N2") : "")</td>
+                </tr>
+            }
+        </tbody>
+    </table>;
+
+    private static RenderFragment RenderAverageTable(List<CategoryAverageSummary> rows) => @<table>
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th>Average actual</th>
+                <th>Current budget</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in rows)
+            {
+                <tr>
+                    <td>@row.CategoryName</td>
+                    <td>@row.AverageActual.ToString("N2")</td>
+                    <td>@(row.CurrentBudget?.ToString("N2") ?? "")</td>
+                </tr>
+            }
+        </tbody>
+    </table>;
+}
