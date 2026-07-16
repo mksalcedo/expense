@@ -23,9 +23,25 @@
 else
 {
     <h2>Bank Transactions (@_data.TransactionGroups.Count groups, @_data.TransactionGroups.Sum(g => g.TransactionIds.Count) transactions)</h2>
+    <p>
+        <span id="txn-selected-count">@_selectedTransactionIndexes.Count selected</span>
+        <select id="txn-bulk-category" disabled="@(_selectedTransactionIndexes.Count == 0)"
+                @onchange="e => BulkCategorizeTransactionsAsync(int.Parse((string)e.Value!))">
+            <option value="0">-- apply category to selected --</option>
+            @foreach (var category in _data.Categories)
+            {
+                <option value="@category.Id">@category.Name</option>
+            }
+        </select>
+    </p>
     <table>
         <thead>
             <tr>
+                <th>
+                    <input type="checkbox" id="txn-select-all"
+                           checked="@(_data.TransactionGroups.Count > 0 && _selectedTransactionIndexes.Count == _data.TransactionGroups.Count)"
+                           @onclick="ToggleSelectAllTransactions" />
+                </th>
                 <th>Count</th>
                 <th>Sample description</th>
                 <th>Date</th>
@@ -41,10 +57,14 @@ else
                in the live browser) for whichever group now occupies that position, making it
                look like that group's category silently changed. Keying by representativeId
                makes Blazor track each row by its real identity instead of its position. *@
-            @foreach (var group in _data.TransactionGroups)
+            @foreach (var (group, index) in _data.TransactionGroups.Select((g, i) => (g, i)))
             {
                 var representativeId = group.TransactionIds[0];
                 <tr @key="representativeId">
+                    <td>
+                        <input type="checkbox" id="txn-select-@representativeId" checked="@_selectedTransactionIndexes.Contains(index)"
+                               @onclick="e => ToggleTransactionSelection(index, e.ShiftKey)" />
+                    </td>
                     <td>@group.TransactionIds.Count</td>
                     <td>@group.SampleDescription</td>
                     <td>@group.SampleDate.ToString("MM/dd/yyyy")</td>
@@ -69,9 +89,25 @@ else
     </table>
 
     <h2>Amazon Items (@_data.AmazonItemGroups.Count groups, @_data.AmazonItemGroups.Sum(g => g.ItemIds.Count) items)</h2>
+    <p>
+        <span id="item-selected-count">@_selectedItemIndexes.Count selected</span>
+        <select id="item-bulk-category" disabled="@(_selectedItemIndexes.Count == 0)"
+                @onchange="e => BulkCategorizeAmazonItemsAsync(int.Parse((string)e.Value!))">
+            <option value="0">-- apply category to selected --</option>
+            @foreach (var category in _data.Categories)
+            {
+                <option value="@category.Id">@category.Name</option>
+            }
+        </select>
+    </p>
     <table>
         <thead>
             <tr>
+                <th>
+                    <input type="checkbox" id="item-select-all"
+                           checked="@(_data.AmazonItemGroups.Count > 0 && _selectedItemIndexes.Count == _data.AmazonItemGroups.Count)"
+                           @onclick="ToggleSelectAllItems" />
+                </th>
                 <th>Count</th>
                 <th>Item</th>
                 <th>Date</th>
@@ -82,10 +118,14 @@ else
         </thead>
         <tbody>
             @* Same @key reasoning as the transactions table above. *@
-            @foreach (var group in _data.AmazonItemGroups)
+            @foreach (var (group, index) in _data.AmazonItemGroups.Select((g, i) => (g, i)))
             {
                 var representativeId = group.ItemIds[0];
                 <tr @key="representativeId">
+                    <td>
+                        <input type="checkbox" id="item-select-@representativeId" checked="@_selectedItemIndexes.Contains(index)"
+                               @onclick="e => ToggleItemSelection(index, e.ShiftKey)" />
+                    </td>
                     <td>@group.ItemIds.Count</td>
                     <td>@group.ItemTitle</td>
                     <td>@group.SampleDate.ToString("MM/dd/yyyy")</td>
@@ -116,6 +156,11 @@ else
     private readonly Dictionary<int, string?> _itemPattern = [];
     private bool _reapplyingRules;
     private string? _reapplyMessage;
+
+    private readonly HashSet<int> _selectedTransactionIndexes = [];
+    private int? _lastClickedTransactionIndex;
+    private readonly HashSet<int> _selectedItemIndexes = [];
+    private int? _lastClickedItemIndex;
 
     protected override async Task OnInitializedAsync()
     {
@@ -158,6 +203,88 @@ else
         var representativeId = group.ItemIds[0];
         var pattern = _itemPattern.TryGetValue(representativeId, out var edited) ? edited : group.SuggestedPattern;
         await ReviewQueueProvider.CategorizeAmazonItemAsync(representativeId, categoryId, string.IsNullOrWhiteSpace(pattern) ? null : pattern);
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
+    // Gmail-style multi-select: a plain click toggles just that row; shift-click selects
+    // every row between the last-clicked one and this one (inclusive), by visual position.
+    private void ToggleTransactionSelection(int index, bool shiftKey)
+    {
+        if (shiftKey && _lastClickedTransactionIndex is { } lastIndex)
+        {
+            var (from, to) = lastIndex <= index ? (lastIndex, index) : (index, lastIndex);
+            for (var i = from; i <= to; i++) _selectedTransactionIndexes.Add(i);
+        }
+        else if (!_selectedTransactionIndexes.Add(index))
+        {
+            _selectedTransactionIndexes.Remove(index);
+        }
+        _lastClickedTransactionIndex = index;
+    }
+
+    private void ToggleSelectAllTransactions()
+    {
+        if (_data is null) return;
+        if (_selectedTransactionIndexes.Count == _data.TransactionGroups.Count)
+        {
+            _selectedTransactionIndexes.Clear();
+        }
+        else
+        {
+            _selectedTransactionIndexes.Clear();
+            for (var i = 0; i < _data.TransactionGroups.Count; i++) _selectedTransactionIndexes.Add(i);
+        }
+    }
+
+    private async Task BulkCategorizeTransactionsAsync(int categoryId)
+    {
+        if (categoryId == 0 || _data is null) return;
+
+        var transactionIds = _selectedTransactionIndexes.SelectMany(i => _data.TransactionGroups[i].TransactionIds).ToList();
+        await ReviewQueueProvider.BulkCategorizeTransactionsAsync(transactionIds, categoryId);
+
+        _selectedTransactionIndexes.Clear();
+        _lastClickedTransactionIndex = null;
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
+    private void ToggleItemSelection(int index, bool shiftKey)
+    {
+        if (shiftKey && _lastClickedItemIndex is { } lastIndex)
+        {
+            var (from, to) = lastIndex <= index ? (lastIndex, index) : (index, lastIndex);
+            for (var i = from; i <= to; i++) _selectedItemIndexes.Add(i);
+        }
+        else if (!_selectedItemIndexes.Add(index))
+        {
+            _selectedItemIndexes.Remove(index);
+        }
+        _lastClickedItemIndex = index;
+    }
+
+    private void ToggleSelectAllItems()
+    {
+        if (_data is null) return;
+        if (_selectedItemIndexes.Count == _data.AmazonItemGroups.Count)
+        {
+            _selectedItemIndexes.Clear();
+        }
+        else
+        {
+            _selectedItemIndexes.Clear();
+            for (var i = 0; i < _data.AmazonItemGroups.Count; i++) _selectedItemIndexes.Add(i);
+        }
+    }
+
+    private async Task BulkCategorizeAmazonItemsAsync(int categoryId)
+    {
+        if (categoryId == 0 || _data is null) return;
+
+        var itemIds = _selectedItemIndexes.SelectMany(i => _data.AmazonItemGroups[i].ItemIds).ToList();
+        await ReviewQueueProvider.BulkCategorizeAmazonItemsAsync(itemIds, categoryId);
+
+        _selectedItemIndexes.Clear();
+        _lastClickedItemIndex = null;
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
     }
 }

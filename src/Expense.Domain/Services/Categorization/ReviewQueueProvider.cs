@@ -36,4 +36,16 @@ public class ReviewQueueProvider(IDbContextFactory<ExpenseDbContext> contextFact
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         return await categorization.ReapplyRulesToPendingAsync(context);
     }
+
+    public async Task<int> BulkCategorizeTransactionsAsync(IReadOnlyList<int> transactionIds, int categoryId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await categorization.BulkCategorizeTransactionsAsync(context, transactionIds, categoryId);
+    }
+
+    public async Task<int> BulkCategorizeAmazonItemsAsync(IReadOnlyList<int> itemIds, int categoryId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await categorization.BulkCategorizeAmazonItemsAsync(context, itemIds, categoryId);
+    }
 }

@@ -118,6 +118,35 @@ public class CategorizationService
     }
 
     /// <summary>
+    /// Sets the same category directly on every given transaction, regardless of what
+    /// pattern (if any) they share - the Review Queue's multi-select bulk action. No
+    /// merchant_rule is created, since a bulk selection may span multiple different
+    /// merchants with no single common pattern to build one from.
+    /// </summary>
+    public async Task<int> BulkCategorizeTransactionsAsync(ExpenseDbContext context, IReadOnlyList<int> transactionIds, int categoryId)
+    {
+        var transactions = await context.BankTransactions.Where(t => transactionIds.Contains(t.Id)).ToListAsync();
+        foreach (var transaction in transactions)
+        {
+            transaction.CategoryId = categoryId;
+        }
+        await context.SaveChangesAsync();
+        return transactions.Count;
+    }
+
+    /// <summary>Same as BulkCategorizeTransactionsAsync, for Amazon items - no product is created either.</summary>
+    public async Task<int> BulkCategorizeAmazonItemsAsync(ExpenseDbContext context, IReadOnlyList<int> itemIds, int categoryId)
+    {
+        var items = await context.AmazonOrderItems.Where(i => itemIds.Contains(i.Id)).ToListAsync();
+        foreach (var item in items)
+        {
+            item.CategoryId = categoryId;
+        }
+        await context.SaveChangesAsync();
+        return items.Count;
+    }
+
+    /// <summary>
     /// Re-checks every currently-pending transaction/item against all current
     /// merchant_rules/products, categorizing any that now match. Unlike the retroactive
     /// apply inside CategorizeTransactionAsync/CategorizeAmazonItemAsync (which only

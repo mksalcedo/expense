@@ -351,6 +351,52 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task BulkCategorizeTransactionsAsync_SetsTheSameCategoryOnEveryGivenTransaction_RegardlessOfPattern()
+    {
+        // Bulk selection can span multiple different merchants/patterns (e.g. 35 different
+        // grocery stores) with no single common pattern to build a rule from - it just
+        // directly sets the category on exactly the given rows.
+        var account = await CreateAccountAsync();
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+
+        var publix = new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 1), Description = "PUBLIX", Amount = -40m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow };
+        var kroger = new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 2), Description = "KROGER", Amount = -30m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow };
+        var untouched = new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 3), Description = "SHELL GAS", Amount = -25m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow };
+        Context.BankTransactions.AddRange(publix, kroger, untouched);
+        await Context.SaveChangesAsync();
+
+        var updatedCount = await _sut.BulkCategorizeTransactionsAsync(Context, [publix.Id, kroger.Id], groceries.Id);
+
+        Assert.Equal(2, updatedCount);
+        Assert.Equal(groceries.Id, publix.CategoryId);
+        Assert.Equal(groceries.Id, kroger.CategoryId);
+        Assert.Null(untouched.CategoryId);
+    }
+
+    [Fact]
+    public async Task BulkCategorizeAmazonItemsAsync_SetsTheSameCategoryOnEveryGivenItem()
+    {
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+
+        var item1 = new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 1), ItemTitle = "Vitamin C", Price = 15m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow };
+        var item2 = new AmazonOrderItem { OrderId = "2", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Fish Oil", Price = 20m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow };
+        var untouched = new AmazonOrderItem { OrderId = "3", OrderDate = new DateOnly(2026, 7, 3), ItemTitle = "Random Gadget", Price = 12m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow };
+        Context.AmazonOrderItems.AddRange(item1, item2, untouched);
+        await Context.SaveChangesAsync();
+
+        var updatedCount = await _sut.BulkCategorizeAmazonItemsAsync(Context, [item1.Id, item2.Id], supplements.Id);
+
+        Assert.Equal(2, updatedCount);
+        Assert.Equal(supplements.Id, item1.CategoryId);
+        Assert.Equal(supplements.Id, item2.CategoryId);
+        Assert.Null(untouched.CategoryId);
+    }
+
+    [Fact]
     public async Task GetPendingTransactionGroupsAsync_GroupsRepeatedMerchantsIntoOneRow()
     {
         var account = await CreateAccountAsync();

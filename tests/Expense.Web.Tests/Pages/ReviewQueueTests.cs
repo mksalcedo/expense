@@ -51,6 +51,26 @@ public class ReviewQueueTests : BunitContext
             ReapplyRulesCallCount++;
             return Task.FromResult(NextReapplyResult);
         }
+
+        public List<int>? LastBulkTransactionIds { get; private set; }
+        public List<int>? LastBulkItemIds { get; private set; }
+        public int? LastBulkCategoryId { get; private set; }
+
+        public Task<int> BulkCategorizeTransactionsAsync(IReadOnlyList<int> transactionIds, int categoryId, CancellationToken cancellationToken = default)
+        {
+            LastBulkTransactionIds = transactionIds.ToList();
+            LastBulkCategoryId = categoryId;
+            TransactionGroups = TransactionGroups.Where(g => !g.TransactionIds.Any(transactionIds.Contains)).ToList();
+            return Task.FromResult(transactionIds.Count);
+        }
+
+        public Task<int> BulkCategorizeAmazonItemsAsync(IReadOnlyList<int> itemIds, int categoryId, CancellationToken cancellationToken = default)
+        {
+            LastBulkItemIds = itemIds.ToList();
+            LastBulkCategoryId = categoryId;
+            AmazonItemGroups = AmazonItemGroups.Where(g => !g.ItemIds.Any(itemIds.Contains)).ToList();
+            return Task.FromResult(itemIds.Count);
+        }
     }
 
     private static FakeReviewQueueProvider MakeProvider() => new()
@@ -62,6 +82,16 @@ public class ReviewQueueTests : BunitContext
             {
                 SuggestedPattern = "PUBLIX", SampleDescription = "PUBLIX NORCROSS GA", SampleDate = new DateOnly(2026, 7, 13),
                 TransactionIds = [10, 11, 12], TotalAmount = -62m
+            },
+            new PendingTransactionGroup
+            {
+                SuggestedPattern = "KROGER", SampleDescription = "KROGER ALPHARETTA GA", SampleDate = new DateOnly(2026, 7, 12),
+                TransactionIds = [30], TotalAmount = -25m
+            },
+            new PendingTransactionGroup
+            {
+                SuggestedPattern = "TRADER JOE S", SampleDescription = "TRADER JOE S #123", SampleDate = new DateOnly(2026, 7, 11),
+                TransactionIds = [40, 41], TotalAmount = -35m
             }
         ],
         AmazonItemGroups =
@@ -70,6 +100,11 @@ public class ReviewQueueTests : BunitContext
             {
                 SuggestedPattern = "Qunol Ultra CoQ10", ItemTitle = "Qunol Ultra CoQ10", SampleDate = new DateOnly(2026, 7, 10),
                 ItemIds = [20, 21], TotalPrice = 62m
+            },
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "Fish Oil", ItemTitle = "Fish Oil", SampleDate = new DateOnly(2026, 7, 9),
+                ItemIds = [22], TotalPrice = 18m
             }
         ]
     };
@@ -157,6 +192,130 @@ public class ReviewQueueTests : BunitContext
         cut.Find("#reapply-rules-btn").Click();
 
         Assert.Contains("Nothing else matched the current rules", cut.Markup);
+    }
+
+    [Fact]
+    public void CheckingATransactionRow_ShowsOneSelected()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-10").Click();
+
+        Assert.Contains("1 selected", cut.Find("#txn-selected-count").TextContent);
+    }
+
+    [Fact]
+    public void CheckingTwoTransactionRowsIndividually_ShowsTwoSelected()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-10").Click();
+        cut.Find("#txn-select-40").Click();
+
+        Assert.Contains("2 selected", cut.Find("#txn-selected-count").TextContent);
+    }
+
+    [Fact]
+    public void ClickingASelectedRowAgain_Deselects()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-10").Click();
+        cut.Find("#txn-select-10").Click();
+
+        Assert.Contains("0 selected", cut.Find("#txn-selected-count").TextContent);
+    }
+
+    [Fact]
+    public void SelectAllCheckbox_SelectsEveryVisibleTransactionGroup()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-all").Click();
+
+        Assert.Contains("3 selected", cut.Find("#txn-selected-count").TextContent); // Publix, Kroger, Trader Joe's
+    }
+
+    [Fact]
+    public void SelectAllCheckbox_ClickedAgain_DeselectsEverything()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-all").Click();
+        cut.Find("#txn-select-all").Click();
+
+        Assert.Contains("0 selected", cut.Find("#txn-selected-count").TextContent);
+    }
+
+    [Fact]
+    public void ShiftClickingARow_SelectsTheRangeFromTheLastClickedRow()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-10").Click(); // row 0 (Publix)
+        cut.Find("#txn-select-40").Click(new Microsoft.AspNetCore.Components.Web.MouseEventArgs { ShiftKey = true }); // row 2 (Trader Joe's) - should select the range 0..2
+
+        Assert.Contains("3 selected", cut.Find("#txn-selected-count").TextContent);
+    }
+
+    [Fact]
+    public void ApplyingABulkCategory_CategorizesTheUnionOfAllSelectedGroupsTransactionIds_ThenClearsSelection()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-10").Click(); // Publix: 10, 11, 12
+        cut.Find("#txn-select-30").Click(); // Kroger: 30
+
+        cut.Find("#txn-bulk-category").Change("1");
+
+        Assert.NotNull(provider.LastBulkTransactionIds);
+        Assert.Equal([10, 11, 12, 30], provider.LastBulkTransactionIds!.OrderBy(id => id));
+        Assert.Equal(1, provider.LastBulkCategoryId);
+        Assert.Contains("0 selected", cut.Find("#txn-selected-count").TextContent);
+    }
+
+    [Fact]
+    public void CheckingAnAmazonItemRow_ShowsOneSelected()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-select-20").Click();
+
+        Assert.Contains("1 selected", cut.Find("#item-selected-count").TextContent);
+    }
+
+    [Fact]
+    public void ApplyingABulkCategoryToAmazonItems_CategorizesTheUnionOfSelectedGroupsItemIds()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-select-20").Click(); // Qunol: 20, 21
+        cut.Find("#item-select-22").Click(); // Fish Oil: 22
+
+        cut.Find("#item-bulk-category").Change("1");
+
+        Assert.NotNull(provider.LastBulkItemIds);
+        Assert.Equal([20, 21, 22], provider.LastBulkItemIds!.OrderBy(id => id));
+        Assert.Equal(1, provider.LastBulkCategoryId);
+        Assert.Contains("0 selected", cut.Find("#item-selected-count").TextContent);
     }
 
     // Note: a real bug was found here in manual browser testing - categorizing one group
