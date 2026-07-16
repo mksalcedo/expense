@@ -25,14 +25,17 @@ else
     <h2>Bank Transactions (@_data.TransactionGroups.Count groups, @_data.TransactionGroups.Sum(g => g.TransactionIds.Count) transactions)</h2>
     <p>
         <span id="txn-selected-count">@_selectedTransactionIndexes.Count selected</span>
-        <select id="txn-bulk-category" disabled="@(_selectedTransactionIndexes.Count == 0)"
-                @onchange="e => BulkCategorizeTransactionsAsync(int.Parse((string)e.Value!))">
-            <option value="0">-- apply category to selected --</option>
+        <select id="txn-bulk-category" @bind="_selectedBulkTransactionCategoryId">
+            <option value="0">-- choose category --</option>
             @foreach (var category in _data.Categories)
             {
                 <option value="@category.Id">@category.Name</option>
             }
         </select>
+        <button id="txn-apply-bulk-category-btn" disabled="@(_selectedTransactionIndexes.Count == 0 || _selectedBulkTransactionCategoryId == 0)"
+                @onclick="BulkCategorizeTransactionsAsync">
+            Apply
+        </button>
     </p>
     <table>
         <thead>
@@ -91,14 +94,17 @@ else
     <h2>Amazon Items (@_data.AmazonItemGroups.Count groups, @_data.AmazonItemGroups.Sum(g => g.ItemIds.Count) items)</h2>
     <p>
         <span id="item-selected-count">@_selectedItemIndexes.Count selected</span>
-        <select id="item-bulk-category" disabled="@(_selectedItemIndexes.Count == 0)"
-                @onchange="e => BulkCategorizeAmazonItemsAsync(int.Parse((string)e.Value!))">
-            <option value="0">-- apply category to selected --</option>
+        <select id="item-bulk-category" @bind="_selectedBulkItemCategoryId">
+            <option value="0">-- choose category --</option>
             @foreach (var category in _data.Categories)
             {
                 <option value="@category.Id">@category.Name</option>
             }
         </select>
+        <button id="item-apply-bulk-category-btn" disabled="@(_selectedItemIndexes.Count == 0 || _selectedBulkItemCategoryId == 0)"
+                @onclick="BulkCategorizeAmazonItemsAsync">
+            Apply
+        </button>
     </p>
     <table>
         <thead>
@@ -159,8 +165,10 @@ else
 
     private readonly HashSet<int> _selectedTransactionIndexes = [];
     private int? _lastClickedTransactionIndex;
+    private int _selectedBulkTransactionCategoryId;
     private readonly HashSet<int> _selectedItemIndexes = [];
     private int? _lastClickedItemIndex;
+    private int _selectedBulkItemCategoryId;
 
     protected override async Task OnInitializedAsync()
     {
@@ -236,13 +244,17 @@ else
         }
     }
 
-    private async Task BulkCategorizeTransactionsAsync(int categoryId)
+    private async Task BulkCategorizeTransactionsAsync()
     {
-        if (categoryId == 0 || _data is null) return;
+        if (_selectedBulkTransactionCategoryId == 0 || _data is null || _selectedTransactionIndexes.Count == 0) return;
 
         var transactionIds = _selectedTransactionIndexes.SelectMany(i => _data.TransactionGroups[i].TransactionIds).ToList();
-        await ReviewQueueProvider.BulkCategorizeTransactionsAsync(transactionIds, categoryId);
+        await ReviewQueueProvider.BulkCategorizeTransactionsAsync(transactionIds, _selectedBulkTransactionCategoryId);
 
+        // Clear the row selection, but deliberately leave the category dropdown as-is:
+        // applying the same category to a second, different batch of rows is a common
+        // real workflow, and a plain <select> only fires a change event when its value
+        // actually changes - keeping the value lets the Apply button alone drive repeats.
         _selectedTransactionIndexes.Clear();
         _lastClickedTransactionIndex = null;
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
@@ -276,12 +288,12 @@ else
         }
     }
 
-    private async Task BulkCategorizeAmazonItemsAsync(int categoryId)
+    private async Task BulkCategorizeAmazonItemsAsync()
     {
-        if (categoryId == 0 || _data is null) return;
+        if (_selectedBulkItemCategoryId == 0 || _data is null || _selectedItemIndexes.Count == 0) return;
 
         var itemIds = _selectedItemIndexes.SelectMany(i => _data.AmazonItemGroups[i].ItemIds).ToList();
-        await ReviewQueueProvider.BulkCategorizeAmazonItemsAsync(itemIds, categoryId);
+        await ReviewQueueProvider.BulkCategorizeAmazonItemsAsync(itemIds, _selectedBulkItemCategoryId);
 
         _selectedItemIndexes.Clear();
         _lastClickedItemIndex = null;

@@ -281,11 +281,39 @@ public class ReviewQueueTests : BunitContext
         cut.Find("#txn-select-30").Click(); // Kroger: 30
 
         cut.Find("#txn-bulk-category").Change("1");
+        cut.Find("#txn-apply-bulk-category-btn").Click();
 
         Assert.NotNull(provider.LastBulkTransactionIds);
         Assert.Equal([10, 11, 12, 30], provider.LastBulkTransactionIds!.OrderBy(id => id));
         Assert.Equal(1, provider.LastBulkCategoryId);
         Assert.Contains("0 selected", cut.Find("#txn-selected-count").TextContent);
+    }
+
+    [Fact]
+    public void ApplyingTheSameBulkCategoryToASecondBatch_WorksWithoutReselectingTheDropdown()
+    {
+        // Real bug report: after applying "Supplements" once, selecting more items and
+        // wanting to apply "Supplements" again did nothing, because a plain <select> only
+        // fires onchange when its value actually changes. The Apply button - and keeping
+        // the dropdown's chosen value after applying - fixes this: the category stays
+        // selected, and clicking Apply again for a new batch of checked rows works.
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-10").Click(); // Publix
+        cut.Find("#txn-bulk-category").Change("1");
+        cut.Find("#txn-apply-bulk-category-btn").Click();
+
+        Assert.Equal([10, 11, 12], provider.LastBulkTransactionIds!.OrderBy(id => id));
+
+        // Select a different group and click Apply again WITHOUT touching the dropdown -
+        // the previously-chosen category should still be in effect.
+        cut.Find("#txn-select-30").Click(); // Kroger
+        cut.Find("#txn-apply-bulk-category-btn").Click();
+
+        Assert.Equal([30], provider.LastBulkTransactionIds!.OrderBy(id => id));
+        Assert.Equal(1, provider.LastBulkCategoryId);
     }
 
     [Fact]
@@ -311,6 +339,7 @@ public class ReviewQueueTests : BunitContext
         cut.Find("#item-select-22").Click(); // Fish Oil: 22
 
         cut.Find("#item-bulk-category").Change("1");
+        cut.Find("#item-apply-bulk-category-btn").Click();
 
         Assert.NotNull(provider.LastBulkItemIds);
         Assert.Equal([20, 21, 22], provider.LastBulkItemIds!.OrderBy(id => id));
