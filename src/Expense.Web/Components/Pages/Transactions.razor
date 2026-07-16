@@ -1,0 +1,73 @@
+@page "/transactions"
+@using Expense.Domain.Services.Transactions
+@inject ITransactionsPageProvider TransactionsProvider
+
+<PageTitle>Transactions</PageTitle>
+
+<h1>Transactions</h1>
+
+<p>
+    <input id="search-box" placeholder="Search description..." value="@_searchText" @onchange="e => SearchAsync((string?)e.Value)" />
+</p>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Description</th>
+                <th>Amount</th>
+                <th>Category</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in _data.Transactions)
+            {
+                <tr @key="row.Id">
+                    <td>@row.Date.ToString("MM/dd/yyyy")</td>
+                    <td>@row.Description</td>
+                    <td>@row.Amount.ToString("N2")</td>
+                    <td>
+                        <select id="category-@row.Id" @onchange="e => UpdateCategoryAsync(row, (string)e.Value!)">
+                            <option value="0" selected="@(row.CategoryId is null)">-- Uncategorized --</option>
+                            @foreach (var category in _data.Categories)
+                            {
+                                <option value="@category.Id" selected="@(row.CategoryId == category.Id)">@category.Name</option>
+                            }
+                        </select>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private TransactionsPageData? _data;
+    private string? _searchText;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText);
+    }
+
+    private async Task SearchAsync(string? searchText)
+    {
+        _searchText = searchText;
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText);
+    }
+
+    private async Task UpdateCategoryAsync(TransactionRow row, string value)
+    {
+        var categoryId = int.Parse(value) is var parsed && parsed == 0 ? (int?)null : parsed;
+        await TransactionsProvider.UpdateCategoryAsync(row.Id, categoryId);
+
+        row.CategoryId = categoryId;
+        row.CategoryName = categoryId is { } id ? _data!.Categories.First(c => c.Id == id).Name : null;
+    }
+}

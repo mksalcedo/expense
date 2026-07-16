@@ -152,6 +152,7 @@ public class DashboardTests : BunitContext
         Assert.Contains("href=\"/budgets\"", cut.Markup);
         Assert.Contains("href=\"/accounts\"", cut.Markup);
         Assert.Contains("href=\"/one-time-events\"", cut.Markup);
+        Assert.Contains("href=\"/transactions\"", cut.Markup);
     }
 
     [Fact]

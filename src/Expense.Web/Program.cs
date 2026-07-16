@@ -12,6 +12,7 @@ using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Services.Ingestion.SimpleFin;
 using Expense.Domain.Services.OneTimeEvents;
 using Expense.Domain.Services.SpendingTracker;
+using Expense.Domain.Services.Transactions;
 using Expense.Domain.Settings;
 using Expense.Web.Components;
 using Microsoft.EntityFrameworkCore;
@@ -69,6 +70,9 @@ builder.Services.AddScoped<AmazonRefundEmailParser>();
 builder.Services.AddScoped<AmazonImportService>();
 
 builder.Services.AddScoped<ISyncStatusProvider, SyncStatusProvider>();
+
+builder.Services.AddScoped<TransactionManagementService>();
+builder.Services.AddScoped<ITransactionsPageProvider, TransactionsPageProvider>();
 
 var app = builder.Build();
 
