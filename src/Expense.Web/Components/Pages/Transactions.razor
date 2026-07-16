@@ -8,6 +8,17 @@
 
 <p>
     <input id="search-box" placeholder="Search description..." value="@_searchText" @onchange="e => SearchAsync((string?)e.Value)" />
+    <select id="category-filter" @onchange="e => FilterByCategoryAsync((string)e.Value!)">
+        <option value="-1">-- all categories --</option>
+        <option value="0">-- uncategorized --</option>
+        @if (_data is not null)
+        {
+            @foreach (var category in _data.Categories)
+            {
+                <option value="@category.Id">@category.Name</option>
+            }
+        }
+    </select>
 </p>
 
 @if (_data is null)
@@ -16,24 +27,80 @@
 }
 else
 {
+    <p>
+        <span id="selected-count">@(_selectedBankIds.Count + _selectedAmazonIds.Count) selected</span>
+        <select id="bulk-category" @bind="_selectedBulkCategoryId">
+            <option value="0">-- choose category --</option>
+            @foreach (var category in _data.Categories)
+            {
+                <option value="@category.Id">@category.Name</option>
+            }
+        </select>
+        <button id="apply-bulk-category-btn" disabled="@(_selectedBulkCategoryId == 0 || (_selectedBankIds.Count == 0 && _selectedAmazonIds.Count == 0))"
+                @onclick="ApplyBulkCategoryAsync">
+            Apply
+        </button>
+    </p>
+
     <table>
         <thead>
             <tr>
+                <th></th>
                 <th>Date</th>
                 <th>Description</th>
+                <th>Order ID</th>
                 <th>Amount</th>
+                <th>Source</th>
                 <th>Category</th>
             </tr>
         </thead>
         <tbody>
             @foreach (var row in _data.Transactions)
             {
-                <tr @key="row.Id">
-                    <td>@row.Date.ToString("MM/dd/yyyy")</td>
-                    <td>@row.Description</td>
-                    <td>@row.Amount.ToString("N2")</td>
+                <tr @key="(row.Source, row.Id)">
                     <td>
-                        <select id="category-@row.Id" @onchange="e => UpdateCategoryAsync(row, (string)e.Value!)">
+                        @if (row.Source == TransactionSource.Bank)
+                        {
+                            <input type="checkbox" id="select-bank-@row.Id" checked="@_selectedBankIds.Contains(row.Id)"
+                                   @onclick="() => ToggleSelection(_selectedBankIds, row.Id)" />
+                        }
+                        else
+                        {
+                            <input type="checkbox" id="select-amazon-@row.Id" checked="@_selectedAmazonIds.Contains(row.Id)"
+                                   @onclick="() => ToggleSelection(_selectedAmazonIds, row.Id)" />
+                        }
+                    </td>
+                    <td>@row.Date.ToString("MM/dd/yyyy")</td>
+                    <td>
+                        @if (row.Source == TransactionSource.Amazon)
+                        {
+                            <input id="amazon-title-@row.Id" value="@row.Description"
+                                   @onchange="e => UpdateAmazonItemDetailsAsync(row, title: (string?)e.Value, price: null, quantity: null)" />
+                        }
+                        else
+                        {
+                            @row.Description
+                        }
+                    </td>
+                    <td>@row.OrderId</td>
+                    <td>
+                        @if (row.Source == TransactionSource.Amazon)
+                        {
+                            <input id="amazon-price-@row.Id" type="number" step="0.01" value="@row.Price"
+                                   @onchange="e => UpdateAmazonItemDetailsAsync(row, title: null, price: (string?)e.Value, quantity: null)" />
+                            <text> x </text>
+                            <input id="amazon-quantity-@row.Id" type="number" value="@row.Quantity"
+                                   @onchange="e => UpdateAmazonItemDetailsAsync(row, title: null, price: null, quantity: (string?)e.Value)" />
+                        }
+                        else
+                        {
+                            @row.Amount.ToString("N2")
+                        }
+                    </td>
+                    <td>@(row.Source == TransactionSource.Bank ? "Bank" : "Amazon")</td>
+                    <td>
+                        <select id="category-@(row.Source == TransactionSource.Bank ? "bank" : "amazon")-@row.Id"
+                                @onchange="e => UpdateCategoryAsync(row, int.Parse((string)e.Value!))">
                             <option value="0" selected="@(row.CategoryId is null)">-- Uncategorized --</option>
                             @foreach (var category in _data.Categories)
                             {
@@ -50,24 +117,67 @@ else
 @code {
     private TransactionsPageData? _data;
     private string? _searchText;
+    private int? _categoryFilter;
+    private readonly HashSet<int> _selectedBankIds = [];
+    private readonly HashSet<int> _selectedAmazonIds = [];
+    private int _selectedBulkCategoryId;
 
     protected override async Task OnInitializedAsync()
     {
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText);
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter);
     }
 
     private async Task SearchAsync(string? searchText)
     {
         _searchText = searchText;
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText);
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter);
     }
 
-    private async Task UpdateCategoryAsync(TransactionRow row, string value)
+    private async Task FilterByCategoryAsync(string value)
     {
-        var categoryId = int.Parse(value) is var parsed && parsed == 0 ? (int?)null : parsed;
-        await TransactionsProvider.UpdateCategoryAsync(row.Id, categoryId);
+        var parsed = int.Parse(value);
+        _categoryFilter = parsed == -1 ? null : parsed;
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter);
+    }
+
+    private async Task UpdateCategoryAsync(TransactionRow row, int value)
+    {
+        var categoryId = value == 0 ? (int?)null : value;
+        await TransactionsProvider.UpdateCategoryAsync(row.Source, row.Id, categoryId);
 
         row.CategoryId = categoryId;
         row.CategoryName = categoryId is { } id ? _data!.Categories.First(c => c.Id == id).Name : null;
+    }
+
+    private void ToggleSelection(HashSet<int> selection, int id)
+    {
+        if (!selection.Add(id))
+        {
+            selection.Remove(id);
+        }
+    }
+
+    private async Task ApplyBulkCategoryAsync()
+    {
+        if (_selectedBulkCategoryId == 0 || (_selectedBankIds.Count == 0 && _selectedAmazonIds.Count == 0)) return;
+
+        await TransactionsProvider.BulkCategorizeAsync(_selectedBankIds.ToList(), _selectedAmazonIds.ToList(), _selectedBulkCategoryId);
+
+        _selectedBankIds.Clear();
+        _selectedAmazonIds.Clear();
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter);
+    }
+
+    private async Task UpdateAmazonItemDetailsAsync(TransactionRow row, string? title, string? price, string? quantity)
+    {
+        var newTitle = title ?? row.Description;
+        var newPrice = price is not null ? decimal.Parse(price) : row.Price!.Value;
+        var newQuantity = quantity is not null ? int.Parse(quantity) : row.Quantity!.Value;
+
+        await TransactionsProvider.UpdateAmazonItemDetailsAsync(row.Id, newTitle, newPrice, newQuantity);
+
+        row.Description = newTitle;
+        row.Price = newPrice;
+        row.Quantity = newQuantity;
     }
 }

@@ -6,19 +6,31 @@ namespace Expense.Domain.Services.Transactions;
 /// <summary>Thin DI-composition wiring (like ForecastResultProvider) - all real logic lives in TransactionManagementService.</summary>
 public class TransactionsPageProvider(IDbContextFactory<ExpenseDbContext> contextFactory, TransactionManagementService transactions) : ITransactionsPageProvider
 {
-    public async Task<TransactionsPageData> GetTransactionsAsync(string? searchText, CancellationToken cancellationToken = default)
+    public async Task<TransactionsPageData> GetTransactionsAsync(string? searchText, int? categoryFilter, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         return new TransactionsPageData
         {
-            Transactions = await transactions.GetTransactionsAsync(context, searchText),
+            Transactions = await transactions.GetTransactionsAsync(context, searchText, categoryFilter),
             Categories = await context.Categories.OrderBy(c => c.Name).ToListAsync(cancellationToken)
         };
     }
 
-    public async Task UpdateCategoryAsync(int transactionId, int? categoryId, CancellationToken cancellationToken = default)
+    public async Task UpdateCategoryAsync(TransactionSource source, int id, int? categoryId, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await transactions.UpdateCategoryAsync(context, transactionId, categoryId);
+        await transactions.UpdateCategoryAsync(context, source, id, categoryId);
+    }
+
+    public async Task<int> BulkCategorizeAsync(IReadOnlyList<int> bankTransactionIds, IReadOnlyList<int> amazonItemIds, int categoryId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await transactions.BulkCategorizeAsync(context, bankTransactionIds, amazonItemIds, categoryId);
+    }
+
+    public async Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await transactions.UpdateAmazonItemDetailsAsync(context, itemId, itemTitle, price, quantity);
     }
 }
