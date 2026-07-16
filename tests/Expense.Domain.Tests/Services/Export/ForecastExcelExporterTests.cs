@@ -221,6 +221,32 @@ public class ForecastExcelExporterTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task Export_AmexPayment_ProratedBudgetLiteral_IsRoundedToCents()
+    {
+        // Weekly-to-monthly proration involves dividing by 365.25/12/7, which produces a
+        // long repeating decimal - the embedded literal must be rounded, not dumped raw.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 1, 1));
+        var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 700m, StatementCloseDay = 26, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var forecast = workbook.Worksheet("Forecast");
+        var forecastRow = FindRowByDescription(forecast, "Amex Payment");
+        var formula = forecast.Cell(forecastRow, 3).FormulaA1;
+
+        Assert.Matches(@"-\(\d+\.\d{2}\+Assumptions", formula);
+    }
+
+    [Fact]
     public async Task Export_OneTimeEvent_IsALiteralValue_NeverAFormula()
     {
         await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 1));

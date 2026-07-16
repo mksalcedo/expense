@@ -205,7 +205,7 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         sheet.Cell(row, DirectionCol).Value = direction.ToString();
     }
 
-    private static string FormatNumber(decimal value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private static string FormatNumber(decimal value) => Math.Round(value, 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     private static DateOnly ClampedDate(int year, int month, int day) =>
         new(year, month, Math.Min(day, DateTime.DaysInMonth(year, month)));

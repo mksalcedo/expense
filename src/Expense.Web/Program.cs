@@ -3,6 +3,7 @@ using Expense.Domain.Services.Accounts;
 using Expense.Domain.Services.Budgets;
 using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Categorization;
+using Expense.Domain.Services.Export;
 using Expense.Domain.Services.Forecast;
 using Expense.Domain.Services.HistoricalAnalysis;
 using Expense.Domain.Services.OneTimeEvents;
@@ -10,6 +11,7 @@ using Expense.Domain.Services.SpendingTracker;
 using Expense.Domain.Settings;
 using Expense.Web.Components;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -52,6 +54,8 @@ builder.Services.AddScoped<ISpendingTrackerPageProvider, SpendingTrackerPageProv
 builder.Services.AddScoped<HistoricalAnalysisService>();
 builder.Services.AddScoped<IHistoricalAnalysisPageProvider, HistoricalAnalysisPageProvider>();
 
+builder.Services.AddScoped<ForecastExcelExporter>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -61,6 +65,21 @@ if (!app.Environment.IsDevelopment())
 }
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseAntiforgery();
+
+app.MapGet("/export/forecast.xlsx", async (
+    IDbContextFactory<ExpenseDbContext> contextFactory, ForecastExcelExporter exporter, IOptions<AppSettings> options) =>
+{
+    await using var context = await contextFactory.CreateDbContextAsync();
+    var asOfDate = DateOnly.FromDateTime(DateTime.Today);
+    var windowEnd = asOfDate.AddMonths(options.Value.ForecastHorizonMonths);
+
+    using var workbook = await exporter.ExportAsync(context, asOfDate, windowEnd);
+    using var stream = new MemoryStream();
+    workbook.SaveAs(stream);
+
+    return Results.File(stream.ToArray(),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "forecast.xlsx");
+});
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()

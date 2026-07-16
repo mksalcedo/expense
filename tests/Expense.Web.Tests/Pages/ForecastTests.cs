@@ -53,4 +53,16 @@ public class ForecastTests : BunitContext
         Assert.Contains("Lowest projected balance", cut.Markup);
         Assert.Contains("100.00", cut.Markup);
     }
+
+    [Fact]
+    public void Forecast_HasAnExportToExcelLink()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var link = cut.Find("#export-excel-link");
+        Assert.Equal("/export/forecast.xlsx", link.GetAttribute("href"));
+    }
 }
