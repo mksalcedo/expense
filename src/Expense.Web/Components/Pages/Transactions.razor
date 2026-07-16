@@ -55,19 +55,19 @@ else
             </tr>
         </thead>
         <tbody>
-            @foreach (var row in _data.Transactions)
+            @foreach (var (row, index) in _data.Transactions.Select((r, i) => (r, i)))
             {
                 <tr @key="(row.Source, row.Id)">
                     <td>
                         @if (row.Source == TransactionSource.Bank)
                         {
                             <input type="checkbox" id="select-bank-@row.Id" checked="@_selectedBankIds.Contains(row.Id)"
-                                   @onclick="() => ToggleSelection(_selectedBankIds, row.Id)" />
+                                   @onclick="e => ToggleSelection(index, e.ShiftKey)" />
                         }
                         else
                         {
                             <input type="checkbox" id="select-amazon-@row.Id" checked="@_selectedAmazonIds.Contains(row.Id)"
-                                   @onclick="() => ToggleSelection(_selectedAmazonIds, row.Id)" />
+                                   @onclick="e => ToggleSelection(index, e.ShiftKey)" />
                         }
                     </td>
                     <td>@row.Date.ToString("MM/dd/yyyy")</td>
@@ -120,6 +120,7 @@ else
     private int? _categoryFilter;
     private readonly HashSet<int> _selectedBankIds = [];
     private readonly HashSet<int> _selectedAmazonIds = [];
+    private int? _lastClickedIndex;
     private int _selectedBulkCategoryId;
 
     protected override async Task OnInitializedAsync()
@@ -149,11 +150,40 @@ else
         row.CategoryName = categoryId is { } id ? _data!.Categories.First(c => c.Id == id).Name : null;
     }
 
-    private void ToggleSelection(HashSet<int> selection, int id)
+    // Gmail-style multi-select, same as the Review Queue: a plain click toggles just that
+    // row; shift-click selects every row between the last-clicked one and this one
+    // (inclusive), by visual position - regardless of whether those rows are Bank or
+    // Amazon, since they're sorted together in one combined, date-ordered list.
+    private void ToggleSelection(int index, bool shiftKey)
     {
-        if (!selection.Add(id))
+        if (_data is null) return;
+
+        if (shiftKey && _lastClickedIndex is { } lastIndex)
         {
-            selection.Remove(id);
+            var (from, to) = lastIndex <= index ? (lastIndex, index) : (index, lastIndex);
+            for (var i = from; i <= to; i++)
+            {
+                Select(_data.Transactions[i]);
+            }
+        }
+        else
+        {
+            ToggleSingle(_data.Transactions[index]);
+        }
+        _lastClickedIndex = index;
+    }
+
+    private void Select(TransactionRow row)
+    {
+        (row.Source == TransactionSource.Bank ? _selectedBankIds : _selectedAmazonIds).Add(row.Id);
+    }
+
+    private void ToggleSingle(TransactionRow row)
+    {
+        var selection = row.Source == TransactionSource.Bank ? _selectedBankIds : _selectedAmazonIds;
+        if (!selection.Add(row.Id))
+        {
+            selection.Remove(row.Id);
         }
     }
 
@@ -165,6 +195,7 @@ else
 
         _selectedBankIds.Clear();
         _selectedAmazonIds.Clear();
+        _lastClickedIndex = null;
         _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter);
     }
 

@@ -233,6 +233,22 @@ public class TransactionsTests : BunitContext
     }
 
     [Fact]
+    public void ShiftClickingARow_SelectsTheRangeFromTheLastClickedRow_AcrossBothSources()
+    {
+        // Rendering order here is bank-100 (index 0), bank-101 (index 1), amazon-200 (index 2),
+        // amazon-201 (index 3). Shift-clicking amazon-200 after plain-clicking bank-100 should
+        // select the whole visual range in between, regardless of source.
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+        cut.Find("#select-bank-100").Click();
+        cut.Find("#select-amazon-200").Click(new Microsoft.AspNetCore.Components.Web.MouseEventArgs { ShiftKey = true });
+
+        Assert.Contains("3 selected", cut.Find("#selected-count").TextContent);
+    }
+
+    [Fact]
     public void CheckingRowsAcrossBothSourcesAndApplyingACategory_BulkCategorizesBoth()
     {
         var provider = MakeProvider();
