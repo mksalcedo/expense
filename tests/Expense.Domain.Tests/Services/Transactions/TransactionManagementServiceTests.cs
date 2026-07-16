@@ -43,6 +43,7 @@ public class TransactionManagementServiceTests : DatabaseTestBase
         Assert.Equal("112-123", rows[0].OrderId);
         Assert.Equal(30m, rows[0].Price);
         Assert.Equal(1, rows[0].Quantity);
+        Assert.False(rows[0].NeedsReview);
 
         Assert.Equal("PUBLIX", rows[1].Description);
         Assert.Equal(TransactionSource.Bank, rows[1].Source);
@@ -99,6 +100,30 @@ public class TransactionManagementServiceTests : DatabaseTestBase
 
         var row = Assert.Single(rows);
         Assert.Equal("Mystery Item", row.Description);
+    }
+
+    [Fact]
+    public async Task GetTransactionsAsync_NeedsReviewOnly_ReturnsOnlyFlaggedAmazonPlaceholders()
+    {
+        Context.AmazonOrderItems.AddRange(
+            new AmazonOrderItem
+            {
+                OrderId = "1", OrderDate = new DateOnly(2026, 7, 1),
+                ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                Price = 22m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new AmazonOrderItem
+            {
+                OrderId = "2", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Qunol Ultra CoQ10",
+                Price = 30m, Quantity = 1, NeedsReview = false, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var rows = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null, needsReviewOnly: true);
+
+        var row = Assert.Single(rows);
+        Assert.Contains("unavailable in email", row.Description);
+        Assert.True(row.NeedsReview);
     }
 
     [Fact]
@@ -192,7 +217,7 @@ public class TransactionManagementServiceTests : DatabaseTestBase
         {
             OrderId = "113-1132648-3403446", OrderDate = new DateOnly(2026, 7, 1),
             ItemTitle = "(Item details unavailable in email - check Amazon order page)",
-            Price = 22.00m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow
+            Price = 22.00m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
         };
         Context.AmazonOrderItems.Add(item);
         await Context.SaveChangesAsync();
@@ -203,5 +228,6 @@ public class TransactionManagementServiceTests : DatabaseTestBase
         Assert.Equal("Celestial Seasonings Wild Berry Zinger Tea", reloaded.ItemTitle);
         Assert.Equal(21.99m, reloaded.Price);
         Assert.Equal(2, reloaded.Quantity);
+        Assert.False(reloaded.NeedsReview); // fixed now - no longer needs a human to look at it
     }
 }

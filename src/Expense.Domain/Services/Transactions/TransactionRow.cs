@@ -18,4 +18,12 @@ public class TransactionRow
 
     /// <summary>Amazon rows only - editable, same reason as Price.</summary>
     public int? Quantity { get; set; }
+
+    /// <summary>
+    /// Amazon rows only - true when this item's title/price came from a placeholder
+    /// ("(Item details unavailable...)") rather than a real parsed item, so it needs a
+    /// human to look up the real order and correct it. Everything else (bank transactions,
+    /// itemized Amazon orders, gift cards) is reliable and never needs this.
+    /// </summary>
+    public bool NeedsReview { get; set; }
 }

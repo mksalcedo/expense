@@ -92,6 +92,7 @@ public class AmazonOrderEmailParserTests
         Assert.Equal(1, item.Quantity);
         Assert.Equal(29.97m, item.Price);
         Assert.Equal(1.80m, item.TaxAllocated); // 31.77 - 29.97
+        Assert.False(item.NeedsReview); // a real itemized order - the parser didn't have to guess
     }
 
     [Fact]
@@ -230,6 +231,7 @@ public class AmazonOrderEmailParserTests
         Assert.Equal("Amazon eGift Card", item.ItemTitle);
         Assert.Equal(150.00m, item.Price);
         Assert.Equal(0m, item.TaxAllocated);
+        Assert.False(item.NeedsReview); // "Amazon eGift Card" is a reliable, correct label, not a guess
     }
 
     [Fact]
@@ -241,6 +243,7 @@ public class AmazonOrderEmailParserTests
         Assert.Equal("113-1132648-3403446", item.OrderId);
         Assert.Equal(22.00m, item.Price);
         Assert.DoesNotContain("Gift Card", item.ItemTitle);
+        Assert.True(item.NeedsReview); // no real item data was in the email - a human needs to look it up
     }
 
     [Fact]

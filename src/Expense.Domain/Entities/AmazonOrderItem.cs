@@ -25,5 +25,14 @@ public class AmazonOrderItem
 
     public decimal? RefundAmount { get; set; }
 
+    /// <summary>
+    /// True when the title/price came from a "simplified" order confirmation email with no
+    /// real item list (see AmazonOrderEmailParser.ParseSimplifiedOrder) - the data is a
+    /// placeholder, not a parsing guess about a real item, so it needs a human to look up
+    /// the real order and correct it. False for everything else (itemized orders and gift
+    /// cards are both reliable, since the parser fails loudly rather than guessing).
+    /// </summary>
+    public bool NeedsReview { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 }

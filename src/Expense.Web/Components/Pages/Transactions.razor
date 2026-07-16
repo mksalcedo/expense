@@ -19,6 +19,10 @@
             }
         }
     </select>
+    <label>
+        <input type="checkbox" id="needs-review-filter" checked="@_needsReviewOnly" @onchange="e => FilterByNeedsReviewAsync((bool)e.Value!)" />
+        Needs Review only
+    </label>
 </p>
 
 @if (_data is null)
@@ -57,7 +61,7 @@ else
         <tbody>
             @foreach (var (row, index) in _data.Transactions.Select((r, i) => (r, i)))
             {
-                <tr @key="(row.Source, row.Id)">
+                <tr @key="(row.Source, row.Id)" style="@(row.NeedsReview ? "background-color: yellow" : null)">
                     <td>
                         @if (row.Source == TransactionSource.Bank)
                         {
@@ -118,6 +122,7 @@ else
     private TransactionsPageData? _data;
     private string? _searchText;
     private int? _categoryFilter;
+    private bool _needsReviewOnly;
     private readonly HashSet<int> _selectedBankIds = [];
     private readonly HashSet<int> _selectedAmazonIds = [];
     private int? _lastClickedIndex;
@@ -125,20 +130,26 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter);
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
     }
 
     private async Task SearchAsync(string? searchText)
     {
         _searchText = searchText;
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter);
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
     }
 
     private async Task FilterByCategoryAsync(string value)
     {
         var parsed = int.Parse(value);
         _categoryFilter = parsed == -1 ? null : parsed;
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter);
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
+    }
+
+    private async Task FilterByNeedsReviewAsync(bool needsReviewOnly)
+    {
+        _needsReviewOnly = needsReviewOnly;
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
     }
 
     private async Task UpdateCategoryAsync(TransactionRow row, int value)
@@ -196,7 +207,7 @@ else
         _selectedBankIds.Clear();
         _selectedAmazonIds.Clear();
         _lastClickedIndex = null;
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter);
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
     }
 
     private async Task UpdateAmazonItemDetailsAsync(TransactionRow row, string? title, string? price, string? quantity)

@@ -15,6 +15,7 @@ public class TransactionsTests : BunitContext
         public string? LastSearchText { get; private set; }
         public int? LastCategoryFilter { get; private set; }
         public bool LastCategoryFilterWasSet { get; private set; }
+        public bool LastNeedsReviewOnly { get; private set; }
         public TransactionSource? LastUpdatedSource { get; private set; }
         public int? LastUpdatedId { get; private set; }
         public int? LastUpdatedCategoryId { get; private set; }
@@ -26,11 +27,12 @@ public class TransactionsTests : BunitContext
         public decimal? LastAmazonItemPrice { get; private set; }
         public int? LastAmazonItemQuantity { get; private set; }
 
-        public Task<TransactionsPageData> GetTransactionsAsync(string? searchText, int? categoryFilter, CancellationToken cancellationToken = default)
+        public Task<TransactionsPageData> GetTransactionsAsync(string? searchText, int? categoryFilter, bool needsReviewOnly = false, CancellationToken cancellationToken = default)
         {
             LastSearchText = searchText;
             LastCategoryFilter = categoryFilter;
             LastCategoryFilterWasSet = true;
+            LastNeedsReviewOnly = needsReviewOnly;
             var filtered = Transactions.AsEnumerable();
             if (!string.IsNullOrWhiteSpace(searchText))
             {
@@ -43,6 +45,10 @@ public class TransactionsTests : BunitContext
             else if (categoryFilter is { } catId)
             {
                 filtered = filtered.Where(t => t.CategoryId == catId);
+            }
+            if (needsReviewOnly)
+            {
+                filtered = filtered.Where(t => t.NeedsReview);
             }
             return Task.FromResult(new TransactionsPageData { Transactions = filtered.ToList(), Categories = Categories });
         }
@@ -81,7 +87,7 @@ public class TransactionsTests : BunitContext
             new TransactionRow { Source = TransactionSource.Bank, Id = 100, Date = new DateOnly(2026, 7, 1), Description = "PUBLIX NORCROSS GA", Amount = -40m, CategoryId = 1, CategoryName = "Groceries" },
             new TransactionRow { Source = TransactionSource.Bank, Id = 101, Date = new DateOnly(2026, 7, 5), Description = "TRUIST MORTG PAYMENT", Amount = -2681.22m, CategoryId = null, CategoryName = null },
             new TransactionRow { Source = TransactionSource.Amazon, Id = 200, Date = new DateOnly(2026, 7, 3), Description = "Qunol Ultra CoQ10", Amount = -30m, CategoryId = 2, CategoryName = "Supplements", OrderId = "112-123", Price = 30m, Quantity = 1 },
-            new TransactionRow { Source = TransactionSource.Amazon, Id = 201, Date = new DateOnly(2026, 7, 4), Description = "(Item details unavailable in email - check Amazon order page)", Amount = -22m, CategoryId = null, CategoryName = null, OrderId = "113-456", Price = 22m, Quantity = 1 }
+            new TransactionRow { Source = TransactionSource.Amazon, Id = 201, Date = new DateOnly(2026, 7, 4), Description = "(Item details unavailable in email - check Amazon order page)", Amount = -22m, CategoryId = null, CategoryName = null, OrderId = "113-456", Price = 22m, Quantity = 1, NeedsReview = true }
         ]
     };
 
@@ -290,5 +296,39 @@ public class TransactionsTests : BunitContext
         var cut = Render<Transactions>();
 
         Assert.Throws<Bunit.ElementNotFoundException>(() => cut.Find("#amazon-title-100"));
+    }
+
+    [Fact]
+    public void RowNeedingReview_IsHighlighted()
+    {
+        Services.AddSingleton<ITransactionsPageProvider>(MakeProvider());
+
+        var cut = Render<Transactions>();
+
+        var row = cut.Find("#select-amazon-201").Closest("tr")!;
+        Assert.Contains("background-color: yellow", row.GetAttribute("style"));
+    }
+
+    [Fact]
+    public void RowNotNeedingReview_IsNotHighlighted()
+    {
+        Services.AddSingleton<ITransactionsPageProvider>(MakeProvider());
+
+        var cut = Render<Transactions>();
+
+        var row = cut.Find("#select-amazon-200").Closest("tr")!;
+        Assert.DoesNotContain("background-color: yellow", row.GetAttribute("style") ?? "");
+    }
+
+    [Fact]
+    public void CheckingNeedsReviewFilter_PassesItToTheProvider()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+        cut.Find("#needs-review-filter").Change(true);
+
+        Assert.True(provider.LastNeedsReviewOnly);
     }
 }

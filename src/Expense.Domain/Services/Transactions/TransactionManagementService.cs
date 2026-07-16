@@ -17,7 +17,8 @@ public class TransactionManagementService(CategorizationService categorization)
     /// <summary>Sentinel categoryFilter value meaning "uncategorized only" - real category IDs are always positive.</summary>
     public const int UncategorizedFilterValue = 0;
 
-    public async Task<List<TransactionRow>> GetTransactionsAsync(ExpenseDbContext context, string? searchText, int? categoryFilter)
+    public async Task<List<TransactionRow>> GetTransactionsAsync(
+        ExpenseDbContext context, string? searchText, int? categoryFilter, bool needsReviewOnly = false)
     {
         var bankTransactions = await context.BankTransactions
             .Include(t => t.Category)
@@ -50,7 +51,8 @@ public class TransactionManagementService(CategorizationService categorization)
             CategoryName = i.Category?.Name,
             OrderId = i.OrderId,
             Price = i.Price,
-            Quantity = i.Quantity
+            Quantity = i.Quantity,
+            NeedsReview = i.NeedsReview
         }));
 
         if (!string.IsNullOrWhiteSpace(searchText))
@@ -65,6 +67,11 @@ public class TransactionManagementService(CategorizationService categorization)
         else if (categoryFilter is { } categoryId)
         {
             rows = rows.Where(r => r.CategoryId == categoryId).ToList();
+        }
+
+        if (needsReviewOnly)
+        {
+            rows = rows.Where(r => r.NeedsReview).ToList();
         }
 
         return rows.OrderByDescending(r => r.Date).ToList();
@@ -103,6 +110,7 @@ public class TransactionManagementService(CategorizationService categorization)
         item.ItemTitle = itemTitle;
         item.Price = price;
         item.Quantity = quantity;
+        item.NeedsReview = false; // a human just corrected it - it's reliable now
         await context.SaveChangesAsync();
     }
 }

@@ -6,12 +6,12 @@ namespace Expense.Domain.Services.Transactions;
 /// <summary>Thin DI-composition wiring (like ForecastResultProvider) - all real logic lives in TransactionManagementService.</summary>
 public class TransactionsPageProvider(IDbContextFactory<ExpenseDbContext> contextFactory, TransactionManagementService transactions) : ITransactionsPageProvider
 {
-    public async Task<TransactionsPageData> GetTransactionsAsync(string? searchText, int? categoryFilter, CancellationToken cancellationToken = default)
+    public async Task<TransactionsPageData> GetTransactionsAsync(string? searchText, int? categoryFilter, bool needsReviewOnly = false, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         return new TransactionsPageData
         {
-            Transactions = await transactions.GetTransactionsAsync(context, searchText, categoryFilter),
+            Transactions = await transactions.GetTransactionsAsync(context, searchText, categoryFilter, needsReviewOnly),
             Categories = await context.Categories.OrderBy(c => c.Name).ToListAsync(cancellationToken)
         };
     }

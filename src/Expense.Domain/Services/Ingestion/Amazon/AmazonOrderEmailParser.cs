@@ -108,6 +108,7 @@ public partial class AmazonOrderEmailParser
                 Price = orderTotal,
                 Quantity = 1,
                 TaxAllocated = 0m,
+                NeedsReview = !isGiftCard,
                 CreatedAt = DateTimeOffset.UtcNow
             }
         ];
