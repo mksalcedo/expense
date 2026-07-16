@@ -18,10 +18,11 @@ namespace Expense.Domain.Services.Export;
 /// that actually repeats.
 ///
 /// Amex is the one exception: its payment is a genuinely different amount each cycle (the
-/// MAX(actual, budget) rule), so there's no repeated value to eliminate the way a mortgage
-/// payment has. Only its Extra Payment portion (which IS constant) gets a master cell; the
-/// actual-vs-budget comparison is baked in as a literal per-cycle snapshot, since Excel
-/// can't query Postgres live for real transaction data.
+/// MAX(actual, budget) rule). Its qualifying spending categories (Groceries, Gas, etc.) and
+/// its Extra Payment each still get their own master cell, and a future cycle's payment is a
+/// pure formula summing them - only an already-closed/in-progress cycle's real, posted-charges
+/// total is a literal (wrapped in an Excel MAX() against the live budget formula), since
+/// Excel can't query Postgres for that live.
 ///
 /// One-time events are never formula-driven either - by definition they occur exactly once.
 /// </summary>
@@ -110,7 +111,40 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
             assumptionsRowByName[assumptions.Cell(r, NameCol).GetString()] = r;
         }
 
-        // Amex/ActiveSpending accounts - only the Extra Payment portion is a master cell.
+        // Qualifying spending categories (Groceries, Gas, etc.) - each gets its own Assumptions
+        // row (in whatever frequency it was actually budgeted in) so the budget behind the Amex
+        // payment is visible and editable, not just baked into the payment amount.
+        var qualifyingCategoryIds = await context.FundingRules
+            .Where(f => f.Strategy == FundingStrategies.PayInFullAmex)
+            .Select(f => f.CategoryId)
+            .ToListAsync(cancellationToken);
+
+        decimal monthlyBudgetTotal = 0m;
+        var categoryAssumptionsRows = new List<(int Row, Frequency Frequency)>();
+        foreach (var categoryId in qualifyingCategoryIds)
+        {
+            var currentPeriod = await context.BudgetPeriods
+                .Where(p => p.CategoryId == categoryId && p.EffectiveFrom <= asOfDate && (p.EffectiveThrough == null || p.EffectiveThrough >= asOfDate))
+                .Include(p => p.Category)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (currentPeriod is not null)
+            {
+                monthlyBudgetTotal += proration.Convert(currentPeriod.Amount, currentPeriod.Frequency, Frequency.Monthly);
+
+                var categoryRow = nextAssumptionsRow++;
+                WriteAssumptionsRow(assumptions, categoryRow, currentPeriod.Category.Name, currentPeriod.Amount, 0m, currentPeriod.Frequency, Direction.Expense, null);
+                categoryAssumptionsRows.Add((categoryRow, currentPeriod.Frequency));
+            }
+        }
+
+        var budgetSumFormula = categoryAssumptionsRows.Count == 0
+            ? "0"
+            : string.Join("+", categoryAssumptionsRows.Select(r => MonthlyEquivalentFormula(r.Row, r.Frequency)));
+
+        // Amex/ActiveSpending accounts - the Extra Payment portion is a master cell, and now so
+        // is the budget portion (it references the category rows above); only the real,
+        // already-posted actual-charges figure for a closed/in-progress cycle stays a literal,
+        // since Excel can't query Postgres for that live.
         var amexFormulaOverrides = new Dictionary<(DateOnly Date, string Description), string>();
         var activeSpendingAccounts = await context.Accounts
             .Where(a => a.Type == AccountType.ActiveSpending && a.IsActive && a.StatementCloseDay != null && a.PaymentDueDay != null)
@@ -118,23 +152,6 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
 
         foreach (var account in activeSpendingAccounts)
         {
-            var qualifyingCategoryIds = await context.FundingRules
-                .Where(f => f.Strategy == FundingStrategies.PayInFullAmex)
-                .Select(f => f.CategoryId)
-                .ToListAsync(cancellationToken);
-
-            decimal monthlyBudgetTotal = 0m;
-            foreach (var categoryId in qualifyingCategoryIds)
-            {
-                var currentPeriod = await context.BudgetPeriods
-                    .Where(p => p.CategoryId == categoryId && p.EffectiveFrom <= asOfDate && (p.EffectiveThrough == null || p.EffectiveThrough >= asOfDate))
-                    .FirstOrDefaultAsync(cancellationToken);
-                if (currentPeriod is not null)
-                {
-                    monthlyBudgetTotal += proration.Convert(currentPeriod.Amount, currentPeriod.Frequency, Frequency.Monthly);
-                }
-            }
-
             var qualifyingTransactions = await context.BankTransactions
                 .Where(t => t.AccountId == account.Id && t.PostedDate != null && t.CategoryId != null && qualifyingCategoryIds.Contains(t.CategoryId.Value))
                 .ToListAsync(cancellationToken);
@@ -151,9 +168,12 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
             var description = $"{account.Name} Payment";
             foreach (var cycle in cycles)
             {
-                var baseAmount = cycle.Amount - extraPrincipal;
+                var baseFormula = cycle.IsFuture
+                    ? budgetSumFormula
+                    : $"MAX({FormatNumber(cycle.ActualAmount)},{budgetSumFormula})";
+
                 lines.Add(new LedgerLine { Date = cycle.DueDate, Description = description, Amount = -cycle.Amount, AccountId = account.Id });
-                amexFormulaOverrides[(cycle.DueDate, description)] = $"=-({FormatNumber(baseAmount)}+Assumptions!$D${extraRow})";
+                amexFormulaOverrides[(cycle.DueDate, description)] = $"=-({baseFormula}+Assumptions!$D${extraRow})";
                 directionByName[description] = Direction.Expense;
             }
         }
@@ -232,7 +252,7 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
     private static void WidenForCurrency(IXLColumn column) => column.Width *= MoneyColumnWidthMultiplier;
 
     private static void WriteAssumptionsRow(
-        IXLWorksheet sheet, int row, string name, decimal amount, decimal extra, Frequency frequency, Direction direction, DateOnly anchorDate)
+        IXLWorksheet sheet, int row, string name, decimal amount, decimal extra, Frequency frequency, Direction direction, DateOnly? anchorDate)
     {
         sheet.Cell(row, NameCol).Value = name;
         sheet.Cell(row, AmountCol).Value = amount;
@@ -240,7 +260,24 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         sheet.Cell(row, TotalCol).FormulaA1 = $"=B{row}+C{row}";
         sheet.Cell(row, FrequencyCol).Value = frequency.ToString();
         sheet.Cell(row, DirectionCol).Value = direction.ToString();
-        sheet.Cell(row, DateAssumptionsCol).Value = anchorDate.ToDateTime(TimeOnly.MinValue);
+        if (anchorDate is { } date) sheet.Cell(row, DateAssumptionsCol).Value = date.ToDateTime(TimeOnly.MinValue);
+    }
+
+    // Matches BudgetProrationService's own day-count constants (30.4375 = 365.25/12), written
+    // as an Excel formula rather than pre-computed in C# so the conversion itself lives on the
+    // Assumptions sheet and Excel evaluates it exactly - no repeating-decimal literal to round.
+    private static string MonthlyEquivalentFormula(int row, Frequency frequency)
+    {
+        var cell = $"Assumptions!$D${row}";
+        return frequency switch
+        {
+            Frequency.Weekly => $"{cell}*30.4375/7",
+            Frequency.Biweekly => $"{cell}*30.4375/14",
+            Frequency.Monthly => cell,
+            Frequency.Quarterly => $"{cell}/3",
+            Frequency.Annual => $"{cell}/12",
+            _ => throw new ArgumentOutOfRangeException(nameof(frequency), frequency, null)
+        };
     }
 
     private static string FormatNumber(decimal value) => Math.Round(value, 2).ToString(System.Globalization.CultureInfo.InvariantCulture);

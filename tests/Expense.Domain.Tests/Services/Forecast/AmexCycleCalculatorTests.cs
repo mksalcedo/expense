@@ -59,6 +59,8 @@ public class AmexCycleCalculatorTests
 
         var result = Assert.Single(results);
         Assert.Equal(2000m, result.Amount); // budget (900) + extra (1100) - a future cycle never looks at actual data, even if some already exists
+        Assert.True(result.IsFuture);
+        Assert.Equal(0m, result.ActualAmount);
     }
 
     [Fact]
@@ -93,6 +95,8 @@ public class AmexCycleCalculatorTests
 
         var result = Assert.Single(results);
         Assert.Equal(2350m, result.Amount); // MAX(1250, 900) + 1100
+        Assert.False(result.IsFuture);
+        Assert.Equal(1250m, result.ActualAmount);
     }
 
     [Fact]

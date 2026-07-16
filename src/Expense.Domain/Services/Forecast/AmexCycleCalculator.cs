@@ -38,19 +38,24 @@ public class AmexCycleCalculator
 
                 var isFuture = cycleStart > asOfDate;
                 decimal amount;
+                decimal actualAmount = 0m;
                 if (isFuture)
                 {
                     amount = monthlyBudgetTotal + extraPrincipal;
                 }
                 else
                 {
-                    var actual = -qualifyingTransactions
+                    actualAmount = -qualifyingTransactions
                         .Where(t => t.PostedDate is { } posted && posted >= cycleStart && posted <= closeDate)
                         .Sum(t => t.Amount);
-                    amount = Math.Max(actual, monthlyBudgetTotal) + extraPrincipal;
+                    amount = Math.Max(actualAmount, monthlyBudgetTotal) + extraPrincipal;
                 }
 
-                results.Add(new AmexCycleResult { CycleStart = cycleStart, CycleEnd = closeDate, DueDate = dueDate, Amount = amount });
+                results.Add(new AmexCycleResult
+                {
+                    CycleStart = cycleStart, CycleEnd = closeDate, DueDate = dueDate, Amount = amount,
+                    IsFuture = isFuture, ActualAmount = actualAmount
+                });
             }
 
             var (nextYear, nextMonth) = AddMonth(cursor.Year, cursor.Month, 1);

@@ -211,20 +211,23 @@ public class ForecastExcelExporterTests : DatabaseTestBase
 
         var assumptions = workbook.Worksheet("Assumptions");
         var extraRow = FindRowByName(assumptions, "Amex Extra Payment");
+        var groceriesRow = FindRowByName(assumptions, "Groceries");
 
         var forecast = workbook.Worksheet("Forecast");
         var forecastRow = FindRowByDescription(forecast, "Amex Payment");
         var formula = forecast.Cell(forecastRow, 3).FormulaA1;
 
-        // Actual (1250) beat budget (900), so the base snapshot is 1250; extra payment (0) is still a live reference.
-        Assert.Equal($"-(1250+Assumptions!$D${extraRow})", formula);
+        // Actual (1250) beat budget (900), so the cycle's closed, MAX(actual, live budget
+        // reference) wins; extra payment (0) is still a live reference too.
+        Assert.Equal($"-(MAX(1250,Assumptions!$D${groceriesRow})+Assumptions!$D${extraRow})", formula);
     }
 
     [Fact]
-    public async Task Export_AmexPayment_ProratedBudgetLiteral_IsRoundedToCents()
+    public async Task Export_AmexPayment_WeeklyBudgetedCategory_ProratesViaALiveFormula_NotARoundedLiteral()
     {
-        // Weekly-to-monthly proration involves dividing by 365.25/12/7, which produces a
-        // long repeating decimal - the embedded literal must be rounded, not dumped raw.
+        // Weekly-to-monthly proration used to get pre-computed in C# and embedded as a raw
+        // literal with ~25 decimal places (a real bug found via real-data verification). Now
+        // the conversion itself is an Excel formula (30.4375/7), so there's no literal to round.
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 1, 1));
         var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 700m, StatementCloseDay = 26, PaymentDueDay = 20 };
         Context.Accounts.Add(amex);
@@ -239,11 +242,78 @@ public class ForecastExcelExporterTests : DatabaseTestBase
 
         using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
 
+        var assumptions = workbook.Worksheet("Assumptions");
+        var groceriesRow = FindRowByName(assumptions, "Groceries");
+
         var forecast = workbook.Worksheet("Forecast");
         var forecastRow = FindRowByDescription(forecast, "Amex Payment");
         var formula = forecast.Cell(forecastRow, 3).FormulaA1;
 
-        Assert.Matches(@"-\(\d+\.\d{2}\+Assumptions", formula);
+        Assert.Contains($"Assumptions!$D${groceriesRow}*30.4375/7", formula);
+        Assert.DoesNotMatch(@"\d+\.\d{5,}", formula); // no long floating-point literal anywhere
+    }
+
+    [Fact]
+    public async Task Export_PayInFullAmexCategories_EachGetTheirOwnAssumptionsRow()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
+        var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 1100m, StatementCloseDay = 25, PaymentDueDay = 15 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        var gas = new Category { Name = "Gas" };
+        Context.Categories.AddRange(groceries, gas);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.AddRange(
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex },
+            new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.AddRange(
+            new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) },
+            new BudgetPeriod { CategoryId = gas.Id, Amount = 100m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var groceriesRow = FindRowByName(assumptions, "Groceries");
+        var gasRow = FindRowByName(assumptions, "Gas");
+
+        Assert.Equal(900m, assumptions.Cell(groceriesRow, 2).GetValue<decimal>());
+        Assert.Equal("Monthly", assumptions.Cell(groceriesRow, 5).GetString());
+        Assert.Equal(100m, assumptions.Cell(gasRow, 2).GetValue<decimal>());
+        Assert.Equal("Weekly", assumptions.Cell(gasRow, 5).GetString());
+    }
+
+    [Fact]
+    public async Task Export_FutureAmexCycle_HasNoLiteralAtAll_JustTheBudgetFormula()
+    {
+        // A cycle that hasn't started yet has no actual data by definition - so its payment
+        // should be pure live formula, no MAX() and no literal snapshot whatsoever.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 1, 1));
+        var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 1100m, StatementCloseDay = 25, PaymentDueDay = 15 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        var groceriesRow = FindRowByName(assumptions, "Groceries");
+        var extraRow = FindRowByName(assumptions, "Amex Extra Payment");
+
+        var forecast = workbook.Worksheet("Forecast");
+        var forecastRow = FindAllRowsByDescription(forecast, "Amex Payment").Max(); // a later, still-future cycle
+        var formula = forecast.Cell(forecastRow, 3).FormulaA1;
+
+        Assert.Equal($"-(Assumptions!$D${groceriesRow}+Assumptions!$D${extraRow})", formula);
+        Assert.DoesNotContain("MAX", formula);
     }
 
     [Fact]
