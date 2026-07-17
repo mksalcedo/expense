@@ -29,16 +29,39 @@ else
                 <th style="@CellStyle()">Description</th>
                 <th style="@CellStyle(rightAlign: true)">Amount</th>
                 <th style="@CellStyle(rightAlign: true)">Running balance</th>
+                <th style="@CellStyle()">Deferral</th>
             </tr>
         </thead>
         <tbody>
-            @foreach (var row in _result.Rows)
+            @foreach (var (row, index) in _result.Rows.Select((r, i) => (r, i)))
             {
-                <tr style="@(row == _lowestRow ? "background-color: yellow" : null)">
+                <tr style="@(row.IsDeferred ? "background-color: orange" : row == _lowestRow ? "background-color: yellow" : null)">
                     <td style="@CellStyle()">@row.Date.ToString("MM/dd/yyyy")</td>
-                    <td style="@CellStyle()">@row.Description</td>
+                    <td style="@CellStyle()">
+                        @row.Description
+                        @if (row.IsDeferred)
+                        {
+                            <br />
+                            <span style="color: red">
+                                &#9888; Originally estimated for @row.OriginalDate.ToString("MM/dd/yyyy") - remember to manually
+                                reschedule this payment for real.
+                            </span>
+                        }
+                    </td>
                     <td style="@CellStyle(rightAlign: true)">@row.Amount.ToString("N2")</td>
                     <td style="@CellStyle(rightAlign: true)">@row.RunningBalance.ToString("N2")</td>
+                    <td style="@CellStyle()">
+                        @if (row.IsDeferred)
+                        {
+                            <button id="remove-deferral-btn-@index" @onclick="() => RemoveDeferralAsync(row)">Remove deferral</button>
+                        }
+                        else
+                        {
+                            <input id="defer-date-@index" type="date" value="@GetDeferDate(index, row).ToString("yyyy-MM-dd")"
+                                   @onchange="e => _deferDateInputs[index] = DateOnly.Parse((string)e.Value!)" />
+                            <button id="defer-btn-@index" @onclick="() => DeferAsync(row, index)">Defer...</button>
+                        }
+                    </td>
                 </tr>
             }
         </tbody>
@@ -48,11 +71,35 @@ else
 @code {
     private ForecastResult? _result;
     private ForecastLedgerRow? _lowestRow;
+    private readonly Dictionary<int, DateOnly> _deferDateInputs = [];
 
     protected override async Task OnInitializedAsync()
     {
+        await RefreshAsync();
+    }
+
+    private DateOnly GetDeferDate(int index, ForecastLedgerRow row) =>
+        _deferDateInputs.GetValueOrDefault(index, row.OriginalDate);
+
+    private async Task DeferAsync(ForecastLedgerRow row, int index)
+    {
+        var newDate = GetDeferDate(index, row);
+        await ForecastResultProvider.DeferPaymentAsync(row.AccountId, row.OriginalDate, newDate, null);
+        await RefreshAsync();
+    }
+
+    private async Task RemoveDeferralAsync(ForecastLedgerRow row)
+    {
+        if (row.DeferralId is not { } deferralId) return;
+        await ForecastResultProvider.RemoveDeferralAsync(deferralId);
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
         _result = await ForecastResultProvider.GetForecastAsync();
         _lowestRow = _result.Rows.FirstOrDefault(r => r.RunningBalance == _result.LowestProjectedBalance);
+        _deferDateInputs.Clear();
     }
 
     private static string CellStyle(bool rightAlign = false) =>

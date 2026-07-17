@@ -120,12 +120,26 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             }
         }
 
+        var deferrals = await context.PaymentDeferrals.ToListAsync(cancellationToken);
+        var deferralsByAccountAndDate = deferrals.ToDictionary(d => (d.AccountId, d.OriginalDate));
+
         var rows = new List<ForecastLedgerRow>();
         var runningBalance = startingBalance;
-        foreach (var line in lines.OrderBy(l => l.Date))
+        foreach (var line in lines.OrderBy(l => deferralsByAccountAndDate.TryGetValue((l.AccountId, l.Date), out var d) ? d.DeferredToDate : l.Date))
         {
+            var isDeferred = deferralsByAccountAndDate.TryGetValue((line.AccountId, line.Date), out var deferral);
             runningBalance += line.Amount;
-            rows.Add(new ForecastLedgerRow { Date = line.Date, Description = line.Description, Amount = line.Amount, RunningBalance = runningBalance });
+            rows.Add(new ForecastLedgerRow
+            {
+                Date = isDeferred ? deferral!.DeferredToDate : line.Date,
+                Description = line.Description,
+                Amount = line.Amount,
+                RunningBalance = runningBalance,
+                AccountId = line.AccountId,
+                OriginalDate = line.Date,
+                IsDeferred = isDeferred,
+                DeferralId = isDeferred ? deferral!.Id : null
+            });
         }
 
         return new ForecastResult { StartingBalance = startingBalance, Rows = rows };

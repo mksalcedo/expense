@@ -446,6 +446,25 @@ public class CategorizationServiceTests : DatabaseTestBase
         Assert.Equal(new DateOnly(2026, 7, 5), publix.SampleDate); // most recent of the two, since pending rows are ordered by date descending
         var traderJoes = groups.Single(g => g.SuggestedPattern == "TRADER JOE S");
         Assert.Single(traderJoes.TransactionIds);
+        Assert.Equal("Amex", publix.AccountName);
+        Assert.Equal("Amex", traderJoes.AccountName);
+    }
+
+    [Fact]
+    public async Task GetPendingTransactionGroupsAsync_SameMerchantAcrossAccounts_ShowsBothAccountNames()
+    {
+        var amex = await CreateAccountAsync();
+        var checking = (await Context.Accounts.AddAsync(new Account { Name = "Wells Fargo Checking", Type = AccountType.Checking })).Entity;
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.AddRange(
+            new BankTransaction { AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 1), Description = "APPLE.COM/BILL", Amount = -0.99m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow },
+            new BankTransaction { AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 2), Description = "APPLE.COM/BILL", Amount = -9.99m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingTransactionGroupsAsync(Context);
+
+        var apple = groups.Single(g => g.SuggestedPattern == "APPLE.COM/BILL");
+        Assert.Equal("Wells Fargo Checking, Amex", apple.AccountName);
     }
 
     [Fact]

@@ -6,6 +6,10 @@ public class ForecastLedgerRow
     public required string Description { get; set; }
     public required decimal Amount { get; set; }
     public required decimal RunningBalance { get; set; }
+    public int AccountId { get; set; }
+    public DateOnly OriginalDate { get; set; }
+    public bool IsDeferred { get; set; }
+    public int? DeferralId { get; set; }
 }
 
 public class ForecastResult

@@ -17,6 +17,7 @@ public class ExpenseDbContext(DbContextOptions<ExpenseDbContext> options) : DbCo
     public DbSet<BudgetPeriod> BudgetPeriods => Set<BudgetPeriod>();
     public DbSet<OneTimeEvent> OneTimeEvents => Set<OneTimeEvent>();
     public DbSet<ImportRun> ImportRuns => Set<ImportRun>();
+    public DbSet<PaymentDeferral> PaymentDeferrals => Set<PaymentDeferral>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

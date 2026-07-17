@@ -292,6 +292,52 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task DeferredPayment_MovesToTheNewDateAndIsFlagged()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var discover = new Account
+        {
+            Name = "Discover", Type = AccountType.Debt, MinPayment = 50m, ExtraPayment = 100m, PaymentDueDay = 20
+        };
+        Context.Accounts.Add(discover);
+        await Context.SaveChangesAsync();
+
+        Context.PaymentDeferrals.Add(new PaymentDeferral
+        {
+            AccountId = discover.Id, OriginalDate = new DateOnly(2026, 7, 20), DeferredToDate = new DateOnly(2026, 7, 22),
+            Note = "waiting on paycheck", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(new DateOnly(2026, 7, 22), row.Date);
+        Assert.Equal(new DateOnly(2026, 7, 20), row.OriginalDate);
+        Assert.True(row.IsDeferred);
+        Assert.NotNull(row.DeferralId);
+    }
+
+    [Fact]
+    public async Task UndeferredPayment_IsNotFlagged()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        Context.Accounts.Add(new Account
+        {
+            Name = "Discover", Type = AccountType.Debt, MinPayment = 50m, ExtraPayment = 100m, PaymentDueDay = 20
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(new DateOnly(2026, 7, 20), row.Date);
+        Assert.Equal(new DateOnly(2026, 7, 20), row.OriginalDate);
+        Assert.False(row.IsDeferred);
+        Assert.Null(row.DeferralId);
+    }
+
+    [Fact]
     public async Task LowestProjectedBalance_ReflectsTheMinimumRunningBalance()
     {
         await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));

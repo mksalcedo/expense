@@ -14,6 +14,8 @@ public class DashboardTests : BunitContext
     private class FakeForecastResultProvider(ForecastResult result) : IForecastResultProvider
     {
         public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(result);
+        public Task DeferPaymentAsync(int accountId, DateOnly originalDate, DateOnly deferredToDate, string? note, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task RemoveDeferralAsync(int deferralId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private class FakeSpendingTrackerPageProvider(SpendingTrackerPageData data) : ISpendingTrackerPageProvider
@@ -86,7 +88,7 @@ public class DashboardTests : BunitContext
     {
         TransactionGroups =
         [
-            new PendingTransactionGroup { SuggestedPattern = "COSTCO", SampleDescription = "COSTCO WHSE", SampleDate = new DateOnly(2026, 7, 10), TransactionIds = [1, 2], TotalAmount = -212.99m }
+            new PendingTransactionGroup { SuggestedPattern = "COSTCO", SampleDescription = "COSTCO WHSE", SampleDate = new DateOnly(2026, 7, 10), TransactionIds = [1, 2], TotalAmount = -212.99m, AccountName = "Wells Fargo Checking" }
         ],
         AmazonItemGroups =
         [

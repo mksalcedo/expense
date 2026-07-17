@@ -7,9 +7,32 @@ namespace Expense.Web.Tests.Pages;
 
 public class ForecastTests : BunitContext
 {
+    // Stateful fake: DeferPaymentAsync/RemoveDeferralAsync actually mutate the underlying
+    // result (mirroring what re-querying the real backend would show) so tests can drive
+    // the full defer -> re-render -> remove -> re-render cycle, not just verify the call happened.
     private class FakeForecastResultProvider(ForecastResult result) : IForecastResultProvider
     {
+        private int _nextDeferralId = 1;
+
         public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(result);
+
+        public Task DeferPaymentAsync(int accountId, DateOnly originalDate, DateOnly deferredToDate, string? note, CancellationToken cancellationToken = default)
+        {
+            var row = result.Rows.Single(r => r.AccountId == accountId && r.OriginalDate == originalDate);
+            row.Date = deferredToDate;
+            row.IsDeferred = true;
+            row.DeferralId = _nextDeferralId++;
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveDeferralAsync(int deferralId, CancellationToken cancellationToken = default)
+        {
+            var row = result.Rows.Single(r => r.DeferralId == deferralId);
+            row.Date = row.OriginalDate;
+            row.IsDeferred = false;
+            row.DeferralId = null;
+            return Task.CompletedTask;
+        }
     }
 
     [Fact]
@@ -163,6 +186,68 @@ public class ForecastTests : BunitContext
             Assert.Contains("border:", style);
             Assert.Contains("padding:", style);
         }
+    }
+
+    [Fact]
+    public void Forecast_ShowsADeferActionOnEachUndeferredRow()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -4442.38m, RunningBalance = -273.64m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.NotNull(cut.Find("#defer-date-0"));
+        Assert.NotNull(cut.Find("#defer-btn-0"));
+        Assert.Empty(cut.FindAll("#remove-deferral-btn-0"));
+    }
+
+    [Fact]
+    public void DeferringAPayment_MovesItToTheNewDate_AndHighlightsItWithAWarning()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -4442.38m, RunningBalance = -273.64m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#defer-date-0").Change("2026-08-22");
+        cut.Find("#defer-btn-0").Click();
+
+        Assert.Contains("08/22/2026", cut.Markup);
+        Assert.Contains("Originally estimated for 08/20/2026", cut.Markup);
+        Assert.Contains("reschedule", cut.Markup);
+        var row = cut.Find("tbody tr");
+        Assert.Contains("background-color: orange", row.GetAttribute("style"));
+        Assert.NotNull(cut.Find("#remove-deferral-btn-0"));
+        Assert.Empty(cut.FindAll("#defer-btn-0"));
+    }
+
+    [Fact]
+    public void RemovingADeferral_RevertsToTheOriginalDate_AndClearsTheHighlight()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -4442.38m, RunningBalance = -273.64m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#defer-date-0").Change("2026-08-22");
+        cut.Find("#defer-btn-0").Click();
+        cut.Find("#remove-deferral-btn-0").Click();
+
+        Assert.Contains("08/20/2026", cut.Markup);
+        Assert.DoesNotContain("Originally estimated for", cut.Markup);
+        var row = cut.Find("tbody tr");
+        Assert.DoesNotContain("background-color: orange", row.GetAttribute("style") ?? "");
+        Assert.NotNull(cut.Find("#defer-btn-0"));
     }
 
     [Fact]

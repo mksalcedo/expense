@@ -81,17 +81,17 @@ public class ReviewQueueTests : BunitContext
             new PendingTransactionGroup
             {
                 SuggestedPattern = "PUBLIX", SampleDescription = "PUBLIX NORCROSS GA", SampleDate = new DateOnly(2026, 7, 13),
-                TransactionIds = [10, 11, 12], TotalAmount = -62m
+                TransactionIds = [10, 11, 12], TotalAmount = -62m, AccountName = "Wells Fargo Checking"
             },
             new PendingTransactionGroup
             {
                 SuggestedPattern = "KROGER", SampleDescription = "KROGER ALPHARETTA GA", SampleDate = new DateOnly(2026, 7, 12),
-                TransactionIds = [30], TotalAmount = -25m
+                TransactionIds = [30], TotalAmount = -25m, AccountName = "Wells Fargo Checking"
             },
             new PendingTransactionGroup
             {
                 SuggestedPattern = "TRADER JOE S", SampleDescription = "TRADER JOE S #123", SampleDate = new DateOnly(2026, 7, 11),
-                TransactionIds = [40, 41], TotalAmount = -35m
+                TransactionIds = [40, 41], TotalAmount = -35m, AccountName = "Amex"
             }
         ],
         AmazonItemGroups =
@@ -124,6 +124,8 @@ public class ReviewQueueTests : BunitContext
         Assert.Equal("Qunol Ultra CoQ10", cut.Find("#item-pattern-20").GetAttribute("value"));
         Assert.Contains("07/13/2026", cut.Markup);
         Assert.Contains("07/10/2026", cut.Markup);
+        Assert.Contains("Wells Fargo Checking", cut.Markup);
+        Assert.Contains("Amex", cut.Markup);
     }
 
     [Fact]

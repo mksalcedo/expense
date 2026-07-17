@@ -7,4 +7,5 @@ public class PendingTransactionGroup
     public required DateOnly SampleDate { get; set; }
     public required List<int> TransactionIds { get; set; }
     public decimal TotalAmount { get; set; }
+    public required string AccountName { get; set; }
 }

@@ -34,6 +34,7 @@ public class CategorizationService
 
     public async Task<List<BankTransaction>> GetPendingBankTransactionsAsync(ExpenseDbContext context) =>
         await context.BankTransactions
+            .Include(t => t.Account)
             .Where(t => t.CategoryId == null && !t.IsAmazonMerchant)
             .OrderByDescending(t => t.TransactionDate)
             .ToListAsync();
@@ -207,7 +208,8 @@ public class CategorizationService
                 SampleDescription = g.First().Description,
                 SampleDate = g.First().TransactionDate,
                 TransactionIds = g.Select(t => t.Id).ToList(),
-                TotalAmount = g.Sum(t => t.Amount)
+                TotalAmount = g.Sum(t => t.Amount),
+                AccountName = string.Join(", ", g.Select(t => t.Account.Name).Distinct())
             })
             .OrderByDescending(g => g.TransactionIds.Count)
             .ToList();

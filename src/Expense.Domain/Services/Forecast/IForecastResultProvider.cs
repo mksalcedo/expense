@@ -4,4 +4,8 @@ namespace Expense.Domain.Services.Forecast;
 public interface IForecastResultProvider
 {
     Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default);
+
+    Task DeferPaymentAsync(int accountId, DateOnly originalDate, DateOnly deferredToDate, string? note, CancellationToken cancellationToken = default);
+
+    Task RemoveDeferralAsync(int deferralId, CancellationToken cancellationToken = default);
 }
