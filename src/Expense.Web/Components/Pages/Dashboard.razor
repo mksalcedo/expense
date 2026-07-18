@@ -34,7 +34,7 @@ else
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var row in _forecast.Rows.Take(5))
+                    @foreach (var row in _forecast.Rows.Take(20))
                     {
                         <tr>
                             <td>@row.Date.ToString("yyyy-MM-dd")</td>

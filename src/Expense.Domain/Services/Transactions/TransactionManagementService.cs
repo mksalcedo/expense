@@ -17,8 +17,8 @@ public class TransactionManagementService(CategorizationService categorization)
     /// <summary>Sentinel categoryFilter value meaning "uncategorized only" - real category IDs are always positive.</summary>
     public const int UncategorizedFilterValue = 0;
 
-    public async Task<List<TransactionRow>> GetTransactionsAsync(
-        ExpenseDbContext context, string? searchText, int? categoryFilter, bool needsReviewOnly = false)
+    public async Task<TransactionsPageResult> GetTransactionsAsync(
+        ExpenseDbContext context, string? searchText, int? categoryFilter, bool needsReviewOnly = false, int page = 1, int pageSize = 20)
     {
         var bankTransactions = await context.BankTransactions
             .Include(t => t.Category)
@@ -74,7 +74,13 @@ public class TransactionManagementService(CategorizationService categorization)
             rows = rows.Where(r => r.NeedsReview).ToList();
         }
 
-        return rows.OrderByDescending(r => r.Date).ToList();
+        var sorted = rows.OrderByDescending(r => r.Date).ToList();
+        var page1Based = Math.Max(page, 1);
+        return new TransactionsPageResult
+        {
+            Items = sorted.Skip((page1Based - 1) * pageSize).Take(pageSize).ToList(),
+            TotalCount = sorted.Count
+        };
     }
 
     public async Task UpdateCategoryAsync(ExpenseDbContext context, TransactionSource source, int id, int? categoryId)

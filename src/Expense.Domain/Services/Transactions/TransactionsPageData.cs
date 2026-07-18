@@ -6,4 +6,5 @@ public class TransactionsPageData
 {
     public required List<TransactionRow> Transactions { get; set; }
     public required List<Category> Categories { get; set; }
+    public required int TotalCount { get; set; }
 }

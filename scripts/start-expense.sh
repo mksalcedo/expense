@@ -8,6 +8,8 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 URL="http://127.0.0.1:5266"
 PROFILE_DIR="$HOME/.local/share/expense-chrome-profile"
 GEOMETRY_FILE="$HOME/.local/share/expense-chrome-window.geometry"
+PUBLISH_DIR="$PROJECT_DIR/publish"
+PUBLISHED_DLL="$PUBLISH_DIR/Expense.Web.dll"
 
 SERVER_PID=""
 MONITOR_PID=""
@@ -27,8 +29,26 @@ trap cleanup EXIT INT TERM
 if curl -s -o /dev/null "$URL"; then
     echo "Expense server already running at $URL - reusing it."
 else
+    # Runs the published build directly instead of `dotnet run`, which always pays for an
+    # up-to-date build check on every launch even when nothing changed. A stale/missing
+    # publish/ dir just gets published fresh here, first-launch-friendly - but this means
+    # code changes made in a dev session need a `dotnet publish` before they show up via
+    # the shortcut, they won't appear automatically the way `dotnet run` would have shown
+    # them. ASPNETCORE_ENVIRONMENT is forced to Development to match `dotnet run`'s default
+    # (detailed error pages, informational-level logging) - the published DLL would
+    # otherwise silently default to Production and lose both.
+    if [ ! -f "$PUBLISHED_DLL" ]; then
+        echo "No published build found - publishing once now..."
+        (cd "$PROJECT_DIR" && dotnet publish src/Expense.Web -c Release -o publish)
+    fi
+
     echo "Starting Expense server..."
-    (cd "$PROJECT_DIR" && dotnet run --project src/Expense.Web --urls "$URL") &
+    # --contentroot must point at publish/ explicitly - ASP.NET Core otherwise defaults
+    # the content root to the current working directory, not the DLL's own folder, which
+    # silently broke every static asset (CSS/JS) when launched from the repo root instead:
+    # requests still matched a route and returned 200, just with an empty body, since the
+    # underlying wwwroot files couldn't be found from the wrong content root.
+    ASPNETCORE_ENVIRONMENT=Development dotnet "$PUBLISHED_DLL" --urls "$URL" --contentroot "$PUBLISH_DIR" &
     SERVER_PID=$!
 
     echo "Waiting for the server to come up..."

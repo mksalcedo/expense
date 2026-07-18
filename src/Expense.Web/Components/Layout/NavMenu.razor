@@ -1,4 +1,5 @@
 @using Microsoft.AspNetCore.Components.Routing
+@inject IJSRuntime JS
 
 <nav class="nav-menu">
     <div class="nav-brand">Expense</div>
@@ -13,4 +14,17 @@
     <NavLink href="budgets" class="nav-link">Budgets</NavLink>
     <NavLink href="one-time-events" class="nav-link">One-Time Events</NavLink>
     <NavLink href="accounts" class="nav-link">Accounts</NavLink>
+    <div class="nav-divider"></div>
+    <button id="nav-refresh-btn" class="nav-link nav-refresh-btn" @onclick="RefreshAsync">Refresh</button>
 </nav>
+
+@code {
+    // The app runs in a chromeless Chrome window (see scripts/start-expense.sh) with no
+    // browser reload button, so this stands in for one - a real full-page reload rather
+    // than just re-fetching the current page's own data, matching what a normal browser
+    // refresh button does and working uniformly across every page.
+    private async Task RefreshAsync()
+    {
+        await JS.InvokeVoidAsync("location.reload");
+    }
+}

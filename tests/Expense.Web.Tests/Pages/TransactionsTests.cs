@@ -9,6 +9,14 @@ namespace Expense.Web.Tests.Pages;
 
 public class TransactionsTests : BunitContext
 {
+    public TransactionsTests()
+    {
+        // The page-size preference is read/written via localStorage - Loose mode auto-
+        // returns default values for any JS call not explicitly configured, so existing
+        // tests that don't care about persistence don't all need their own JSInterop setup.
+        JSInterop.Mode = JSRuntimeMode.Loose;
+    }
+
     private class FakeTransactionsPageProvider : ITransactionsPageProvider
     {
         public List<TransactionRow> Transactions { get; set; } = [];
@@ -27,13 +35,17 @@ public class TransactionsTests : BunitContext
         public string? LastAmazonItemTitle { get; private set; }
         public decimal? LastAmazonItemPrice { get; private set; }
         public int? LastAmazonItemQuantity { get; private set; }
+        public int? LastPage { get; private set; }
+        public int? LastPageSize { get; private set; }
 
-        public Task<TransactionsPageData> GetTransactionsAsync(string? searchText, int? categoryFilter, bool needsReviewOnly = false, CancellationToken cancellationToken = default)
+        public Task<TransactionsPageData> GetTransactionsAsync(string? searchText, int? categoryFilter, bool needsReviewOnly = false, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
         {
             LastSearchText = searchText;
             LastCategoryFilter = categoryFilter;
             LastCategoryFilterWasSet = true;
             LastNeedsReviewOnly = needsReviewOnly;
+            LastPage = page;
+            LastPageSize = pageSize;
             var filtered = Transactions.AsEnumerable();
             if (!string.IsNullOrWhiteSpace(searchText))
             {
@@ -51,7 +63,9 @@ public class TransactionsTests : BunitContext
             {
                 filtered = filtered.Where(t => t.NeedsReview);
             }
-            return Task.FromResult(new TransactionsPageData { Transactions = filtered.ToList(), Categories = Categories });
+            var filteredList = filtered.OrderByDescending(t => t.Date).ToList();
+            var pageItems = filteredList.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+            return Task.FromResult(new TransactionsPageData { Transactions = pageItems, Categories = Categories, TotalCount = filteredList.Count });
         }
 
         public Task UpdateCategoryAsync(TransactionSource source, int id, int? categoryId, CancellationToken cancellationToken = default)
@@ -242,14 +256,15 @@ public class TransactionsTests : BunitContext
     [Fact]
     public void ShiftClickingARow_SelectsTheRangeFromTheLastClickedRow_AcrossBothSources()
     {
-        // Rendering order here is bank-100 (index 0), bank-101 (index 1), amazon-200 (index 2),
-        // amazon-201 (index 3). Shift-clicking amazon-200 after plain-clicking bank-100 should
-        // select the whole visual range in between, regardless of source.
+        // Rows are always newest-first by date: bank-101 (7/5, index 0), amazon-201 (7/4,
+        // index 1), amazon-200 (7/3, index 2), bank-100 (7/1, index 3). Shift-clicking
+        // amazon-200 after plain-clicking bank-101 should select the whole visual range in
+        // between, regardless of source.
         var provider = MakeProvider();
         Services.AddSingleton<ITransactionsPageProvider>(provider);
 
         var cut = Render<Transactions>();
-        cut.Find("#select-bank-100").Click();
+        cut.Find("#select-bank-101").Click();
         cut.Find("#select-amazon-200").Click(new Microsoft.AspNetCore.Components.Web.MouseEventArgs { ShiftKey = true });
 
         Assert.Contains("3 selected", cut.Find("#selected-count").TextContent);
@@ -331,6 +346,133 @@ public class TransactionsTests : BunitContext
         cut.Find("#needs-review-filter").Change(true);
 
         Assert.True(provider.LastNeedsReviewOnly);
+    }
+
+    private static FakeTransactionsPageProvider MakeProviderWithManyRows(int count)
+    {
+        var provider = new FakeTransactionsPageProvider { Categories = [new Category { Id = 1, Name = "Groceries" }] };
+        for (var i = 1; i <= count; i++)
+        {
+            provider.Transactions.Add(new TransactionRow
+            {
+                Source = TransactionSource.Bank, Id = i, Date = new DateOnly(2026, 7, 1).AddDays(i),
+                Description = $"MERCHANT {i}", Amount = -10m, CategoryId = 1, CategoryName = "Groceries"
+            });
+        }
+        return provider;
+    }
+
+    [Fact]
+    public void Transactions_ShowsAPageSizeSelector_DefaultingTo20()
+    {
+        Services.AddSingleton<ITransactionsPageProvider>(MakeProvider());
+
+        var cut = Render<Transactions>();
+
+        Assert.Equal("20", cut.Find("#page-size-select").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void PageSizeSelector_OffersA15RowOption()
+    {
+        var provider = MakeProviderWithManyRows(20);
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+        cut.Find("#page-size-select").Change("15");
+
+        Assert.Equal(15, provider.LastPageSize);
+    }
+
+    [Fact]
+    public void PageSizeSelector_IsRenderedNextToThePagerControls_NotTheFilterBar()
+    {
+        Services.AddSingleton<ITransactionsPageProvider>(MakeProvider());
+
+        var cut = Render<Transactions>();
+
+        var pagerParagraph = cut.Find("#next-page-btn").ParentElement!;
+        Assert.NotNull(pagerParagraph.QuerySelector("#page-size-select"));
+    }
+
+    [Fact]
+    public void ChangingPageSize_ResetsToPageOne_SavesToLocalStorage_AndRequestsTheNewPageSize()
+    {
+        var provider = MakeProviderWithManyRows(25);
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+        var setItemCall = JSInterop.SetupVoid("localStorage.setItem", _ => true).SetVoidResult();
+
+        var cut = Render<Transactions>();
+        cut.Find("#next-page-btn").Click(); // move to page 2 first
+        cut.Find("#page-size-select").Change("40");
+
+        Assert.Equal(40, provider.LastPageSize);
+        Assert.Equal(1, provider.LastPage); // back to page 1 after changing page size
+        setItemCall.VerifyInvoke("localStorage.setItem");
+    }
+
+    [Fact]
+    public void OnLoad_UsesTheSavedPageSizeFromLocalStorage()
+    {
+        var provider = MakeProviderWithManyRows(5);
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+        JSInterop.Setup<string?>("localStorage.getItem", _ => true).SetResult("60");
+
+        var cut = Render<Transactions>();
+
+        Assert.Equal("60", cut.Find("#page-size-select").GetAttribute("value"));
+        Assert.Equal(60, provider.LastPageSize);
+    }
+
+    [Fact]
+    public void ClickingNext_AdvancesToPageTwo_AndShowsTheNextRows()
+    {
+        var provider = MakeProviderWithManyRows(25); // > default page size of 20
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+        Assert.Contains("MERCHANT 25", cut.Markup); // newest-first, page 1
+        Assert.DoesNotContain("MERCHANT 1<", cut.Markup);
+
+        cut.Find("#next-page-btn").Click();
+
+        Assert.Equal(2, provider.LastPage);
+        Assert.Contains("Page 2 of 2", cut.Markup);
+    }
+
+    [Fact]
+    public void PreviousButton_IsDisabledOnTheFirstPage()
+    {
+        Services.AddSingleton<ITransactionsPageProvider>(MakeProviderWithManyRows(25));
+
+        var cut = Render<Transactions>();
+
+        Assert.True(cut.Find("#prev-page-btn").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void NextButton_IsDisabledOnTheLastPage()
+    {
+        Services.AddSingleton<ITransactionsPageProvider>(MakeProviderWithManyRows(10)); // fits on one page
+
+        var cut = Render<Transactions>();
+
+        Assert.True(cut.Find("#next-page-btn").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void ChangingTheSearchText_ResetsBackToPageOne()
+    {
+        var provider = MakeProviderWithManyRows(25);
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+        cut.Find("#next-page-btn").Click();
+        Assert.Equal(2, provider.LastPage);
+
+        cut.Find("#search-box").Change("MERCHANT 1");
+
+        Assert.Equal(1, provider.LastPage);
     }
 
     [Fact]

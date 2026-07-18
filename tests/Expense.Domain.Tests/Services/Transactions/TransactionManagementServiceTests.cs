@@ -32,9 +32,11 @@ public class TransactionManagementServiceTests : DatabaseTestBase
         });
         await Context.SaveChangesAsync();
 
-        var rows = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null);
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null);
+        var rows = result.Items;
 
         Assert.Equal(2, rows.Count); // the raw "AMAZON MARKETPLACE" bank_transaction row is excluded - it's superseded by the itemized row
+        Assert.Equal(2, result.TotalCount);
         Assert.Equal("Qunol Ultra CoQ10", rows[0].Description); // newest first
         Assert.Equal(TransactionSource.Amazon, rows[0].Source);
         Assert.Equal(-30m, rows[0].Amount); // Amazon amounts are negated to match the bank sign convention
@@ -60,9 +62,9 @@ public class TransactionManagementServiceTests : DatabaseTestBase
         Context.AmazonOrderItems.Add(new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Truist-branded mug", Price = 10m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow });
         await Context.SaveChangesAsync();
 
-        var rows = await _sut.GetTransactionsAsync(Context, searchText: "truist", categoryFilter: null);
+        var result = await _sut.GetTransactionsAsync(Context, searchText: "truist", categoryFilter: null);
 
-        Assert.Equal(2, rows.Count);
+        Assert.Equal(2, result.Items.Count);
     }
 
     [Fact]
@@ -78,9 +80,9 @@ public class TransactionManagementServiceTests : DatabaseTestBase
         Context.AmazonOrderItems.Add(new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Qunol Ultra CoQ10", Price = 30m, Quantity = 1, CategoryId = supplements.Id, CreatedAt = DateTimeOffset.UtcNow });
         await Context.SaveChangesAsync();
 
-        var rows = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: supplements.Id);
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: supplements.Id);
 
-        var row = Assert.Single(rows);
+        var row = Assert.Single(result.Items);
         Assert.Equal("Qunol Ultra CoQ10", row.Description);
     }
 
@@ -96,9 +98,9 @@ public class TransactionManagementServiceTests : DatabaseTestBase
         Context.AmazonOrderItems.Add(new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Mystery Item", Price = 30m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow });
         await Context.SaveChangesAsync();
 
-        var rows = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: TransactionManagementService.UncategorizedFilterValue);
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: TransactionManagementService.UncategorizedFilterValue);
 
-        var row = Assert.Single(rows);
+        var row = Assert.Single(result.Items);
         Assert.Equal("Mystery Item", row.Description);
     }
 
@@ -119,11 +121,57 @@ public class TransactionManagementServiceTests : DatabaseTestBase
             });
         await Context.SaveChangesAsync();
 
-        var rows = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null, needsReviewOnly: true);
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null, needsReviewOnly: true);
 
-        var row = Assert.Single(rows);
+        var row = Assert.Single(result.Items);
         Assert.Contains("unavailable in email", row.Description);
         Assert.True(row.NeedsReview);
+    }
+
+    [Fact]
+    public async Task GetTransactionsAsync_PageSizeLimitsRowsReturned_ButTotalCountReflectsTheFullFilteredSet()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+        for (var i = 1; i <= 5; i++)
+        {
+            Context.BankTransactions.Add(new BankTransaction
+            {
+                AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, i), Description = $"MERCHANT {i}",
+                Amount = -10m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null, page: 1, pageSize: 2);
+
+        Assert.Equal(2, result.Items.Count);
+        Assert.Equal(5, result.TotalCount);
+        Assert.Equal("MERCHANT 5", result.Items[0].Description); // newest-first still applies within the page
+        Assert.Equal("MERCHANT 4", result.Items[1].Description);
+    }
+
+    [Fact]
+    public async Task GetTransactionsAsync_SecondPage_ReturnsTheNextSliceInTheSameOrder()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+        for (var i = 1; i <= 5; i++)
+        {
+            Context.BankTransactions.Add(new BankTransaction
+            {
+                AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, i), Description = $"MERCHANT {i}",
+                Amount = -10m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null, page: 2, pageSize: 2);
+
+        Assert.Equal(2, result.Items.Count);
+        Assert.Equal(5, result.TotalCount);
+        Assert.Equal("MERCHANT 3", result.Items[0].Description);
+        Assert.Equal("MERCHANT 2", result.Items[1].Description);
     }
 
     [Fact]

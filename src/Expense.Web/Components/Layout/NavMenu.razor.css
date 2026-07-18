@@ -44,3 +44,22 @@
     border-left-color: var(--color-primary);
     font-weight: 600;
 }
+
+/* Written directly in this file's markup (not through NavLink), so no ::deep needed -
+   overrides app.css's global button styling to look like the other nav links instead
+   of a filled blue button. */
+.nav-refresh-btn {
+    background: none;
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: 0;
+    text-align: left;
+    width: 100%;
+    font-size: 1rem;
+}
+
+.nav-refresh-btn:hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary-dark);
+    cursor: pointer;
+}

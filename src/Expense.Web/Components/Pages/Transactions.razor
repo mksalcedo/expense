@@ -2,6 +2,7 @@
 @using Expense.Domain.Services.Transactions
 @using Microsoft.AspNetCore.Components
 @inject ITransactionsPageProvider TransactionsProvider
+@inject IJSRuntime JS
 
 <PageTitle>Transactions</PageTitle>
 
@@ -45,6 +46,22 @@ else
                 @onclick="ApplyBulkCategoryAsync">
             Apply
         </button>
+    </p>
+
+    <p>
+        <button id="prev-page-btn" disabled="@(_currentPage <= 1)" @onclick="() => GoToPageAsync(_currentPage - 1)">&laquo; Previous</button>
+        <span id="page-indicator">Page @_currentPage of @TotalPages</span>
+        <button id="next-page-btn" disabled="@(_currentPage >= TotalPages)" @onclick="() => GoToPageAsync(_currentPage + 1)">Next &raquo;</button>
+        <span>(@_data.TotalCount total)</span>
+        <label>
+            Rows per page:
+            <select id="page-size-select" value="@_pageSize" @onchange="e => ChangePageSizeAsync(int.Parse((string)e.Value!))">
+                @foreach (var size in PageSizeOptions)
+                {
+                    <option value="@size">@size</option>
+                }
+            </select>
+        </label>
     </p>
 
     <table>
@@ -117,17 +134,30 @@ else
             }
         </tbody>
     </table>
+
+    <p>
+        <button disabled="@(_currentPage <= 1)" @onclick="() => GoToPageAsync(_currentPage - 1)">&laquo; Previous</button>
+        <span>Page @_currentPage of @TotalPages</span>
+        <button disabled="@(_currentPage >= TotalPages)" @onclick="() => GoToPageAsync(_currentPage + 1)">Next &raquo;</button>
+    </p>
 }
 
 @code {
+    private const string PageSizeStorageKey = "expense-transactions-page-size";
+    private static readonly int[] PageSizeOptions = [15, 20, 40, 60, 80, 100];
+
     private TransactionsPageData? _data;
     private string? _searchText;
     private int? _categoryFilter;
     private bool _needsReviewOnly;
+    private int _pageSize = 20;
+    private int _currentPage = 1;
     private readonly HashSet<int> _selectedBankIds = [];
     private readonly HashSet<int> _selectedAmazonIds = [];
     private int? _lastClickedIndex;
     private int _selectedBulkCategoryId;
+
+    private int TotalPages => _data is null || _data.TotalCount == 0 ? 1 : (int)Math.Ceiling(_data.TotalCount / (double)_pageSize);
 
     /// <summary>Prefills the search box for deep links from the Review Queue's "View individual items" link.</summary>
     [Parameter]
@@ -137,26 +167,62 @@ else
     protected override async Task OnInitializedAsync()
     {
         _searchText = SearchQuery;
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var saved = await JS.InvokeAsync<string?>("localStorage.getItem", PageSizeStorageKey);
+        if (int.TryParse(saved, out var savedSize) && PageSizeOptions.Contains(savedSize) && savedSize != _pageSize)
+        {
+            _pageSize = savedSize;
+            await LoadDataAsync();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly, _currentPage, _pageSize);
+    }
+
+    private async Task GoToPageAsync(int page)
+    {
+        if (page < 1 || page > TotalPages) return;
+        _currentPage = page;
+        await LoadDataAsync();
+    }
+
+    private async Task ChangePageSizeAsync(int pageSize)
+    {
+        _pageSize = pageSize;
+        _currentPage = 1;
+        await JS.InvokeVoidAsync("localStorage.setItem", PageSizeStorageKey, pageSize.ToString());
+        await LoadDataAsync();
     }
 
     private async Task SearchAsync(string? searchText)
     {
         _searchText = searchText;
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
+        _currentPage = 1;
+        await LoadDataAsync();
     }
 
     private async Task FilterByCategoryAsync(string value)
     {
         var parsed = int.Parse(value);
         _categoryFilter = parsed == -1 ? null : parsed;
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
+        _currentPage = 1;
+        await LoadDataAsync();
     }
 
     private async Task FilterByNeedsReviewAsync(bool needsReviewOnly)
     {
         _needsReviewOnly = needsReviewOnly;
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
+        _currentPage = 1;
+        await LoadDataAsync();
     }
 
     private async Task UpdateCategoryAsync(TransactionRow row, int value)
@@ -171,7 +237,9 @@ else
     // Gmail-style multi-select, same as the Review Queue: a plain click toggles just that
     // row; shift-click selects every row between the last-clicked one and this one
     // (inclusive), by visual position - regardless of whether those rows are Bank or
-    // Amazon, since they're sorted together in one combined, date-ordered list.
+    // Amazon, since they're sorted together in one combined, date-ordered list. This is
+    // necessarily scoped to the current page only - rows on a different page aren't in the
+    // DOM to select, same as any other paginated list.
     private void ToggleSelection(int index, bool shiftKey)
     {
         if (_data is null) return;
@@ -214,7 +282,7 @@ else
         _selectedBankIds.Clear();
         _selectedAmazonIds.Clear();
         _lastClickedIndex = null;
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
+        await LoadDataAsync();
     }
 
     private async Task UpdateAmazonItemDetailsAsync(TransactionRow row, string? title, string? price, string? quantity)
