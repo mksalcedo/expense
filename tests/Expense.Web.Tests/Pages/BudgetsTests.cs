@@ -51,6 +51,18 @@ public class BudgetsTests : BunitContext
     }
 
     [Fact]
+    public void Budgets_RightAlignsTheMonthlyEquivalentColumn()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IBudgetsPageProvider>(provider);
+
+        var cut = Render<Budgets>();
+
+        var header = cut.FindAll("th").Single(h => h.TextContent == "Monthly equivalent");
+        Assert.Equal("text-right", header.GetAttribute("class"));
+    }
+
+    [Fact]
     public void ChangingAmount_SavesWithTheRowsCurrentFrequency()
     {
         var provider = MakeProvider();

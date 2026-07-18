@@ -33,9 +33,9 @@ else
             <thead>
                 <tr>
                     <th>Category</th>
-                    <th>Budget</th>
-                    <th>Actual</th>
-                    <th>Remaining</th>
+                    <th class="text-right">Budget</th>
+                    <th class="text-right">Actual</th>
+                    <th class="text-right">Remaining</th>
                 </tr>
             </thead>
             <tbody>
@@ -43,15 +43,15 @@ else
                 {
                     <tr>
                         <td>@category.CategoryName</td>
-                        <td>@category.Budget.ToString("N2")</td>
-                        <td>@category.Actual.ToString("N2")</td>
-                        <td>@category.Remaining.ToString("N2")</td>
+                        <td class="text-right">@category.Budget.ToString("N2")</td>
+                        <td class="text-right">@category.Actual.ToString("N2")</td>
+                        <td class="text-right">@category.Remaining.ToString("N2")</td>
                     </tr>
                 }
                 <tr>
                     <td>Pending / Uncategorized</td>
                     <td></td>
-                    <td>@result.PendingAmount.ToString("N2")</td>
+                    <td class="text-right">@result.PendingAmount.ToString("N2")</td>
                     <td></td>
                 </tr>
             </tbody>
@@ -67,9 +67,9 @@ else
                 }
                 <tr id="@(idPrefix)-totals-row" style="font-weight: 600; border-top: 2px solid var(--color-border, #ccc)">
                     <td>Total</td>
-                    <td>@budgetTotal.ToString("N2")</td>
-                    <td>@actualTotal.ToString("N2")</td>
-                    <td>@((budgetTotal - actualTotal).ToString("N2"))</td>
+                    <td class="text-right">@budgetTotal.ToString("N2")</td>
+                    <td class="text-right">@actualTotal.ToString("N2")</td>
+                    <td class="text-right">@((budgetTotal - actualTotal).ToString("N2"))</td>
                 </tr>
             </tfoot>
         </table>

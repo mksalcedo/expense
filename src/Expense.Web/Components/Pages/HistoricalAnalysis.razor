@@ -53,7 +53,7 @@ else
             <thead>
                 <tr>
                     <th>Week starting</th>
-                    <th>Actual</th>
+                    <th class="text-right">Actual</th>
                 </tr>
             </thead>
             <tbody>
@@ -61,7 +61,7 @@ else
                 {
                     <tr>
                         <td>@point.PeriodStart.ToString("yyyy-MM-dd")</td>
-                        <td>@point.Actual.ToString("N2")</td>
+                        <td class="text-right">@point.Actual.ToString("N2")</td>
                     </tr>
                 }
             </tbody>
@@ -75,8 +75,8 @@ else
                 <th>Product</th>
                 <th>Category</th>
                 <th>Purchases</th>
-                <th>Average price</th>
-                <th>Total spent</th>
+                <th class="text-right">Average price</th>
+                <th class="text-right">Total spent</th>
                 <th>Last purchased</th>
             </tr>
         </thead>
@@ -87,8 +87,8 @@ else
                     <td>@product.ProductPattern</td>
                     <td>@product.CategoryName</td>
                     <td>@product.Purchases</td>
-                    <td>@product.AveragePrice.ToString("N2")</td>
-                    <td>@product.TotalSpent.ToString("N2")</td>
+                    <td class="text-right">@product.AveragePrice.ToString("N2")</td>
+                    <td class="text-right">@product.TotalSpent.ToString("N2")</td>
                     <td>@product.LastPurchased.ToString("yyyy-MM-dd")</td>
                 </tr>
             }
@@ -120,9 +120,9 @@ else
         <thead>
             <tr>
                 <th>Category</th>
-                <th>Budget</th>
-                <th>Actual</th>
-                <th>Remaining</th>
+                <th class="text-right">Budget</th>
+                <th class="text-right">Actual</th>
+                <th class="text-right">Remaining</th>
             </tr>
         </thead>
         <tbody>
@@ -130,9 +130,9 @@ else
             {
                 <tr>
                     <td>@row.CategoryName</td>
-                    <td>@(row.Budget?.ToString("N2") ?? "")</td>
-                    <td>@row.Actual.ToString("N2")</td>
-                    <td>@(row.Budget is { } budget ? (budget - row.Actual).ToString("N2") : "")</td>
+                    <td class="text-right">@(row.Budget?.ToString("N2") ?? "")</td>
+                    <td class="text-right">@row.Actual.ToString("N2")</td>
+                    <td class="text-right">@(row.Budget is { } budget ? (budget - row.Actual).ToString("N2") : "")</td>
                 </tr>
             }
         </tbody>
@@ -142,8 +142,8 @@ else
         <thead>
             <tr>
                 <th>Category</th>
-                <th>Average actual</th>
-                <th>Current budget</th>
+                <th class="text-right">Average actual</th>
+                <th class="text-right">Current budget</th>
             </tr>
         </thead>
         <tbody>
@@ -151,8 +151,8 @@ else
             {
                 <tr>
                     <td>@row.CategoryName</td>
-                    <td>@row.AverageActual.ToString("N2")</td>
-                    <td>@(row.CurrentBudget?.ToString("N2") ?? "")</td>
+                    <td class="text-right">@row.AverageActual.ToString("N2")</td>
+                    <td class="text-right">@(row.CurrentBudget?.ToString("N2") ?? "")</td>
                 </tr>
             }
         </tbody>

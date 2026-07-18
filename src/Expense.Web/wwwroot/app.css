@@ -36,6 +36,14 @@ th, td {
     text-align: left;
 }
 
+/* Right-aligns a numeric/currency column so decimal points line up down the column -
+   used on every table with dollar amounts (Dashboard, Spending Tracker, Historical
+   Analysis, Categories). The Forecast page predates this and uses its own inline
+   per-cell styling instead, but new/edited tables should use this class. */
+.text-right {
+    text-align: right;
+}
+
 th {
     background: var(--color-primary-light);
     color: var(--color-primary-dark);

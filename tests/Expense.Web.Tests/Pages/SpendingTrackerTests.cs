@@ -77,6 +77,22 @@ public class SpendingTrackerTests : BunitContext
     }
 
     [Fact]
+    public void SpendingTracker_RightAlignsBudgetActualAndRemainingColumns()
+    {
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeData()));
+
+        var cut = Render<SpendingTracker>();
+
+        Assert.All(cut.FindAll("th"), h =>
+        {
+            if (h.TextContent is "Budget" or "Actual" or "Remaining")
+            {
+                Assert.Equal("text-right", h.GetAttribute("class"));
+            }
+        });
+    }
+
+    [Fact]
     public void SpendingTracker_RendersATotalsRow_IncludingPendingInTheActualAndRemainingTotals()
     {
         // Week: Groceries (450 budget, 120 actual) + Restaurants (150 budget, 200 actual)

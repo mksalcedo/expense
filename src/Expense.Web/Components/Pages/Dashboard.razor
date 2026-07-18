@@ -35,8 +35,8 @@ else
                     <tr>
                         <th>Date</th>
                         <th>Description</th>
-                        <th>Amount</th>
-                        <th>Running balance</th>
+                        <th class="text-right">Amount</th>
+                        <th class="text-right">Running balance</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -45,8 +45,8 @@ else
                         <tr>
                             <td>@row.Date.ToString("yyyy-MM-dd")</td>
                             <td>@row.Description</td>
-                            <td>@row.Amount.ToString("N2")</td>
-                            <td>@row.RunningBalance.ToString("N2")</td>
+                            <td class="text-right">@row.Amount.ToString("N2")</td>
+                            <td class="text-right">@row.RunningBalance.ToString("N2")</td>
                         </tr>
                     }
                 </tbody>
@@ -55,46 +55,8 @@ else
         </div>
 
         <div>
-            <h2>This Week's Spending</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Category</th>
-                        <th>Budget</th>
-                        <th>Actual</th>
-                        <th>Remaining</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var category in _spendingTracker.Week.Categories)
-                    {
-                        <tr>
-                            <td>@category.CategoryName</td>
-                            <td>@category.Budget.ToString("N2")</td>
-                            <td>@category.Actual.ToString("N2")</td>
-                            <td>@category.Remaining.ToString("N2")</td>
-                        </tr>
-                    }
-                    <tr id="spending-pending-row">
-                        <td>Pending / Uncategorized</td>
-                        <td></td>
-                        <td>@_spendingTracker.Week.PendingAmount.ToString("N2")</td>
-                        <td></td>
-                    </tr>
-                </tbody>
-                <tfoot>
-                    @{
-                        var weekBudgetTotal = _spendingTracker.Week.Categories.Sum(c => c.Budget);
-                        var weekActualTotal = _spendingTracker.Week.Categories.Sum(c => c.Actual) + _spendingTracker.Week.PendingAmount;
-                    }
-                    <tr id="spending-totals-row" style="font-weight: 600; border-top: 2px solid var(--color-border, #ccc)">
-                        <td>Total</td>
-                        <td>@weekBudgetTotal.ToString("N2")</td>
-                        <td>@weekActualTotal.ToString("N2")</td>
-                        <td>@((weekBudgetTotal - weekActualTotal).ToString("N2"))</td>
-                    </tr>
-                </tfoot>
-            </table>
+            @RenderSpendingTable("This Week's Spending", "spending-week", _spendingTracker.Week)
+            @RenderSpendingTable("This Month's Spending", "spending-month", _spendingTracker.Month)
             <p><a href="/spending-tracker">View spending tracker</a></p>
         </div>
 
@@ -186,4 +148,50 @@ else
         var when = run.RanAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt");
         return run.Success ? $"Last synced: {when}" : $"Last synced: {when} - FAILED: {run.ErrorMessage}";
     }
+
+    // Same table shape (category rows + Pending row + Totals row folding Pending into
+    // Actual/Remaining) as the Spending Tracker page itself - kept in sync deliberately,
+    // since this is meant to be a faithful at-a-glance copy, not a simplified one.
+    private static RenderFragment RenderSpendingTable(string title, string idPrefix, SpendingTrackerResult result) => @<div style="margin-bottom: 3.5em;">
+        <h2>@title</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th class="text-right">Budget</th>
+                    <th class="text-right">Actual</th>
+                    <th class="text-right">Remaining</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var category in result.Categories)
+                {
+                    <tr>
+                        <td>@category.CategoryName</td>
+                        <td class="text-right">@category.Budget.ToString("N2")</td>
+                        <td class="text-right">@category.Actual.ToString("N2")</td>
+                        <td class="text-right">@category.Remaining.ToString("N2")</td>
+                    </tr>
+                }
+                <tr id="@(idPrefix)-pending-row">
+                    <td>Pending / Uncategorized</td>
+                    <td></td>
+                    <td class="text-right">@result.PendingAmount.ToString("N2")</td>
+                    <td></td>
+                </tr>
+            </tbody>
+            <tfoot>
+                @{
+                    var budgetTotal = result.Categories.Sum(c => c.Budget);
+                    var actualTotal = result.Categories.Sum(c => c.Actual) + result.PendingAmount;
+                }
+                <tr id="@(idPrefix)-totals-row" style="font-weight: 600; border-top: 2px solid var(--color-border, #ccc)">
+                    <td>Total</td>
+                    <td class="text-right">@budgetTotal.ToString("N2")</td>
+                    <td class="text-right">@actualTotal.ToString("N2")</td>
+                    <td class="text-right">@((budgetTotal - actualTotal).ToString("N2"))</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>;
 }

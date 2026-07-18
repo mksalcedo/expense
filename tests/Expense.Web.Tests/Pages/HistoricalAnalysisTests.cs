@@ -93,6 +93,22 @@ public class HistoricalAnalysisTests : BunitContext
     }
 
     [Fact]
+    public void HistoricalAnalysis_RightAlignsAmountColumns()
+    {
+        RegisterFake();
+
+        var cut = Render<HistoricalAnalysis>();
+
+        Assert.All(cut.FindAll("th"), h =>
+        {
+            if (h.TextContent is "Budget" or "Actual" or "Remaining" or "Average actual" or "Current budget" or "Average price" or "Total spent")
+            {
+                Assert.Equal("text-right", h.GetAttribute("class"));
+            }
+        });
+    }
+
+    [Fact]
     public void SelectingACategory_FetchesAndRendersItsTrend()
     {
         var provider = RegisterFake();

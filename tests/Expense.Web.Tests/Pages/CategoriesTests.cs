@@ -123,6 +123,18 @@ public class CategoriesTests : BunitContext
     }
 
     [Fact]
+    public void Categories_RightAlignsTheAmountColumn()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+
+        var amountHeader = cut.FindAll("th").Single(h => h.TextContent == "Amount");
+        Assert.Equal("text-right", amountHeader.GetAttribute("class"));
+    }
+
+    [Fact]
     public void Categories_ListShowsMinPlusExtraPayment_ForADebtAccountPaymentCategory()
     {
         var provider = MakeProvider();

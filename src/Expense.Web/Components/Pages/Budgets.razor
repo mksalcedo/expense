@@ -19,7 +19,7 @@ else
                 <th>Category</th>
                 <th>Amount</th>
                 <th>Frequency</th>
-                <th>Monthly equivalent</th>
+                <th class="text-right">Monthly equivalent</th>
                 <th>As of</th>
             </tr>
         </thead>
@@ -42,7 +42,7 @@ else
                             }
                         </select>
                     </td>
-                    <td>@(row.MonthlyEquivalent?.ToString("N2") ?? "-")</td>
+                    <td class="text-right">@(row.MonthlyEquivalent?.ToString("N2") ?? "-")</td>
                     <td>@(row.EffectiveFrom?.ToString("yyyy-MM-dd") ?? "-")</td>
                 </tr>
             }

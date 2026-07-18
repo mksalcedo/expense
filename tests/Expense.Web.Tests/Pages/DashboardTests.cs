@@ -149,13 +149,31 @@ public class DashboardTests : BunitContext
     }
 
     [Fact]
+    public void Dashboard_RightAlignsAmountColumns()
+    {
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        var headers = cut.FindAll("th").Select(h => h.TextContent).ToList();
+        Assert.All(cut.FindAll("th"), h =>
+        {
+            if (h.TextContent is "Amount" or "Running balance" or "Budget" or "Actual" or "Remaining")
+            {
+                Assert.Equal("text-right", h.GetAttribute("class"));
+            }
+        });
+        Assert.Contains(headers, h => h is "Amount" or "Budget"); // sanity check the headers we expect actually rendered
+    }
+
+    [Fact]
     public void Dashboard_ThisWeeksSpending_ShowsPendingRowInTheTable()
     {
         RegisterFakes();
 
         var cut = Render<Dashboard>();
 
-        var pendingRow = cut.Find("#spending-pending-row");
+        var pendingRow = cut.Find("#spending-week-pending-row");
         Assert.Contains("Pending", pendingRow.TextContent);
         Assert.Contains("30.00", pendingRow.TextContent);
     }
@@ -169,10 +187,28 @@ public class DashboardTests : BunitContext
 
         var cut = Render<Dashboard>();
 
-        var totalsRow = cut.Find("#spending-totals-row");
+        var totalsRow = cut.Find("#spending-week-totals-row");
         Assert.Contains("450.00", totalsRow.TextContent);
         Assert.Contains("150.00", totalsRow.TextContent);
         Assert.Contains("300.00", totalsRow.TextContent);
+    }
+
+    [Fact]
+    public void Dashboard_RendersThisMonthsSpending_UnderneathThisWeeksSpending_WithItsOwnPendingAndTotals()
+    {
+        // Month: Groceries 1,956.70 budget, 800 actual, +60 pending. Budget total =
+        // 1,956.70. Actual total = 800+60 = 860. Remaining total = 1,956.70-860 = 1,096.70.
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        Assert.Contains("This Month's Spending", cut.Markup);
+        var pendingRow = cut.Find("#spending-month-pending-row");
+        Assert.Contains("60.00", pendingRow.TextContent);
+        var totalsRow = cut.Find("#spending-month-totals-row");
+        Assert.Contains("1,956.70", totalsRow.TextContent);
+        Assert.Contains("860.00", totalsRow.TextContent);
+        Assert.Contains("1,096.70", totalsRow.TextContent);
     }
 
     [Fact]
