@@ -125,6 +125,18 @@ public class DashboardTests : BunitContext
     }
 
     [Fact]
+    public void Dashboard_ShowsWhenTheLowestProjectedBalanceOccurs()
+    {
+        // MakeForecast()'s lowest running balance (6,313.02) is on the Discover Payment
+        // row, 2026-07-20 - same "Occurs on" treatment as the Forecast page itself.
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        Assert.Contains("Occurs on 07/20/2026", cut.Markup);
+    }
+
+    [Fact]
     public void Dashboard_RendersThisWeeksSpending()
     {
         RegisterFakes();

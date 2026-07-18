@@ -23,7 +23,13 @@ else
         <div>
             <h2>Cash Flow</h2>
             <p>Starting balance: @_forecast.StartingBalance.ToString("N2")</p>
-            <p>Lowest projected balance: @_forecast.LowestProjectedBalance.ToString("N2")</p>
+            <p>
+                Lowest projected balance: @_forecast.LowestProjectedBalance.ToString("N2")
+                @if (_forecast.LowestProjectedBalanceDate is { } lowestDate)
+                {
+                    <text> (Occurs on @lowestDate.ToString("MM/dd/yyyy"))</text>
+                }
+            </p>
             <table>
                 <thead>
                     <tr>
