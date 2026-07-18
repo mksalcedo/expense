@@ -38,5 +38,14 @@ public class BankTransaction
 
     public bool IsAmazonMerchant { get; set; }
 
+    /// <summary>
+    /// True when a human chose "review later" on the Review Queue - stays uncategorized
+    /// (CategoryId is still the real pending signal) but is hidden from the Review Queue's
+    /// action list. Still counted in Spending Tracker's Pending total and still visible/
+    /// correctable via the Transactions page's Uncategorized filter - dismissing only
+    /// declutters the queue, it never hides the transaction from the app entirely.
+    /// </summary>
+    public bool Dismissed { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 }

@@ -21,3 +21,6 @@ src/Expense.Importers.SimpleFin/simplefin-account-map.json
 
 # Claude Code local settings (personal permission grants, not shared)
 .claude/settings.local.json
+
+# Database backups contain real account balances/transaction history - local only
+db_backups/

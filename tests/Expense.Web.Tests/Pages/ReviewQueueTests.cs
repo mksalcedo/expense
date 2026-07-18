@@ -71,6 +71,23 @@ public class ReviewQueueTests : BunitContext
             AmazonItemGroups = AmazonItemGroups.Where(g => !g.ItemIds.Any(itemIds.Contains)).ToList();
             return Task.FromResult(itemIds.Count);
         }
+
+        public List<int>? LastDismissedTransactionIds { get; private set; }
+        public List<int>? LastDismissedItemIds { get; private set; }
+
+        public Task DismissTransactionsAsync(IReadOnlyList<int> transactionIds, CancellationToken cancellationToken = default)
+        {
+            LastDismissedTransactionIds = transactionIds.ToList();
+            TransactionGroups = TransactionGroups.Where(g => !g.TransactionIds.Any(transactionIds.Contains)).ToList();
+            return Task.CompletedTask;
+        }
+
+        public Task DismissAmazonItemsAsync(IReadOnlyList<int> itemIds, CancellationToken cancellationToken = default)
+        {
+            LastDismissedItemIds = itemIds.ToList();
+            AmazonItemGroups = AmazonItemGroups.Where(g => !g.ItemIds.Any(itemIds.Contains)).ToList();
+            return Task.CompletedTask;
+        }
     }
 
     private static FakeReviewQueueProvider MakeProvider() => new()
@@ -356,4 +373,80 @@ public class ReviewQueueTests : BunitContext
     // is included: bUnit's headless rendering doesn't reproduce the underlying issue (a live
     // browser's <select> retaining its own selected-option state across a partial DOM patch)
     // - the same test passed whether @key was present or not, so it verified nothing.
+
+    [Fact]
+    public void SelectedTransactionGroups_CanBeDismissed_WithoutChoosingACategory()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-30").Click(); // KROGER: 30
+        var dismissBtn = cut.Find("#txn-dismiss-btn");
+        Assert.False(dismissBtn.HasAttribute("disabled")); // no category needed to dismiss
+        dismissBtn.Click();
+
+        Assert.Equal([30], provider.LastDismissedTransactionIds);
+        Assert.DoesNotContain("KROGER ALPHARETTA GA", cut.Markup);
+        Assert.Contains("0 selected", cut.Find("#txn-selected-count").TextContent);
+    }
+
+    [Fact]
+    public void SelectedAmazonItemGroups_CanBeDismissed_WithoutChoosingACategory()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-select-22").Click(); // Fish Oil: 22
+        cut.Find("#item-dismiss-btn").Click();
+
+        Assert.Equal([22], provider.LastDismissedItemIds);
+        Assert.DoesNotContain("Fish Oil", cut.Markup);
+    }
+
+    [Fact]
+    public void BankTransactionGroups_HaveAViewIndividualItemsLink_ToTheTransactionsPage()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        var link = cut.Find("#txn-view-individual-10");
+        Assert.Equal("/transactions?search=PUBLIX", link.GetAttribute("href"));
+    }
+
+    [Fact]
+    public void NeedsReviewAmazonItems_ShowIndividually_WithOrderIdAndHighlight_NotGroupedTogether()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "(Item details unavailable in email - check Amazon order page)",
+                ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2025, 7, 17), ItemIds = [315], TotalPrice = 22.00m,
+                NeedsReview = true, OrderId = "113-1132648-3403446"
+            },
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "(Item details unavailable in email - check Amazon order page)",
+                ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2025, 6, 16), ItemIds = [316], TotalPrice = 25.78m,
+                NeedsReview = true, OrderId = "112-9103180-2234648"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        Assert.Contains("113-1132648-3403446", cut.Markup);
+        Assert.Contains("112-9103180-2234648", cut.Markup);
+        Assert.Contains("22.00", cut.Markup);
+        Assert.Contains("25.78", cut.Markup);
+        var rows = cut.FindAll("tbody tr");
+        Assert.Contains(rows, r => (r.GetAttribute("style") ?? "").Contains("background-color: yellow"));
+    }
 }

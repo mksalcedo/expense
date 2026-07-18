@@ -485,4 +485,102 @@ public class CategorizationServiceTests : DatabaseTestBase
         Assert.Equal("Qunol Ultra CoQ10", qunol.SuggestedPattern);
         Assert.Equal(new DateOnly(2026, 7, 5), qunol.SampleDate); // most recent of the two, since pending rows are ordered by date descending
     }
+
+    [Fact]
+    public async Task GetPendingAmazonItemGroupsAsync_NeedsReviewItems_AreNeverGroupedTogether()
+    {
+        // Real bug this guards against: three unrelated orders all fell back to the exact
+        // same "(Item details unavailable...)" placeholder title, and title-based grouping
+        // collapsed them into one row with a combined total - hiding that they're three
+        // different real orders with three different real amounts and dates.
+        const string placeholder = "(Item details unavailable in email - check Amazon order page)";
+        Context.AmazonOrderItems.AddRange(
+            new AmazonOrderItem { OrderId = "113-1132648-3403446", OrderDate = new DateOnly(2025, 7, 17), ItemTitle = placeholder, Price = 22.00m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow },
+            new AmazonOrderItem { OrderId = "112-9103180-2234648", OrderDate = new DateOnly(2025, 6, 16), ItemTitle = placeholder, Price = 25.78m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow },
+            new AmazonOrderItem { OrderId = "112-5728819-3317013", OrderDate = new DateOnly(2025, 7, 12), ItemTitle = placeholder, Price = 0.00m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingAmazonItemGroupsAsync(Context);
+
+        Assert.Equal(3, groups.Count); // never collapsed into one
+        Assert.All(groups, g => Assert.Single(g.ItemIds));
+        Assert.All(groups, g => Assert.True(g.NeedsReview));
+        var found22 = groups.Single(g => g.TotalPrice == 22.00m);
+        Assert.Equal("113-1132648-3403446", found22.OrderId);
+        Assert.Equal(new DateOnly(2025, 7, 17), found22.SampleDate);
+    }
+
+    [Fact]
+    public async Task GetPendingAmazonItemGroupsAsync_NonNeedsReviewItems_StillGroupByTitle()
+    {
+        Context.AmazonOrderItems.AddRange(
+            new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 1), ItemTitle = "Qunol Ultra CoQ10", Price = 30m, Quantity = 1, NeedsReview = false, CreatedAt = DateTimeOffset.UtcNow },
+            new AmazonOrderItem { OrderId = "2", OrderDate = new DateOnly(2026, 7, 5), ItemTitle = "Qunol Ultra CoQ10", Price = 32m, Quantity = 1, NeedsReview = false, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingAmazonItemGroupsAsync(Context);
+
+        var group = Assert.Single(groups);
+        Assert.Equal(2, group.ItemIds.Count);
+        Assert.False(group.NeedsReview);
+        Assert.Null(group.OrderId); // more than one real order in the group - no single order id applies
+    }
+
+    [Fact]
+    public async Task GetPendingTransactionGroupsAsync_ExcludesDismissedTransactions()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.AddRange(
+            new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 1), Description = "PAYMENTUS-SERVICE", Amount = -1.99m, ImportSource = "Test", Dismissed = true, CreatedAt = DateTimeOffset.UtcNow },
+            new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 2), Description = "PUBLIX", Amount = -40m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingTransactionGroupsAsync(Context);
+
+        var group = Assert.Single(groups);
+        Assert.Equal("PUBLIX", group.SuggestedPattern);
+    }
+
+    [Fact]
+    public async Task GetPendingAmazonItemGroupsAsync_ExcludesDismissedItems()
+    {
+        Context.AmazonOrderItems.AddRange(
+            new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 1), ItemTitle = "Dismissed Thing", Price = 12m, Quantity = 1, Dismissed = true, CreatedAt = DateTimeOffset.UtcNow },
+            new AmazonOrderItem { OrderId = "2", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Visible Thing", Price = 8m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingAmazonItemGroupsAsync(Context);
+
+        var group = Assert.Single(groups);
+        Assert.Equal("Visible Thing", group.ItemTitle);
+    }
+
+    [Fact]
+    public async Task DismissTransactionsAsync_MarksThemDismissed_WithoutCategorizingThem()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+        var transaction = new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 1), Description = "PAYMENTUS-SERVICE", Amount = -1.99m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow };
+        Context.BankTransactions.Add(transaction);
+        await Context.SaveChangesAsync();
+
+        await _sut.DismissTransactionsAsync(Context, [transaction.Id]);
+
+        Assert.True(transaction.Dismissed);
+        Assert.Null(transaction.CategoryId);
+    }
+
+    [Fact]
+    public async Task DismissAmazonItemsAsync_MarksThemDismissed_WithoutCategorizingThem()
+    {
+        var item = new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 1), ItemTitle = "Mystery Item", Price = 12m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow };
+        Context.AmazonOrderItems.Add(item);
+        await Context.SaveChangesAsync();
+
+        await _sut.DismissAmazonItemsAsync(Context, [item.Id]);
+
+        Assert.True(item.Dismissed);
+        Assert.Null(item.CategoryId);
+    }
 }

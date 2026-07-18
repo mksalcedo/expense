@@ -1,5 +1,6 @@
 @page "/transactions"
 @using Expense.Domain.Services.Transactions
+@using Microsoft.AspNetCore.Components
 @inject ITransactionsPageProvider TransactionsProvider
 
 <PageTitle>Transactions</PageTitle>
@@ -128,8 +129,14 @@ else
     private int? _lastClickedIndex;
     private int _selectedBulkCategoryId;
 
+    /// <summary>Prefills the search box for deep links from the Review Queue's "View individual items" link.</summary>
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "search")]
+    public string? SearchQuery { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
+        _searchText = SearchQuery;
         _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly);
     }
 

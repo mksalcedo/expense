@@ -36,6 +36,9 @@ else
                 @onclick="BulkCategorizeTransactionsAsync">
             Apply
         </button>
+        <button id="txn-dismiss-btn" disabled="@(_selectedTransactionIndexes.Count == 0)" @onclick="DismissTransactionsAsync">
+            Dismiss (review later)
+        </button>
     </p>
     <table>
         <thead>
@@ -52,6 +55,7 @@ else
                 <th>Total</th>
                 <th>Pattern (edit if needed)</th>
                 <th>Category</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -88,6 +92,11 @@ else
                             }
                         </select>
                     </td>
+                    <td>
+                        <a id="txn-view-individual-@representativeId" href="@($"/transactions?search={Uri.EscapeDataString(group.SuggestedPattern)}")">
+                            View individual items
+                        </a>
+                    </td>
                 </tr>
             }
         </tbody>
@@ -107,6 +116,9 @@ else
                 @onclick="BulkCategorizeAmazonItemsAsync">
             Apply
         </button>
+        <button id="item-dismiss-btn" disabled="@(_selectedItemIndexes.Count == 0)" @onclick="DismissAmazonItemsAsync">
+            Dismiss (review later)
+        </button>
     </p>
     <table>
         <thead>
@@ -118,6 +130,7 @@ else
                 </th>
                 <th>Count</th>
                 <th>Item</th>
+                <th>Order ID</th>
                 <th>Date</th>
                 <th>Total</th>
                 <th>Pattern (edit if needed)</th>
@@ -129,13 +142,14 @@ else
             @foreach (var (group, index) in _data.AmazonItemGroups.Select((g, i) => (g, i)))
             {
                 var representativeId = group.ItemIds[0];
-                <tr @key="representativeId">
+                <tr @key="representativeId" style="@(group.NeedsReview ? "background-color: yellow" : null)">
                     <td>
                         <input type="checkbox" id="item-select-@representativeId" checked="@_selectedItemIndexes.Contains(index)"
                                @onclick="e => ToggleItemSelection(index, e.ShiftKey)" />
                     </td>
                     <td>@group.ItemIds.Count</td>
                     <td>@group.ItemTitle</td>
+                    <td>@group.OrderId</td>
                     <td>@group.SampleDate.ToString("MM/dd/yyyy")</td>
                     <td>@group.TotalPrice.ToString("N2")</td>
                     <td>
@@ -262,6 +276,18 @@ else
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
     }
 
+    private async Task DismissTransactionsAsync()
+    {
+        if (_data is null || _selectedTransactionIndexes.Count == 0) return;
+
+        var transactionIds = _selectedTransactionIndexes.SelectMany(i => _data.TransactionGroups[i].TransactionIds).ToList();
+        await ReviewQueueProvider.DismissTransactionsAsync(transactionIds);
+
+        _selectedTransactionIndexes.Clear();
+        _lastClickedTransactionIndex = null;
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
     private void ToggleItemSelection(int index, bool shiftKey)
     {
         if (shiftKey && _lastClickedItemIndex is { } lastIndex)
@@ -296,6 +322,18 @@ else
 
         var itemIds = _selectedItemIndexes.SelectMany(i => _data.AmazonItemGroups[i].ItemIds).ToList();
         await ReviewQueueProvider.BulkCategorizeAmazonItemsAsync(itemIds, _selectedBulkItemCategoryId);
+
+        _selectedItemIndexes.Clear();
+        _lastClickedItemIndex = null;
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
+    private async Task DismissAmazonItemsAsync()
+    {
+        if (_data is null || _selectedItemIndexes.Count == 0) return;
+
+        var itemIds = _selectedItemIndexes.SelectMany(i => _data.AmazonItemGroups[i].ItemIds).ToList();
+        await ReviewQueueProvider.DismissAmazonItemsAsync(itemIds);
 
         _selectedItemIndexes.Clear();
         _lastClickedItemIndex = null;

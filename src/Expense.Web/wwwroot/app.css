@@ -1,3 +1,73 @@
+:root {
+    --color-bg: #f5f7fa;
+    --color-surface: #ffffff;
+    --color-border: #dde3ea;
+    --color-text: #1e2733;
+    --color-text-muted: #64748b;
+    --color-primary: #2563a8;
+    --color-primary-dark: #1d4d80;
+    --color-primary-light: #e8f1fb;
+}
+
+html, body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+h1, h2, h3 {
+    color: var(--color-text);
+    font-weight: 600;
+}
+
+a {
+    color: var(--color-primary);
+}
+
+table {
+    border-collapse: collapse;
+    background: var(--color-surface);
+}
+
+th, td {
+    border: 1px solid var(--color-border);
+    padding: 6px 12px;
+    text-align: left;
+}
+
+th {
+    background: var(--color-primary-light);
+    color: var(--color-primary-dark);
+}
+
+button, select, input[type=text], input[type=number], input[type=date], input[type=search] {
+    font: inherit;
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    background: var(--color-surface);
+}
+
+button {
+    background: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+    background: var(--color-primary-dark);
+}
+
+button:disabled {
+    background: var(--color-border);
+    border-color: var(--color-border);
+    color: var(--color-text-muted);
+    cursor: default;
+}
+
 h1:focus {
     outline: none;
 }

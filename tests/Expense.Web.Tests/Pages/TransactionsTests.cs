@@ -2,6 +2,7 @@ using Bunit;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Transactions;
 using Expense.Web.Components.Pages;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Expense.Web.Tests.Pages;
@@ -330,5 +331,21 @@ public class TransactionsTests : BunitContext
         cut.Find("#needs-review-filter").Change(true);
 
         Assert.True(provider.LastNeedsReviewOnly);
+    }
+
+    [Fact]
+    public void SearchQueryParameter_PrefillsTheSearchBox_ForDeepLinksFromTheReviewQueue()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var nav = Services.GetRequiredService<Bunit.TestDoubles.BunitNavigationManager>();
+        nav.NavigateTo(nav.GetUriWithQueryParameter("search", "PUBLIX"));
+        var cut = Render<Transactions>();
+
+        Assert.Equal("PUBLIX", cut.Find("#search-box").GetAttribute("value"));
+        Assert.Equal("PUBLIX", provider.LastSearchText);
+        Assert.Contains("PUBLIX NORCROSS GA", cut.Markup);
+        Assert.DoesNotContain("TRUIST MORTG PAYMENT", cut.Markup);
     }
 }

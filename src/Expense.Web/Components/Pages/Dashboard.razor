@@ -82,16 +82,6 @@ else
         </div>
 
         <div>
-            <h2>Manage</h2>
-            <p><a href="/categories">Categories</a></p>
-            <p><a href="/budgets">Budgets</a></p>
-            <p><a href="/accounts">Accounts</a></p>
-            <p><a href="/one-time-events">One-Time Events</a></p>
-            <p><a href="/transactions">Transactions</a></p>
-            <p><a href="/historical-analysis">Historical Analysis</a></p>
-        </div>
-
-        <div>
             <h2>Sync Now</h2>
             <div>
                 <button id="sync-simplefin-btn" @onclick="RunSimpleFinSyncAsync" disabled="@_simpleFinRunning">
@@ -123,9 +113,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        _forecast = await ForecastProvider.GetForecastAsync();
-        _spendingTracker = await SpendingTrackerProvider.GetSpendingTrackerAsync();
-        _reviewQueue = await ReviewQueueProvider.GetReviewQueueAsync();
+        await RefreshDashboardDataAsync();
         _lastSimpleFinRun = await SyncStatusProvider.GetLastSimpleFinRunAsync();
         _lastAmazonRun = await SyncStatusProvider.GetLastAmazonGmailRunAsync();
     }
@@ -136,6 +124,7 @@ else
         try
         {
             _lastSimpleFinRun = await SyncStatusProvider.RunSimpleFinSyncAsync();
+            await RefreshDashboardDataAsync();
         }
         finally
         {
@@ -149,11 +138,23 @@ else
         try
         {
             _lastAmazonRun = await SyncStatusProvider.RunAmazonGmailSyncAsync();
+            await RefreshDashboardDataAsync();
         }
         finally
         {
             _amazonRunning = false;
         }
+    }
+
+    // A sync can add transactions/orders that change every figure shown on this page -
+    // the running balance, category totals, and how many rows still need categorization -
+    // so all three get reloaded once the import itself finishes, not just the "Last
+    // synced" timestamp.
+    private async Task RefreshDashboardDataAsync()
+    {
+        _forecast = await ForecastProvider.GetForecastAsync();
+        _spendingTracker = await SpendingTrackerProvider.GetSpendingTrackerAsync();
+        _reviewQueue = await ReviewQueueProvider.GetReviewQueueAsync();
     }
 
     private static string FormatRunStatus(ImportRun? run)

@@ -34,5 +34,8 @@ public class AmazonOrderItem
     /// </summary>
     public bool NeedsReview { get; set; }
 
+    /// <summary>Same meaning as BankTransaction.Dismissed - "review later", not "ignore forever".</summary>
+    public bool Dismissed { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 }

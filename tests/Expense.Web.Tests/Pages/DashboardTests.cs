@@ -13,24 +13,29 @@ public class DashboardTests : BunitContext
 {
     private class FakeForecastResultProvider(ForecastResult result) : IForecastResultProvider
     {
-        public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(result);
+        public ForecastResult Result { get; set; } = result;
+        public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(Result);
         public Task DeferPaymentAsync(int accountId, DateOnly originalDate, DateOnly deferredToDate, string? note, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemoveDeferralAsync(int deferralId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private class FakeSpendingTrackerPageProvider(SpendingTrackerPageData data) : ISpendingTrackerPageProvider
     {
-        public Task<SpendingTrackerPageData> GetSpendingTrackerAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
+        public SpendingTrackerPageData Data { get; set; } = data;
+        public Task<SpendingTrackerPageData> GetSpendingTrackerAsync(CancellationToken cancellationToken = default) => Task.FromResult(Data);
     }
 
     private class FakeReviewQueueProvider(ReviewQueueData data) : IReviewQueueProvider
     {
-        public Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
+        public ReviewQueueData Data { get; set; } = data;
+        public Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default) => Task.FromResult(Data);
         public Task<int> CategorizeTransactionAsync(int transactionId, int categoryId, string? merchantPatternToCreate, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<int> CategorizeAmazonItemAsync(int itemId, int categoryId, string? productPatternToCreate, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<ReapplyRulesResult> ReapplyRulesAsync(CancellationToken cancellationToken = default) => Task.FromResult(new ReapplyRulesResult());
         public Task<int> BulkCategorizeTransactionsAsync(IReadOnlyList<int> transactionIds, int categoryId, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<int> BulkCategorizeAmazonItemsAsync(IReadOnlyList<int> itemIds, int categoryId, CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task DismissTransactionsAsync(IReadOnlyList<int> transactionIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task DismissAmazonItemsAsync(IReadOnlyList<int> itemIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null) : ISyncStatusProvider
@@ -143,8 +148,11 @@ public class DashboardTests : BunitContext
     }
 
     [Fact]
-    public void Dashboard_LinksToEveryOtherPage()
+    public void Dashboard_LinksToItsOwnDetailPages()
     {
+        // Only the pages this dashboard summarizes get their own "drill in" link here -
+        // every other page (Categories, Budgets, Accounts, etc.) is reachable from the
+        // navigation menu now, so the old "Manage" section of links was removed.
         RegisterFakes();
 
         var cut = Render<Dashboard>();
@@ -152,11 +160,6 @@ public class DashboardTests : BunitContext
         Assert.Contains("href=\"/forecast\"", cut.Markup);
         Assert.Contains("href=\"/spending-tracker\"", cut.Markup);
         Assert.Contains("href=\"/review-queue\"", cut.Markup);
-        Assert.Contains("href=\"/categories\"", cut.Markup);
-        Assert.Contains("href=\"/budgets\"", cut.Markup);
-        Assert.Contains("href=\"/accounts\"", cut.Markup);
-        Assert.Contains("href=\"/one-time-events\"", cut.Markup);
-        Assert.Contains("href=\"/transactions\"", cut.Markup);
     }
 
     [Fact]
@@ -239,5 +242,48 @@ public class DashboardTests : BunitContext
 
         Assert.Equal(1, fake.AmazonGmailRunCount);
         Assert.Equal(0, fake.SimpleFinRunCount);
+    }
+
+    [Fact]
+    public void Dashboard_AfterSimpleFinSync_ReloadsForecastSpendingTrackerAndReviewQueue()
+    {
+        // Real gap this guards against: the sync buttons used to only refresh the "Last
+        // synced" timestamp, leaving Cash Flow/This Week's Spending/Review Queue counts
+        // showing stale pre-sync data until the whole page was manually reloaded.
+        var forecastProvider = new FakeForecastResultProvider(MakeForecast());
+        var spendingProvider = new FakeSpendingTrackerPageProvider(MakeSpendingTracker());
+        var reviewQueueProvider = new FakeReviewQueueProvider(MakeReviewQueue());
+        Services.AddSingleton<IForecastResultProvider>(forecastProvider);
+        Services.AddSingleton<ISpendingTrackerPageProvider>(spendingProvider);
+        Services.AddSingleton<IReviewQueueProvider>(reviewQueueProvider);
+        Services.AddSingleton<ISyncStatusProvider>(new FakeSyncStatusProvider());
+
+        var cut = Render<Dashboard>();
+        Assert.Contains("6,463.02", cut.Markup);
+        Assert.Contains("3 item(s) need categorization", cut.Markup); // 1 bank group + 2 Amazon groups in MakeReviewQueue
+
+        // Simulate the sync having actually imported new data by the time it completes.
+        forecastProvider.Result = new ForecastResult { StartingBalance = 9999.99m, Rows = [] };
+        spendingProvider.Data = new SpendingTrackerPageData
+        {
+            Week = new SpendingTrackerResult { PeriodStart = new DateOnly(2026, 7, 12), PeriodEnd = new DateOnly(2026, 7, 18), Categories = [], PendingAmount = 0m },
+            Month = new SpendingTrackerResult { PeriodStart = new DateOnly(2026, 7, 1), PeriodEnd = new DateOnly(2026, 7, 31), Categories = [], PendingAmount = 0m }
+        };
+        reviewQueueProvider.Data = new ReviewQueueData { TransactionGroups = [], AmazonItemGroups = [], Categories = [] };
+
+        cut.Find("#sync-simplefin-btn").Click();
+
+        Assert.Contains("9,999.99", cut.Markup);
+        Assert.Contains("0 item(s) need categorization", cut.Markup);
+    }
+
+    [Fact]
+    public void Dashboard_DoesNotShowAManageSection_NavigationMenuCoversIt()
+    {
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        Assert.DoesNotContain("Manage", cut.Markup);
     }
 }

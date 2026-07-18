@@ -194,12 +194,13 @@ public class CategorizationService
     }
 
     /// <summary>
-    /// Groups pending transactions by a derived merchant pattern so repeated merchants
-    /// (Publix x15, Trader Joe's x8, etc.) resolve in one action instead of one row each.
+    /// Groups pending, non-dismissed transactions by a derived merchant pattern so repeated
+    /// merchants (Publix x15, Trader Joe's x8, etc.) resolve in one action instead of one
+    /// row each.
     /// </summary>
     public async Task<List<PendingTransactionGroup>> GetPendingTransactionGroupsAsync(ExpenseDbContext context)
     {
-        var pending = await GetPendingBankTransactionsAsync(context);
+        var pending = (await GetPendingBankTransactionsAsync(context)).Where(t => !t.Dismissed);
         return pending
             .GroupBy(t => DeriveMerchantPattern(t.Merchant ?? t.Description))
             .Select(g => new PendingTransactionGroup
@@ -215,11 +216,33 @@ public class CategorizationService
             .ToList();
     }
 
-    /// <summary>Groups pending Amazon items by exact item title - real recurring products repeat verbatim.</summary>
+    /// <summary>
+    /// Groups pending, non-dismissed Amazon items by exact item title - real recurring
+    /// products repeat verbatim. NeedsReview items are the one exception: their shared
+    /// placeholder title is a parser fallback, not a real product name, so grouping by it
+    /// would silently combine unrelated orders into one misleading row (different real
+    /// dates/amounts hidden behind one combined total) - each stays its own singleton group
+    /// instead, carrying its own real order id so it can actually be tracked down.
+    /// </summary>
     public async Task<List<PendingAmazonItemGroup>> GetPendingAmazonItemGroupsAsync(ExpenseDbContext context)
     {
-        var pending = await GetPendingAmazonOrderItemsAsync(context);
-        return pending
+        var pending = (await GetPendingAmazonOrderItemsAsync(context)).Where(i => !i.Dismissed).ToList();
+
+        var needsReviewGroups = pending
+            .Where(i => i.NeedsReview)
+            .Select(i => new PendingAmazonItemGroup
+            {
+                SuggestedPattern = i.ItemTitle,
+                ItemTitle = i.ItemTitle,
+                SampleDate = i.OrderDate,
+                ItemIds = [i.Id],
+                TotalPrice = i.Price,
+                NeedsReview = true,
+                OrderId = i.OrderId
+            });
+
+        var groupedItems = pending
+            .Where(i => !i.NeedsReview)
             .GroupBy(i => i.ItemTitle.Trim(), StringComparer.OrdinalIgnoreCase)
             .Select(g => new PendingAmazonItemGroup
             {
@@ -228,9 +251,31 @@ public class CategorizationService
                 SampleDate = g.First().OrderDate,
                 ItemIds = g.Select(i => i.Id).ToList(),
                 TotalPrice = g.Sum(i => i.Price)
-            })
-            .OrderByDescending(g => g.ItemIds.Count)
-            .ToList();
+            });
+
+        return needsReviewGroups.Concat(groupedItems).OrderByDescending(g => g.ItemIds.Count).ToList();
+    }
+
+    /// <summary>Hides selected pending transactions from the Review Queue's action list without categorizing them - see BankTransaction.Dismissed.</summary>
+    public async Task DismissTransactionsAsync(ExpenseDbContext context, IReadOnlyList<int> transactionIds)
+    {
+        var transactions = await context.BankTransactions.Where(t => transactionIds.Contains(t.Id)).ToListAsync();
+        foreach (var transaction in transactions)
+        {
+            transaction.Dismissed = true;
+        }
+        await context.SaveChangesAsync();
+    }
+
+    /// <summary>Same as DismissTransactionsAsync, for Amazon items.</summary>
+    public async Task DismissAmazonItemsAsync(ExpenseDbContext context, IReadOnlyList<int> itemIds)
+    {
+        var items = await context.AmazonOrderItems.Where(i => itemIds.Contains(i.Id)).ToListAsync();
+        foreach (var item in items)
+        {
+            item.Dismissed = true;
+        }
+        await context.SaveChangesAsync();
     }
 
     /// <summary>
