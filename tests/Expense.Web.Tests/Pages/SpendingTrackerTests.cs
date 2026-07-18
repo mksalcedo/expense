@@ -77,6 +77,23 @@ public class SpendingTrackerTests : BunitContext
     }
 
     [Fact]
+    public void SpendingTracker_RendersATotalsRow_IncludingPendingInTheActualAndRemainingTotals()
+    {
+        // Week: Groceries (450 budget, 120 actual) + Restaurants (150 budget, 200 actual)
+        // + 30 pending. Budget total = 600. Actual total = 120+200+30 = 350 - pending has
+        // to count here, since it's real money already spent, just not yet categorized.
+        // Remaining total = 600-350 = 250.
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeData()));
+
+        var cut = Render<SpendingTracker>();
+
+        var totalsRow = cut.Find("#week-totals-row");
+        Assert.Contains("600.00", totalsRow.TextContent);
+        Assert.Contains("350.00", totalsRow.TextContent);
+        Assert.Contains("250.00", totalsRow.TextContent);
+    }
+
+    [Fact]
     public void SpendingTracker_RendersPeriodDateRanges()
     {
         Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeData()));

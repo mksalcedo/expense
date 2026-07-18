@@ -13,8 +13,8 @@
 else
 {
     <div style="display:flex; gap:3rem; align-items:flex-start;">
-        @RenderPeriod("This Week", _data.Week)
-        @RenderPeriod("This Month", _data.Month)
+        @RenderPeriod("This Week", "week", _data.Week)
+        @RenderPeriod("This Month", "month", _data.Month)
     </div>
 }
 
@@ -26,7 +26,7 @@ else
         _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
     }
 
-    private RenderFragment RenderPeriod(string title, SpendingTrackerResult result) => @<div>
+    private RenderFragment RenderPeriod(string title, string idPrefix, SpendingTrackerResult result) => @<div>
         <h2>@title</h2>
         <p>@result.PeriodStart.ToString("yyyy-MM-dd") to @result.PeriodEnd.ToString("yyyy-MM-dd")</p>
         <table>
@@ -55,6 +55,23 @@ else
                     <td></td>
                 </tr>
             </tbody>
+            <tfoot>
+                @{
+                    var budgetTotal = result.Categories.Sum(c => c.Budget);
+                    // Pending is real money already spent, just not yet sorted into a
+                    // category - it has to count toward the actual/remaining totals or
+                    // this row would overstate how much budget is really left, the exact
+                    // kind of "silently ignore uncategorized spend" mistake already fixed
+                    // once before for the Amex forecast.
+                    var actualTotal = result.Categories.Sum(c => c.Actual) + result.PendingAmount;
+                }
+                <tr id="@(idPrefix)-totals-row" style="font-weight: 600; border-top: 2px solid var(--color-border, #ccc)">
+                    <td>Total</td>
+                    <td>@budgetTotal.ToString("N2")</td>
+                    <td>@actualTotal.ToString("N2")</td>
+                    <td>@((budgetTotal - actualTotal).ToString("N2"))</td>
+                </tr>
+            </tfoot>
         </table>
     </div>;
 }

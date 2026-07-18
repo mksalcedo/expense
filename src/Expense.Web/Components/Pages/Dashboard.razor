@@ -75,9 +75,26 @@ else
                             <td>@category.Remaining.ToString("N2")</td>
                         </tr>
                     }
+                    <tr id="spending-pending-row">
+                        <td>Pending / Uncategorized</td>
+                        <td></td>
+                        <td>@_spendingTracker.Week.PendingAmount.ToString("N2")</td>
+                        <td></td>
+                    </tr>
                 </tbody>
+                <tfoot>
+                    @{
+                        var weekBudgetTotal = _spendingTracker.Week.Categories.Sum(c => c.Budget);
+                        var weekActualTotal = _spendingTracker.Week.Categories.Sum(c => c.Actual) + _spendingTracker.Week.PendingAmount;
+                    }
+                    <tr id="spending-totals-row" style="font-weight: 600; border-top: 2px solid var(--color-border, #ccc)">
+                        <td>Total</td>
+                        <td>@weekBudgetTotal.ToString("N2")</td>
+                        <td>@weekActualTotal.ToString("N2")</td>
+                        <td>@((weekBudgetTotal - weekActualTotal).ToString("N2"))</td>
+                    </tr>
+                </tfoot>
             </table>
-            <p>Pending / Uncategorized: @_spendingTracker.Week.PendingAmount.ToString("N2")</p>
             <p><a href="/spending-tracker">View spending tracker</a></p>
         </div>
 

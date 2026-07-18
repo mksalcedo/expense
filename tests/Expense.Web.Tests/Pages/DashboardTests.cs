@@ -149,6 +149,33 @@ public class DashboardTests : BunitContext
     }
 
     [Fact]
+    public void Dashboard_ThisWeeksSpending_ShowsPendingRowInTheTable()
+    {
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        var pendingRow = cut.Find("#spending-pending-row");
+        Assert.Contains("Pending", pendingRow.TextContent);
+        Assert.Contains("30.00", pendingRow.TextContent);
+    }
+
+    [Fact]
+    public void Dashboard_ThisWeeksSpending_ShowsATotalsRow_IncludingPending()
+    {
+        // Groceries: 450 budget, 120 actual, +30 pending. Budget total = 450.
+        // Actual total = 120+30 = 150. Remaining total = 450-150 = 300.
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        var totalsRow = cut.Find("#spending-totals-row");
+        Assert.Contains("450.00", totalsRow.TextContent);
+        Assert.Contains("150.00", totalsRow.TextContent);
+        Assert.Contains("300.00", totalsRow.TextContent);
+    }
+
+    [Fact]
     public void Dashboard_RendersReviewQueuePendingGroupCount()
     {
         RegisterFakes();
