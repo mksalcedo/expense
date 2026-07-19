@@ -60,8 +60,9 @@ else
                             <input id="defer-date-@index" type="date" value="@GetDeferDate(index, row).ToString("yyyy-MM-dd")"
                                    @onchange="e => _deferDateInputs[index] = DateOnly.Parse((string)e.Value!)" />
                             <button id="defer-btn-@index" @onclick="() => DeferAsync(row, index)">Defer...</button>
-                            <button id="confirm-btn-@index" @onclick="() => ConfirmAsync(row)">Confirm paid</button>
                         }
+                        <button id="confirm-btn-@index" @onclick="() => ConfirmAsync(row)">Confirm paid</button>
+                        <button id="override-btn-@index" @onclick="() => OverrideAsync(row)">Override</button>
                     </td>
                 </tr>
             }
@@ -70,13 +71,14 @@ else
 
     @if (_result.Confirmations.Count > 0)
     {
-        <h2>Confirmed payments</h2>
-        <p>Manually marked as already happened - not covered by automatic reconciliation.</p>
+        <h2>Manually excluded payments</h2>
+        <p>Removed from the forecast by hand - either confirmed as already paid, or intentionally overridden with a custom plan (e.g. a split payment), rather than caught by automatic reconciliation.</p>
         <table id="confirmations-table" style="border-collapse: collapse">
             <thead>
                 <tr>
                     <th style="@CellStyle()">Date</th>
                     <th style="@CellStyle()">Account</th>
+                    <th style="@CellStyle()">Reason</th>
                     <th style="@CellStyle()"></th>
                 </tr>
             </thead>
@@ -86,6 +88,7 @@ else
                     <tr>
                         <td style="@CellStyle()">@confirmation.OriginalDate.ToString("MM/dd/yyyy")</td>
                         <td style="@CellStyle()">@confirmation.AccountName</td>
+                        <td style="@CellStyle()">@confirmation.Reason</td>
                         <td style="@CellStyle()">
                             <button id="undo-confirmation-btn-@confirmation.ConfirmationId" @onclick="() => RemoveConfirmationAsync(confirmation)">Undo</button>
                         </td>
@@ -126,6 +129,12 @@ else
     private async Task ConfirmAsync(ForecastLedgerRow row)
     {
         await ForecastResultProvider.ConfirmPaymentAsync(row.AccountId, row.OriginalDate);
+        await RefreshAsync();
+    }
+
+    private async Task OverrideAsync(ForecastLedgerRow row)
+    {
+        await ForecastResultProvider.OverridePaymentAsync(row.AccountId, row.OriginalDate);
         await RefreshAsync();
     }
 

@@ -171,7 +171,7 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             Rows = rows,
             Confirmations = confirmations.Select(c => new ConfirmedPayment
             {
-                ConfirmationId = c.Id, AccountId = c.AccountId, AccountName = c.Account.Name, OriginalDate = c.OriginalDate
+                ConfirmationId = c.Id, AccountId = c.AccountId, AccountName = c.Account.Name, OriginalDate = c.OriginalDate, Reason = c.Reason
             }).ToList()
         };
     }

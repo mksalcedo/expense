@@ -528,7 +528,7 @@ public class ForecastEngineTests : DatabaseTestBase
 
         Context.PaymentConfirmations.Add(new PaymentConfirmation
         {
-            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), CreatedAt = DateTimeOffset.UtcNow
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
@@ -538,7 +538,28 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task ManuallyConfirmedPayment_AppearsInTheConfirmationsListForUndo()
+    public async Task ManuallyOverriddenPayment_IsExcludedFromTheForecast_EvenThoughItWasNeverActuallyPaidAsScheduled()
+    {
+        // Split-payment case: the user is replacing this occurrence with their own plan
+        // (e.g. two One-Time Events), not claiming it was paid as originally scheduled.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        Context.PaymentConfirmations.Add(new PaymentConfirmation
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Reason = ConfirmationReason.Overridden, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Empty(result.Rows);
+    }
+
+    [Fact]
+    public async Task ManuallyConfirmedPayment_AppearsInTheConfirmationsListForUndo_WithItsReason()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
         var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
@@ -547,7 +568,7 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var confirmation = new PaymentConfirmation
         {
-            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), CreatedAt = DateTimeOffset.UtcNow
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
         };
         Context.PaymentConfirmations.Add(confirmation);
         await Context.SaveChangesAsync();
@@ -559,6 +580,7 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(chaseAmazon.Id, entry.AccountId);
         Assert.Equal("Chase Amazon Prime Visa", entry.AccountName);
         Assert.Equal(new DateOnly(2026, 7, 7), entry.OriginalDate);
+        Assert.Equal(ConfirmationReason.AlreadyPaid, entry.Reason);
     }
 
     [Fact]

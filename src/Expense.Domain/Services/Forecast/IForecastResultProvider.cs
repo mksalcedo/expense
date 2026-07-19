@@ -11,5 +11,7 @@ public interface IForecastResultProvider
 
     Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default);
 
+    Task OverridePaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default);
+
     Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default);
 }

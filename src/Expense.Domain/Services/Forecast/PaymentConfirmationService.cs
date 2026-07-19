@@ -5,18 +5,20 @@ using Microsoft.EntityFrameworkCore;
 namespace Expense.Domain.Services.Forecast;
 
 /// <summary>
-/// CRUD for PaymentConfirmation - lets a user manually mark one specific occurrence of a
-/// forecasted payment as "this already happened", for cases the automatic reconciliation
-/// in ForecastEngine can't cover.
+/// CRUD for PaymentConfirmation - lets a user manually exclude one specific occurrence of
+/// a forecasted payment from the forecast, for cases the automatic reconciliation in
+/// ForecastEngine can't cover. Reason (see ConfirmationReason) is required and not
+/// defaulted - callers must be explicit about which of the two meanings applies.
 /// </summary>
 public class PaymentConfirmationService
 {
-    public async Task<PaymentConfirmation> CreateAsync(ExpenseDbContext context, int accountId, DateOnly originalDate)
+    public async Task<PaymentConfirmation> CreateAsync(ExpenseDbContext context, int accountId, DateOnly originalDate, ConfirmationReason reason)
     {
         var confirmation = new PaymentConfirmation
         {
             AccountId = accountId,
             OriginalDate = originalDate,
+            Reason = reason,
             CreatedAt = DateTimeOffset.UtcNow
         };
         context.PaymentConfirmations.Add(confirmation);

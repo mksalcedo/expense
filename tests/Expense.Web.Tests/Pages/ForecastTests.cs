@@ -1,4 +1,5 @@
 using Bunit;
+using Expense.Domain.Entities;
 using Expense.Domain.Services.Forecast;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -36,13 +37,19 @@ public class ForecastTests : BunitContext
             return Task.CompletedTask;
         }
 
-        public Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default)
+        public Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default) =>
+            ExcludeAsync(accountId, originalDate, ConfirmationReason.AlreadyPaid);
+
+        public Task OverridePaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default) =>
+            ExcludeAsync(accountId, originalDate, ConfirmationReason.Overridden);
+
+        private Task ExcludeAsync(int accountId, DateOnly originalDate, ConfirmationReason reason)
         {
             var row = result.Rows.Single(r => r.AccountId == accountId && r.OriginalDate == originalDate);
             result.Rows.Remove(row);
             result.Confirmations.Add(new ConfirmedPayment
             {
-                ConfirmationId = _nextConfirmationId++, AccountId = accountId, AccountName = row.Description, OriginalDate = originalDate
+                ConfirmationId = _nextConfirmationId++, AccountId = accountId, AccountName = row.Description, OriginalDate = originalDate, Reason = reason
             });
             return Task.CompletedTask;
         }
@@ -325,6 +332,76 @@ public class ForecastTests : BunitContext
 
         Assert.Single(cut.FindAll("tbody tr"));
         Assert.NotNull(cut.Find("#confirm-btn-0"));
+    }
+
+    [Fact]
+    public void Forecast_ShowsAnOverrideActionOnEachUndeferredRow()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.NotNull(cut.Find("#override-btn-0"));
+    }
+
+    [Fact]
+    public void OverridingAPayment_RemovesItFromTheLedgerAndListsItWithAnOverriddenReason()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+
+        Assert.Empty(cut.Find("#ledger-table").QuerySelectorAll("tbody tr"));
+        var confirmationsRow = cut.Find("#confirmations-table").QuerySelector("tbody tr");
+        Assert.Contains("Amex Payment", confirmationsRow!.TextContent);
+        Assert.Contains("Overridden", confirmationsRow.TextContent);
+    }
+
+    [Fact]
+    public void ConfirmingAPayment_ListsItWithAnAlreadyPaidReason()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m, AccountId = 5, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#confirm-btn-0").Click();
+
+        var confirmationsRow = cut.Find("#confirmations-table").QuerySelector("tbody tr");
+        Assert.Contains("AlreadyPaid", confirmationsRow!.TextContent);
+    }
+
+    [Fact]
+    public void ConfirmAndOverrideActions_AreAvailableEvenOnADeferredRow()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#defer-date-0").Change("2026-08-22");
+        cut.Find("#defer-btn-0").Click();
+
+        Assert.NotNull(cut.Find("#remove-deferral-btn-0"));
+        Assert.NotNull(cut.Find("#confirm-btn-0"));
+        Assert.NotNull(cut.Find("#override-btn-0"));
     }
 
     [Fact]

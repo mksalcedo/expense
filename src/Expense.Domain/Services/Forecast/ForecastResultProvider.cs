@@ -1,4 +1,5 @@
 using Expense.Domain.Data;
+using Expense.Domain.Entities;
 using Expense.Domain.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -38,7 +39,13 @@ public class ForecastResultProvider(
     public async Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await confirmations.CreateAsync(context, accountId, originalDate);
+        await confirmations.CreateAsync(context, accountId, originalDate, ConfirmationReason.AlreadyPaid);
+    }
+
+    public async Task OverridePaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await confirmations.CreateAsync(context, accountId, originalDate, ConfirmationReason.Overridden);
     }
 
     public async Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default)

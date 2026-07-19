@@ -1,3 +1,5 @@
+using Expense.Domain.Entities;
+
 namespace Expense.Domain.Services.Forecast;
 
 public class ForecastLedgerRow
@@ -12,13 +14,14 @@ public class ForecastLedgerRow
     public int? DeferralId { get; set; }
 }
 
-/// <summary>A still-active PaymentConfirmation, for the Forecast page's "confirmed payments" undo list.</summary>
+/// <summary>A still-active PaymentConfirmation, for the Forecast page's manual-exclusions undo list.</summary>
 public class ConfirmedPayment
 {
     public required int ConfirmationId { get; set; }
     public required int AccountId { get; set; }
     public required string AccountName { get; set; }
     public required DateOnly OriginalDate { get; set; }
+    public required ConfirmationReason Reason { get; set; }
 }
 
 public class ForecastResult
