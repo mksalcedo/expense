@@ -32,8 +32,12 @@ public class HistoricalAnalysisService(BudgetProrationService proration)
                 ProductId = g.Key,
                 ProductPattern = g.First().Product!.ProductPattern,
                 CategoryName = g.First().Category!.Name,
-                Purchases = g.Count(),
-                AveragePrice = g.Average(i => i.Price),
+                // A refund is its own independent negative-price row (see
+                // AmazonImportService) - it isn't a "purchase", so Purchases/AveragePrice
+                // are scoped to real (positive-price) rows only, while TotalSpent still
+                // sums the whole group so the refund nets against it.
+                Purchases = g.Count(i => i.Price > 0),
+                AveragePrice = g.Where(i => i.Price > 0).Select(i => (decimal?)i.Price).Average() ?? 0m,
                 TotalSpent = g.Sum(i => i.Price * i.Quantity + i.TaxAllocated - (i.RefundAmount ?? 0m)),
                 LastPurchased = g.Max(i => i.OrderDate)
             })

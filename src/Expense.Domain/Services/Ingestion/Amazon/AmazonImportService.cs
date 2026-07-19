@@ -7,11 +7,18 @@ namespace Expense.Domain.Services.Ingestion.Amazon;
 
 /// <summary>
 /// Ties AmazonOrderEmailParser/AmazonRefundEmailParser into real import runs.
-/// Dedup is by (order_id, item_title) directly - Amazon already supplies a real
+/// Order dedup is by (order_id, item_title) directly - Amazon already supplies a real
 /// unique order ID, unlike bank transactions (see DedupService's own note on this).
 /// Product matching mirrors CategorizationService's merchant-rule matching, just
 /// against products instead of merchant_rules; no match leaves the item pending
 /// categorization (product_id/category_id both null).
+///
+/// A refund is imported as its own new, independently-categorized negative-amount row
+/// (same product-match-or-pending treatment as a regular order item) rather than being
+/// matched back to the original purchase row - per design-summary.md, a refund is just
+/// a transaction categorized the same way the original charge would be, nothing more.
+/// Dedup is by (order_id, item_title, price) since the negative price never collides
+/// with the original purchase's own positive-price row under the same order/item key.
 /// </summary>
 public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefundEmailParser refundParser)
 {
@@ -48,22 +55,40 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
     }
 
     public async Task<AmazonImportSummary> ImportRefundAsync(
-        ExpenseDbContext context, string emailBody, CancellationToken cancellationToken = default)
+        ExpenseDbContext context, string emailBody, DateOnly receivedDate, CancellationToken cancellationToken = default)
     {
         var refunds = refundParser.Parse(emailBody);
         var summary = new AmazonImportSummary();
+        var products = await context.Products.ToListAsync(cancellationToken);
 
         foreach (var refund in refunds)
         {
-            var existing = await context.AmazonOrderItems
-                .SingleOrDefaultAsync(i => i.OrderId == refund.OrderId && i.ItemTitle == refund.ItemTitle, cancellationToken);
-            if (existing is null)
+            var refundPrice = -refund.RefundAmount;
+
+            // Dedup on (order, item, this exact refund amount) rather than the original
+            // purchase's own (order, item) key - a refund is its own row now, and a
+            // negative price never collides with the positive-price purchase row.
+            var exists = await context.AmazonOrderItems
+                .AnyAsync(i => i.OrderId == refund.OrderId && i.ItemTitle == refund.ItemTitle && i.Price == refundPrice, cancellationToken);
+            if (exists)
             {
-                summary.UnmatchedRefunds.Add($"{refund.OrderId}: {refund.ItemTitle}");
+                summary.RefundDuplicatesSkipped++;
                 continue;
             }
 
-            existing.RefundAmount = refund.RefundAmount;
+            var match = products.FirstOrDefault(p => MerchantPatternMatcher.Matches(refund.ItemTitle, p.ProductPattern));
+
+            context.AmazonOrderItems.Add(new AmazonOrderItem
+            {
+                OrderId = refund.OrderId,
+                OrderDate = receivedDate,
+                ItemTitle = refund.ItemTitle,
+                Price = refundPrice,
+                Quantity = 1, // the refund amount already covers however many units were refunded - never multiply it again
+                ProductId = match?.Id,
+                CategoryId = match?.CategoryId,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
             summary.RefundsApplied++;
         }
 

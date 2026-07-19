@@ -29,8 +29,13 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
     private class FakeGmailMessageSource(
         IReadOnlyList<GmailMessage> orderMessages, IReadOnlyList<GmailMessage> refundMessages) : IGmailMessageSource
     {
-        public Task<IReadOnlyList<GmailMessage>> SearchAsync(string query, CancellationToken cancellationToken = default) =>
-            Task.FromResult(query.Contains("auto-confirm@amazon.com") ? orderMessages : refundMessages);
+        public List<string> Queries { get; } = [];
+
+        public Task<IReadOnlyList<GmailMessage>> SearchAsync(string query, CancellationToken cancellationToken = default)
+        {
+            Queries.Add(query);
+            return Task.FromResult(query.Contains("auto-confirm@amazon.com") ? orderMessages : refundMessages);
+        }
     }
 
     private static AmazonGmailSyncService CreateSut(
@@ -39,6 +44,14 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
             new FakeGmailMessageSource(orderMessages ?? [], refundMessages ?? []),
             new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser()),
             new CategorizationService());
+
+    private static (AmazonGmailSyncService Sut, FakeGmailMessageSource Fake) CreateSutWithFake(
+        IReadOnlyList<GmailMessage>? orderMessages = null, IReadOnlyList<GmailMessage>? refundMessages = null)
+    {
+        var fake = new FakeGmailMessageSource(orderMessages ?? [], refundMessages ?? []);
+        var sut = new AmazonGmailSyncService(fake, new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser()), new CategorizationService());
+        return (sut, fake);
+    }
 
     [Fact]
     public async Task RunAsync_ImportsOrderEmails_AndRecordsASuccessfulRunWithASummary()
@@ -56,16 +69,8 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task RunAsync_ImportsRefundEmails_AndAppliesThemToTheMatchingOrder()
+    public async Task RunAsync_ImportsRefundEmails_AsTheirOwnNegativeEntry()
     {
-        var order = new AmazonOrderItem
-        {
-            OrderId = "112-1510135-3538618", ItemTitle = "MOS Cardstock Paper - 11\" x 14\"",
-            Quantity = 1, Price = 21.99m, OrderDate = new DateOnly(2026, 7, 1), CreatedAt = DateTimeOffset.UtcNow
-        };
-        Context.AmazonOrderItems.Add(order);
-        await Context.SaveChangesAsync();
-
         var sut = CreateSut(refundMessages: [new GmailMessage("msg-2", "Your refund", RefundEmail, new DateOnly(2026, 7, 15))]);
 
         var result = await sut.RunAsync(Context);
@@ -74,7 +79,8 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
         Assert.Equal(1, result.RefundsApplied);
         Assert.Contains("refunds applied: 1", result.Run.Summary);
         var reloaded = await Context.AmazonOrderItems.SingleAsync();
-        Assert.Equal(23.31m, reloaded.RefundAmount);
+        Assert.Equal(-23.31m, reloaded.Price);
+        Assert.Null(reloaded.RefundAmount); // the refund is its own row now, not an adjustment to another row
     }
 
     [Fact]
@@ -115,5 +121,43 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
         Assert.True(result.Run.Success);
         Assert.Equal(supplements.Id, stuckItem.CategoryId);
         Assert.Contains("re-categorized 1 previously pending item(s)", result.Run.Summary);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenNoPriorSuccessfulRunExists_SearchesTheFallback400DayWindow()
+    {
+        var (sut, fake) = CreateSutWithFake();
+
+        await sut.RunAsync(Context);
+
+        Assert.All(fake.Queries, q => Assert.Contains("newer_than:400d", q));
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenAPriorSuccessfulRunExists_SearchesFromFourDaysBeforeThatRunsDate_InsteadOfTheFallbackWindow()
+    {
+        var lastRunAt = new DateTimeOffset(2026, 7, 16, 9, 0, 0, TimeSpan.Zero);
+        Context.ImportRuns.Add(new ImportRun { Source = ImportSource.AmazonGmail, RanAt = lastRunAt, Success = true });
+        await Context.SaveChangesAsync();
+
+        var (sut, fake) = CreateSutWithFake();
+
+        await sut.RunAsync(Context);
+
+        Assert.All(fake.Queries, q => Assert.Contains("after:2026/07/12", q));
+        Assert.All(fake.Queries, q => Assert.DoesNotContain("newer_than:400d", q));
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenOnlyAFailedPriorRunExists_StillSearchesTheFallback400DayWindow()
+    {
+        Context.ImportRuns.Add(new ImportRun { Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = false });
+        await Context.SaveChangesAsync();
+
+        var (sut, fake) = CreateSutWithFake();
+
+        await sut.RunAsync(Context);
+
+        Assert.All(fake.Queries, q => Assert.Contains("newer_than:400d", q));
     }
 }

@@ -255,7 +255,7 @@ public class AmazonOrderEmailParserTests
     }
 
     [Fact]
-    public void Parse_BodyWithNoItems_Throws()
+    public void Parse_BodyWithNoItemsButHasAGrandTotal_ProducesAPlaceholderPendingItem()
     {
         const string noItems = """
             Order #
@@ -265,7 +265,23 @@ public class AmazonOrderEmailParserTests
             10.00 USD
             """;
 
-        Assert.Throws<FormatException>(() => _sut.Parse(noItems, new DateOnly(2026, 7, 14)));
+        var items = _sut.Parse(noItems, new DateOnly(2026, 7, 14));
+
+        var item = Assert.Single(items);
+        Assert.Equal("113-0000000-0000000", item.OrderId);
+        Assert.Equal(10.00m, item.Price);
+        Assert.True(item.NeedsReview); // no real item data was in the email - a human needs to look it up
+    }
+
+    [Fact]
+    public void Parse_BodyWithNoItemsAndNoGrandTotal_Throws()
+    {
+        const string noItemsNoTotal = """
+            Order #
+            113-0000000-0000000
+            """;
+
+        Assert.Throws<FormatException>(() => _sut.Parse(noItemsNoTotal, new DateOnly(2026, 7, 14)));
     }
 
     [Fact]
@@ -281,5 +297,45 @@ public class AmazonOrderEmailParserTests
             """;
 
         Assert.Throws<FormatException>(() => _sut.Parse(noGrandTotal, new DateOnly(2026, 7, 14)));
+    }
+
+    // Real auto-confirm@amazon.com body for a multi-item order where Amazon omits the
+    // item list entirely (only Order # and Grand Total) - pulled directly from the
+    // user's Gmail, order 113-3763507-4662613, the one that first surfaced this gap.
+    private const string SummaryOnlyMultiItemEmail = """
+        Thanks for your order!
+        Ordered
+
+        Shipped
+
+        Out for delivery
+
+        Delivered
+
+        Arriving today 5 PM – 10 PM
+
+        Mark - NORCROSS, GA
+
+        Order #
+        113-3763507-4662613
+
+        View or edit order
+        https://www.amazon.com/your-orders/order-details?orderID=113-3763507-4662613&ref_=p_btn_fed_veo
+
+        Grand Total:
+        56.17 USD
+
+        Amazon.com
+        """;
+
+    [Fact]
+    public void Parse_SummaryOnlyMultiItemOrder_ProducesAPlaceholderPendingItemForTheFullTotal()
+    {
+        var items = _sut.Parse(SummaryOnlyMultiItemEmail, new DateOnly(2026, 7, 18));
+
+        var item = Assert.Single(items);
+        Assert.Equal("113-3763507-4662613", item.OrderId);
+        Assert.Equal(56.17m, item.Price);
+        Assert.True(item.NeedsReview);
     }
 }

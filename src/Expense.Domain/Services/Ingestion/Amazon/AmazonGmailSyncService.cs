@@ -1,6 +1,7 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Categorization;
+using Expense.Domain.Services.Ingestion;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Ingestion.Amazon;
@@ -16,10 +17,17 @@ namespace Expense.Domain.Services.Ingestion.Amazon;
 /// </summary>
 public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImportService importService, CategorizationService categorization)
 {
-    // 400-day lookback window: generous enough to backfill roughly a year of history for
-    // Historical Analysis on the first run, while dedup (order_id + item_title) makes
-    // re-running safe regardless of overlap. Not yet configurable - a hardcoded value.
-    private const string LookbackWindow = "newer_than:400d";
+    // Used only when there's no prior successful run to base an incremental window on (a
+    // brand-new mailbox sync): generous enough to backfill roughly a year of history for
+    // Historical Analysis, while dedup (order_id + item_title) makes re-running safe
+    // regardless of overlap. Not yet configurable - a hardcoded value.
+    private const string FallbackLookbackWindow = "newer_than:400d";
+
+    // Every run after the first searches from just before the last successful run instead
+    // of re-scanning the full fallback window - dedup makes this safe, so the overlap only
+    // needs to cover Gmail's day-granularity "after:" filter and any late-arriving mail,
+    // not a wide margin of safety.
+    private const int OverlapDays = 4;
 
     public async Task<AmazonGmailSyncResult> RunAsync(ExpenseDbContext context, CancellationToken cancellationToken = default)
     {
@@ -28,7 +36,12 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
 
         try
         {
-            var orderMessages = await messageSource.SearchAsync($"from:auto-confirm@amazon.com {LookbackWindow}", cancellationToken);
+            var lastSuccessfulRun = await ImportRunLookup.GetLastSuccessfulRunAsync(context, ImportSource.AmazonGmail, cancellationToken);
+            var window = lastSuccessfulRun is null
+                ? FallbackLookbackWindow
+                : $"after:{lastSuccessfulRun.RanAt.AddDays(-OverlapDays):yyyy/MM/dd}";
+
+            var orderMessages = await messageSource.SearchAsync($"from:auto-confirm@amazon.com {window}", cancellationToken);
             foreach (var message in orderMessages)
             {
                 if (message.PlainTextBody is null)
@@ -49,7 +62,7 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
                 }
             }
 
-            var refundMessages = await messageSource.SearchAsync($"from:payments-messages@amazon.com {LookbackWindow}", cancellationToken);
+            var refundMessages = await messageSource.SearchAsync($"from:payments-messages@amazon.com {window}", cancellationToken);
             foreach (var message in refundMessages)
             {
                 if (message.PlainTextBody is null)
@@ -60,9 +73,9 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
 
                 try
                 {
-                    var summary = await importService.ImportRefundAsync(context, message.PlainTextBody, cancellationToken);
+                    var summary = await importService.ImportRefundAsync(context, message.PlainTextBody, message.ReceivedDate, cancellationToken);
                     result.RefundsApplied += summary.RefundsApplied;
-                    result.UnmatchedRefunds.AddRange(summary.UnmatchedRefunds);
+                    result.RefundDuplicatesSkipped += summary.RefundDuplicatesSkipped;
                 }
                 catch (FormatException ex)
                 {
@@ -77,7 +90,6 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
 
             run.Success = true;
             run.Summary = $"Order items added: {result.ItemsAdded}, duplicates skipped: {result.DuplicatesSkipped}, refunds applied: {result.RefundsApplied}"
-                + (result.UnmatchedRefunds.Count > 0 ? $"; unmatched refunds: {result.UnmatchedRefunds.Count}" : "")
                 + (result.ParseFailures.Count > 0 ? $"; {result.ParseFailures.Count} email(s) failed to parse" : "")
                 + (reapplied.ItemsUpdated > 0 ? $"; re-categorized {reapplied.ItemsUpdated} previously pending item(s)" : "");
         }

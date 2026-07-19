@@ -69,9 +69,39 @@ public class AmazonImportServiceTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task ImportRefund_MatchingOrderItem_UpdatesRefundAmount()
+    public async Task ImportRefund_ProductMatch_CreatesItsOwnNegativeCategorizedEntry()
     {
-        Context.AmazonOrderItems.Add(new AmazonOrderItem
+        var officeSupplies = new Category { Name = "Office Supplies" };
+        Context.Categories.Add(officeSupplies);
+        await Context.SaveChangesAsync();
+        Context.Products.Add(new Product { ProductPattern = "%CARDSTOCK%", CategoryId = officeSupplies.Id });
+        await Context.SaveChangesAsync();
+
+        var summary = await _sut.ImportRefundAsync(Context, RefundEmail, new DateOnly(2026, 7, 19));
+
+        Assert.Equal(1, summary.RefundsApplied);
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "112-1510135-3538618");
+        Assert.Equal(-23.31m, item.Price);
+        Assert.Equal(officeSupplies.Id, item.CategoryId);
+        Assert.NotNull(item.ProductId);
+    }
+
+    [Fact]
+    public async Task ImportRefund_NoMatchingProduct_LeavesItPendingCategorization_LikeAnyOtherItem()
+    {
+        var summary = await _sut.ImportRefundAsync(Context, RefundEmail, new DateOnly(2026, 7, 19));
+
+        Assert.Equal(1, summary.RefundsApplied);
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "112-1510135-3538618");
+        Assert.Equal(-23.31m, item.Price);
+        Assert.Null(item.ProductId);
+        Assert.Null(item.CategoryId);
+    }
+
+    [Fact]
+    public async Task ImportRefund_DoesNotRequireOrTouchAMatchingOriginalPurchase()
+    {
+        var original = new AmazonOrderItem
         {
             OrderId = "112-1510135-3538618",
             OrderDate = new DateOnly(2026, 6, 1),
@@ -80,22 +110,29 @@ public class AmazonImportServiceTests : DatabaseTestBase
             Quantity = 1,
             TaxAllocated = 1.32m,
             CreatedAt = DateTimeOffset.UtcNow
-        });
+        };
+        Context.AmazonOrderItems.Add(original);
         await Context.SaveChangesAsync();
 
-        var summary = await _sut.ImportRefundAsync(Context, RefundEmail);
+        await _sut.ImportRefundAsync(Context, RefundEmail, new DateOnly(2026, 7, 19));
 
-        Assert.Equal(1, summary.RefundsApplied);
-        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "112-1510135-3538618");
-        Assert.Equal(23.31m, item.RefundAmount);
+        var reloadedOriginal = await Context.AmazonOrderItems.SingleAsync(i => i.Id == original.Id);
+        Assert.Equal(21.99m, reloadedOriginal.Price); // untouched
+        Assert.Null(reloadedOriginal.RefundAmount); // untouched - the refund is its own row now
+        var refundRow = await Context.AmazonOrderItems.SingleAsync(i => i.Id != original.Id && i.OrderId == "112-1510135-3538618");
+        Assert.Equal(-23.31m, refundRow.Price);
     }
 
     [Fact]
-    public async Task ImportRefund_NoMatchingOrderItem_IsReportedNotErrored()
+    public async Task ImportRefund_AlreadyImported_SkipsAsDuplicate()
     {
-        var summary = await _sut.ImportRefundAsync(Context, RefundEmail);
+        await _sut.ImportRefundAsync(Context, RefundEmail, new DateOnly(2026, 7, 19));
+
+        var summary = await _sut.ImportRefundAsync(Context, RefundEmail, new DateOnly(2026, 7, 19));
 
         Assert.Equal(0, summary.RefundsApplied);
-        Assert.Contains(summary.UnmatchedRefunds, u => u.Contains("112-1510135-3538618"));
+        Assert.Equal(1, summary.RefundDuplicatesSkipped);
+        var count = await Context.AmazonOrderItems.CountAsync(i => i.OrderId == "112-1510135-3538618");
+        Assert.Equal(1, count); // still just one row, not two
     }
 }

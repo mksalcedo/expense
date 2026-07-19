@@ -10,12 +10,15 @@ namespace Expense.Domain.Services.Ingestion.Amazon;
 /// returning empty/partial data when the body doesn't match the expected structure -
 /// a missing order or item should never silently import as zero rows.
 ///
-/// Also handles a second, "simplified" real template (inline "Order #<id>", no item
-/// list, just "Order Total: $X") used for gift cards and for some real item orders
-/// where Amazon doesn't include item detail. Gift cards get a recognizable title so
-/// they naturally match a "%GIFT CARD%" product pattern (e.g. routed to Off-Budget/
-/// Misc); other simplified orders get a placeholder title so the dollar amount still
-/// lands in the normal pending-categorization queue instead of being silently dropped.
+/// Also handles two further real templates that omit the item list entirely, just an
+/// order total: a "simplified" one (inline "Order #<id>", "Order Total: $X") used for
+/// gift cards and some real item orders, and a multi-line-"Order #" one ("Grand Total:")
+/// used for some real orders too - both fall back to a single placeholder item for the
+/// full total rather than throwing. Gift cards get a recognizable title so they
+/// naturally match a "%GIFT CARD%" product pattern (e.g. routed to Off-Budget/Misc);
+/// other no-detail orders get a placeholder title and NeedsReview=true so the dollar
+/// amount still lands in the normal pending-categorization queue instead of being
+/// silently dropped.
 /// </summary>
 public partial class AmazonOrderEmailParser
 {
@@ -57,12 +60,21 @@ public partial class AmazonOrderEmailParser
     private static List<AmazonOrderItem> ParseItemizedOrder(string emailBody, DateOnly orderDate, string orderId)
     {
         var itemMatches = ItemPattern().Matches(emailBody);
+        var grandTotalMatch = GrandTotalPattern().Match(emailBody);
+
         if (itemMatches.Count == 0)
         {
-            throw new FormatException($"Could not find any items in the email body for order {orderId}.");
+            // A third real template: multi-line "Order #" (unlike the inline simplified
+            // template below) but still no item list at all, just a Grand Total - falls
+            // back the same way the simplified template does, rather than throwing, since
+            // we at least have a real dollar amount to record.
+            if (!grandTotalMatch.Success)
+            {
+                throw new FormatException($"Could not find any items in the email body for order {orderId}.");
+            }
+            return BuildPlaceholderOrder(emailBody, orderDate, orderId, decimal.Parse(grandTotalMatch.Groups["total"].Value));
         }
 
-        var grandTotalMatch = GrandTotalPattern().Match(emailBody);
         if (!grandTotalMatch.Success)
         {
             throw new FormatException($"Could not find a 'Grand Total' in the email body for order {orderId}.");
@@ -91,7 +103,10 @@ public partial class AmazonOrderEmailParser
         }).ToList();
     }
 
-    private static List<AmazonOrderItem> ParseSimplifiedOrder(string emailBody, DateOnly orderDate, string orderId, decimal orderTotal)
+    private static List<AmazonOrderItem> ParseSimplifiedOrder(string emailBody, DateOnly orderDate, string orderId, decimal orderTotal) =>
+        BuildPlaceholderOrder(emailBody, orderDate, orderId, orderTotal);
+
+    private static List<AmazonOrderItem> BuildPlaceholderOrder(string emailBody, DateOnly orderDate, string orderId, decimal orderTotal)
     {
         var isGiftCard = emailBody.Contains("gift card", StringComparison.OrdinalIgnoreCase);
         var title = isGiftCard

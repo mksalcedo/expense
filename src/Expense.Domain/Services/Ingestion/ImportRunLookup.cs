@@ -18,4 +18,15 @@ public static class ImportRunLookup
             .Where(r => r.Source == source)
             .OrderByDescending(r => r.RanAt)
             .FirstOrDefaultAsync(cancellationToken);
+
+    /// <summary>
+    /// Like <see cref="GetLastRunAsync"/> but skips failed runs - used to compute an
+    /// incremental sync window, where a failed run shouldn't narrow how far back the next
+    /// attempt looks.
+    /// </summary>
+    public static Task<ImportRun?> GetLastSuccessfulRunAsync(ExpenseDbContext context, ImportSource source, CancellationToken cancellationToken = default) =>
+        context.ImportRuns
+            .Where(r => r.Source == source && r.Success)
+            .OrderByDescending(r => r.RanAt)
+            .FirstOrDefaultAsync(cancellationToken);
 }

@@ -35,4 +35,34 @@ public class ImportRunLookupTests : DatabaseTestBase
 
         Assert.Null(result);
     }
+
+    [Fact]
+    public async Task GetLastSuccessfulRunAsync_SkipsFailedRuns_AndReturnsTheMostRecentSuccessForThatSource()
+    {
+        var failedGmailRun = new DateTimeOffset(2026, 7, 17, 8, 0, 0, TimeSpan.Zero);
+        var successfulGmailRun = new DateTimeOffset(2026, 7, 16, 9, 0, 0, TimeSpan.Zero);
+        var successfulSimpleFinRun = new DateTimeOffset(2026, 7, 18, 8, 0, 0, TimeSpan.Zero);
+
+        Context.ImportRuns.AddRange(
+            new ImportRun { Source = ImportSource.AmazonGmail, RanAt = successfulGmailRun, Success = true },
+            new ImportRun { Source = ImportSource.AmazonGmail, RanAt = failedGmailRun, Success = false },
+            new ImportRun { Source = ImportSource.SimpleFin, RanAt = successfulSimpleFinRun, Success = true });
+        await Context.SaveChangesAsync();
+
+        var result = await ImportRunLookup.GetLastSuccessfulRunAsync(Context, ImportSource.AmazonGmail);
+
+        Assert.NotNull(result);
+        Assert.Equal(successfulGmailRun, result!.RanAt);
+    }
+
+    [Fact]
+    public async Task GetLastSuccessfulRunAsync_WhenOnlyFailedRunsExistForThatSource_ReturnsNull()
+    {
+        Context.ImportRuns.Add(new ImportRun { Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = false });
+        await Context.SaveChangesAsync();
+
+        var result = await ImportRunLookup.GetLastSuccessfulRunAsync(Context, ImportSource.AmazonGmail);
+
+        Assert.Null(result);
+    }
 }

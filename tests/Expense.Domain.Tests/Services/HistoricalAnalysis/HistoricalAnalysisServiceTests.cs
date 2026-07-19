@@ -216,4 +216,28 @@ public class HistoricalAnalysisServiceTests : DatabaseTestBase
         Assert.Equal(46m, summary.TotalSpent); // 20+1 + 24+1
         Assert.Equal(new DateOnly(2026, 5, 1), summary.LastPurchased);
     }
+
+    [Fact]
+    public async Task GetRecurringProductReportAsync_ExcludesRefundRowsFromPurchasesAndAverage_ButStillNetsThemIntoTotalSpent()
+    {
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+        var fishOil = new Product { ProductPattern = "%FISH OIL%", CategoryId = supplements.Id };
+        Context.Products.Add(fishOil);
+        await Context.SaveChangesAsync();
+
+        Context.AmazonOrderItems.AddRange(
+            new AmazonOrderItem { OrderId = "O1", OrderDate = new DateOnly(2026, 3, 1), ItemTitle = "Nordic Fish Oil", Price = 20m, Quantity = 1, TaxAllocated = 1m, ProductId = fishOil.Id, CategoryId = supplements.Id, CreatedAt = DateTimeOffset.UtcNow },
+            // A refund - its own independent negative-price row (see AmazonImportService), matched to the same product.
+            new AmazonOrderItem { OrderId = "O1", OrderDate = new DateOnly(2026, 3, 5), ItemTitle = "Nordic Fish Oil", Price = -21m, Quantity = 1, TaxAllocated = 0m, ProductId = fishOil.Id, CategoryId = supplements.Id, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var report = await _sut.GetRecurringProductReportAsync(Context);
+
+        var summary = Assert.Single(report);
+        Assert.Equal(1, summary.Purchases); // the refund row doesn't count as a purchase
+        Assert.Equal(20m, summary.AveragePrice); // averaged over the real purchase only
+        Assert.Equal(0m, summary.TotalSpent); // 20+1 purchase, netted against the -21 refund
+    }
 }

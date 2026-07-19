@@ -9,6 +9,6 @@ public class AmazonGmailSyncResult
     public int ItemsAdded { get; set; }
     public int DuplicatesSkipped { get; set; }
     public int RefundsApplied { get; set; }
-    public List<string> UnmatchedRefunds { get; } = [];
+    public int RefundDuplicatesSkipped { get; set; }
     public List<string> ParseFailures { get; } = [];
 }

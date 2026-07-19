@@ -46,15 +46,7 @@ Console.WriteLine("=== Amazon import summary ===");
 Console.WriteLine($"Order items added: {result.ItemsAdded}");
 Console.WriteLine($"Order items skipped as duplicates: {result.DuplicatesSkipped}");
 Console.WriteLine($"Refunds applied: {result.RefundsApplied}");
-
-if (result.UnmatchedRefunds.Count > 0)
-{
-    Console.WriteLine($"Refunds with no matching purchase on file ({result.UnmatchedRefunds.Count}):");
-    foreach (var u in result.UnmatchedRefunds)
-    {
-        Console.WriteLine($"  - {u}");
-    }
-}
+Console.WriteLine($"Refunds skipped as duplicates: {result.RefundDuplicatesSkipped}");
 
 if (result.ParseFailures.Count > 0)
 {
