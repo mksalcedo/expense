@@ -18,17 +18,44 @@ else
             <div>
                 <input id="category-filter" placeholder="Filter by name..." value="@_filterText"
                        @oninput="e => _filterText = (string)e.Value!" />
+                <select id="filter-funding-strategy" @onchange="e => _filterFundingStrategy = (string)e.Value!">
+                    <option value="">All funding strategies</option>
+                    <option value="@FundingStrategies.None">None</option>
+                    <option value="@FundingStrategies.PayInFullAmex">Pay in full (Amex)</option>
+                    <option value="@FundingStrategies.Direct">Direct</option>
+                    <option value="@FundingStrategies.AccountPayment">Account payment</option>
+                </select>
+                <select id="filter-direction" @onchange="e => _filterDirection = ParseNullableEnum<Direction>((string)e.Value!)">
+                    <option value="">All directions</option>
+                    @foreach (var direction in Enum.GetValues<Direction>())
+                    {
+                        <option value="@direction">@direction</option>
+                    }
+                </select>
+                <select id="filter-frequency" @onchange="e => _filterFrequency = ParseNullableEnum<Frequency>((string)e.Value!)">
+                    <option value="">All frequencies</option>
+                    @foreach (var frequency in Enum.GetValues<Frequency>())
+                    {
+                        <option value="@frequency">@frequency</option>
+                    }
+                </select>
+                <select id="filter-status" @onchange="e => _filterStatus = ParseStatusFilter((string)e.Value!)">
+                    <option value="">All statuses</option>
+                    <option value="Active">Active</option>
+                    <option value="Inactive">Inactive</option>
+                </select>
                 <button id="new-category-button" @onclick="StartCreating">+ New Category</button>
             </div>
-            <table>
+            <table id="category-list">
                 <thead>
                     <tr>
-                        <th @onclick='() => Sort("Name")' style="cursor:pointer;">Name</th>
-                        <th @onclick='() => Sort("Funding")' style="cursor:pointer;">Funding strategy</th>
-                        <th>Direction</th>
-                        <th class="text-right">Amount</th>
-                        <th>Frequency</th>
-                        <th @onclick='() => Sort("Status")' style="cursor:pointer;">Status</th>
+                        <th id="sort-name" @onclick='() => Sort("Name")' style="cursor:pointer;">Name</th>
+                        <th id="sort-funding" @onclick='() => Sort("Funding")' style="cursor:pointer;">Funding strategy</th>
+                        <th id="sort-direction" @onclick='() => Sort("Direction")' style="cursor:pointer;">Direction</th>
+                        <th id="sort-amount" @onclick='() => Sort("Amount")' style="cursor:pointer;" class="text-right">Amount</th>
+                        <th id="sort-frequency" @onclick='() => Sort("Frequency")' style="cursor:pointer;">Frequency</th>
+                        <th id="sort-payment-due-day" @onclick='() => Sort("PaymentDueDay")' style="cursor:pointer;">Payment due day</th>
+                        <th id="sort-status" @onclick='() => Sort("Status")' style="cursor:pointer;">Status</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -40,8 +67,9 @@ else
                             <td>@category.Name</td>
                             <td>@FundingStrategyLabel(category.FundingStrategy)</td>
                             <td>@columns.Direction</td>
-                            <td class="text-right">@columns.Amount</td>
+                            <td class="text-right">@columns.Amount?.ToString("N2")</td>
                             <td>@columns.Frequency</td>
+                            <td>@category.LinkedAccountPaymentDueDay</td>
                             <td>@(category.IsActive ? "Active" : "Inactive")</td>
                         </tr>
                     }
@@ -187,6 +215,10 @@ else
     private int? _selectedId;
     private bool _selectedIsActive;
     private string _filterText = "";
+    private string _filterFundingStrategy = "";
+    private Direction? _filterDirection;
+    private Frequency? _filterFrequency;
+    private bool? _filterStatus;
     private string _sortColumn = "Name";
     private bool _sortAscending = true;
 
@@ -215,6 +247,16 @@ else
     private static int? ParseNullableInt(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : int.Parse(value);
 
+    private static TEnum? ParseNullableEnum<TEnum>(string value) where TEnum : struct, Enum =>
+        string.IsNullOrWhiteSpace(value) ? null : Enum.Parse<TEnum>(value);
+
+    private static bool? ParseStatusFilter(string value) => value switch
+    {
+        "Active" => true,
+        "Inactive" => false,
+        _ => null
+    };
+
     private static string FundingStrategyLabel(string strategy) => strategy switch
     {
         FundingStrategies.PayInFullAmex => "Pay in full (Amex)",
@@ -223,7 +265,10 @@ else
         _ => "None"
     };
 
-    private static (string? Direction, string? Amount, string? Frequency) BudgetColumns(CategoryRow category)
+    // Typed rather than pre-formatted, so sorting (see VisibleCategories) can compare
+    // actual values instead of formatted strings - "9.00" vs "80.00" would otherwise
+    // sort as text ('8' < '9') instead of numerically.
+    private static (Direction? Direction, decimal? Amount, Frequency? Frequency) BudgetColumns(CategoryRow category)
     {
         if (category.FundingStrategy == FundingStrategies.AccountPayment)
         {
@@ -235,20 +280,28 @@ else
 
             return category.LinkedAccountId is null || amount == 0m
                 ? (null, null, null)
-                : ("Expense", amount.ToString("N2"), "Monthly");
+                : (Direction.Expense, amount, Frequency.Monthly);
         }
 
-        return (category.BudgetDirection?.ToString(), category.BudgetAmount?.ToString("N2"), category.BudgetFrequency?.ToString());
+        return (category.BudgetDirection, category.BudgetAmount, category.BudgetFrequency);
     }
 
     private List<CategoryRow> VisibleCategories()
     {
-        var filtered = _data!.Categories
-            .Where(c => string.IsNullOrWhiteSpace(_filterText) || c.Name.Contains(_filterText, StringComparison.OrdinalIgnoreCase));
+        var filtered = _data!.Categories.Where(c =>
+            (string.IsNullOrWhiteSpace(_filterText) || c.Name.Contains(_filterText, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrEmpty(_filterFundingStrategy) || c.FundingStrategy == _filterFundingStrategy) &&
+            (_filterDirection is null || BudgetColumns(c).Direction == _filterDirection) &&
+            (_filterFrequency is null || BudgetColumns(c).Frequency == _filterFrequency) &&
+            (_filterStatus is null || c.IsActive == _filterStatus));
 
-        Func<CategoryRow, object> keySelector = _sortColumn switch
+        Func<CategoryRow, IComparable> keySelector = _sortColumn switch
         {
             "Funding" => c => c.FundingStrategy,
+            "Direction" => c => (int)(BudgetColumns(c).Direction ?? (Direction)(-1)),
+            "Amount" => c => BudgetColumns(c).Amount ?? decimal.MinValue,
+            "Frequency" => c => (int)(BudgetColumns(c).Frequency ?? (Frequency)(-1)),
+            "PaymentDueDay" => c => c.LinkedAccountPaymentDueDay ?? int.MinValue,
             "Status" => c => c.IsActive,
             _ => c => c.Name
         };

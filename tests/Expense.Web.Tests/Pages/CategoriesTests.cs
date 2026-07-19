@@ -90,7 +90,13 @@ public class CategoriesTests : BunitContext
                 LinkedAccountId = 21, LinkedAccountType = AccountType.ActiveSpending, LinkedAccountExtraPayment = 1100m,
                 LinkedAccountPaymentDueDay = 20, LinkedAccountStatementCloseDay = 26
             },
-            new CategoryRow { Id = 7, Name = "New Card Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment }
+            new CategoryRow { Id = 7, Name = "New Card Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment },
+            new CategoryRow
+            {
+                Id = 8, Name = "Paycheck", IsActive = true, FundingStrategy = FundingStrategies.Direct,
+                BudgetAmount = 2000m, BudgetFrequency = Frequency.Biweekly, BudgetDirection = Direction.Income,
+                BudgetAnchor = new DateOnly(2026, 1, 2), BudgetAccountId = 10
+            }
         ],
         Accounts = [new AccountOption { Id = 10, Name = "Wells Fargo Checking" }]
     };
@@ -274,6 +280,179 @@ public class CategoriesTests : BunitContext
 
         Assert.Contains("Groceries", cut.Markup);
         Assert.DoesNotContain("Off-Budget/Misc", cut.Markup);
+    }
+
+    [Fact]
+    public void Categories_ListShowsAPaymentDueDayColumn()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+
+        Assert.Contains(cut.FindAll("th"), h => h.TextContent == "Payment due day");
+        var discoverRow = cut.Find("#category-row-5"); // Discover Payment: due day 3
+        Assert.Contains("3", discoverRow.InnerHtml);
+        var amexRow = cut.Find("#category-row-6"); // Amex Payment: due day 20
+        Assert.Contains("20", amexRow.InnerHtml);
+    }
+
+    [Fact]
+    public void Categories_PaymentDueDayIsBlank_WhenNotApplicable()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+
+        var groceriesRow = cut.Find("#category-row-1"); // PayInFullAmex, not linked to an account payment
+        var cell = groceriesRow.QuerySelectorAll("td")[5]; // Payment due day column
+        Assert.Equal("", cell.TextContent);
+    }
+
+    [Fact]
+    public void FilteringByFundingStrategy_HidesNonMatchingRows()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#filter-funding-strategy").Change(FundingStrategies.AccountPayment);
+
+        Assert.Contains("Discover Payment", cut.Markup);
+        Assert.DoesNotContain("Groceries", cut.Markup);
+    }
+
+    [Fact]
+    public void FilteringByDirection_HidesNonMatchingRows()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#filter-direction").Change(nameof(Direction.Income));
+
+        Assert.Contains("Paycheck", cut.Markup);
+        Assert.DoesNotContain("Truist Mortgage", cut.Markup);
+    }
+
+    [Fact]
+    public void FilteringByFrequency_HidesNonMatchingRows()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#filter-frequency").Change(nameof(Frequency.Weekly));
+
+        Assert.Contains("Groceries", cut.Markup);
+        Assert.DoesNotContain("Truist Mortgage", cut.Markup);
+    }
+
+    [Fact]
+    public void FilteringByStatus_HidesNonMatchingRows()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#filter-status").Change("Inactive");
+
+        Assert.Contains("Discontinued Thing", cut.Markup);
+        Assert.DoesNotContain("Groceries", cut.Markup);
+    }
+
+    [Fact]
+    public void AllFilters_DefaultToShowingEveryRow()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+
+        Assert.Contains("Groceries", cut.Markup);
+        Assert.Contains("Discontinued Thing", cut.Markup);
+        Assert.Contains("Paycheck", cut.Markup);
+    }
+
+    private static List<string> FirstColumnValues(IRenderedComponent<Categories> cut) =>
+        cut.FindAll("#category-list tbody tr td:first-child").Select(td => td.TextContent).ToList();
+
+    [Fact]
+    public void ClickingTheNameHeaderTwice_TogglesFromAscendingToDescending()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+        var cut = Render<Categories>();
+        var ascending = FirstColumnValues(cut);
+
+        cut.Find("#sort-name").Click();
+
+        var descending = FirstColumnValues(cut);
+        Assert.Equal(ascending, Enumerable.Reverse(descending).ToList());
+    }
+
+    [Fact]
+    public void SortingByAmount_OrdersNumerically_NotAsText()
+    {
+        // 9.00 vs 80.00: a naive string sort would put "80.00" before "9.00" ('8' < '9').
+        var provider = new FakeCategoriesPageProvider
+        {
+            Rows =
+            [
+                new CategoryRow { Id = 1, Name = "Small", IsActive = true, FundingStrategy = FundingStrategies.PayInFullAmex, BudgetAmount = 9m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense },
+                new CategoryRow { Id = 2, Name = "Big", IsActive = true, FundingStrategy = FundingStrategies.PayInFullAmex, BudgetAmount = 80m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense }
+            ]
+        };
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+        var cut = Render<Categories>();
+
+        cut.Find("#sort-amount").Click();
+
+        Assert.Equal(["Small", "Big"], FirstColumnValues(cut));
+    }
+
+    [Fact]
+    public void SortingByPaymentDueDay_OrdersNumerically_NotAsText()
+    {
+        // Discover=3, Amex=20: a naive string sort would put "20" before "3" ('2' < '3').
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+        var cut = Render<Categories>();
+
+        cut.Find("#sort-payment-due-day").Click();
+
+        var order = FirstColumnValues(cut);
+        Assert.True(order.IndexOf("Discover Payment") < order.IndexOf("Amex Payment"));
+    }
+
+    [Fact]
+    public void SortingByFrequency_OrdersByFrequencysNaturalCadence_NotAlphabetically()
+    {
+        // Weekly, Biweekly, Monthly - alphabetically that's Biweekly, Monthly, Weekly,
+        // but by actual cadence (shortest interval first) it's Weekly, Biweekly, Monthly.
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+        var cut = Render<Categories>();
+
+        cut.Find("#sort-frequency").Click();
+
+        var order = FirstColumnValues(cut);
+        Assert.True(order.IndexOf("Groceries") < order.IndexOf("Paycheck")); // Weekly before Biweekly
+        Assert.True(order.IndexOf("Paycheck") < order.IndexOf("Truist Mortgage")); // Biweekly before Monthly
+    }
+
+    [Fact]
+    public void SortingByDirection_GroupsIncomeAndExpenseTogether()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+        var cut = Render<Categories>();
+
+        cut.Find("#sort-direction").Click();
+
+        var order = FirstColumnValues(cut);
+        Assert.True(order.IndexOf("Paycheck") < order.IndexOf("Truist Mortgage")); // Income before Expense
     }
 
     [Fact]
