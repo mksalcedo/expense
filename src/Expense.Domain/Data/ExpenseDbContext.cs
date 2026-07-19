@@ -18,6 +18,7 @@ public class ExpenseDbContext(DbContextOptions<ExpenseDbContext> options) : DbCo
     public DbSet<OneTimeEvent> OneTimeEvents => Set<OneTimeEvent>();
     public DbSet<ImportRun> ImportRuns => Set<ImportRun>();
     public DbSet<PaymentDeferral> PaymentDeferrals => Set<PaymentDeferral>();
+    public DbSet<PaymentConfirmation> PaymentConfirmations => Set<PaymentConfirmation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

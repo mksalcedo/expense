@@ -22,6 +22,15 @@ public class RecurringRule
     public int AccountId { get; set; }
     public Account Account { get; set; } = null!;
 
+    /// <summary>
+    /// The category real bank transactions for this obligation get tagged with (the
+    /// BudgetPeriod's own category for Direct rules, or the linked "X Payment" category
+    /// via FundingRule.AccountId for a debt account's synthetic rule) - lets the forecast
+    /// tell whether a given occurrence has actually happened yet. Null if there's no such
+    /// link (occurrence is always shown as still-projected, the old behavior).
+    /// </summary>
+    public int? CategoryId { get; set; }
+
     public bool Active { get; set; } = true;
     public DateOnly StartDate { get; set; }
     public DateOnly? EndDate { get; set; }

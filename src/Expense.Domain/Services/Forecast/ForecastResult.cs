@@ -12,10 +12,20 @@ public class ForecastLedgerRow
     public int? DeferralId { get; set; }
 }
 
+/// <summary>A still-active PaymentConfirmation, for the Forecast page's "confirmed payments" undo list.</summary>
+public class ConfirmedPayment
+{
+    public required int ConfirmationId { get; set; }
+    public required int AccountId { get; set; }
+    public required string AccountName { get; set; }
+    public required DateOnly OriginalDate { get; set; }
+}
+
 public class ForecastResult
 {
     public required decimal StartingBalance { get; set; }
     public required List<ForecastLedgerRow> Rows { get; set; }
+    public List<ConfirmedPayment> Confirmations { get; set; } = [];
 
     public decimal LowestProjectedBalance =>
         Rows.Count == 0 ? StartingBalance : Rows.Min(r => r.RunningBalance);

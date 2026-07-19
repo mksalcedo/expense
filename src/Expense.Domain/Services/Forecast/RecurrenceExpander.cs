@@ -10,6 +10,31 @@ namespace Expense.Domain.Services.Forecast;
 /// </summary>
 public class RecurrenceExpander
 {
+    /// <summary>
+    /// The outer bound (in either direction) for reconciling a scheduled occurrence
+    /// against a real matching transaction - see ForecastEngine's reconciliation step and
+    /// MatchWindowDaysFor below.
+    /// </summary>
+    public const int MaxMatchWindowDays = 14;
+
+    /// <summary>
+    /// How many days before/after a scheduled occurrence a real transaction still counts
+    /// as satisfying it - capped at half the frequency's own interval so the window can
+    /// never reach into an adjacent occurrence (e.g. a Weekly bill can't have its window
+    /// overlap next week's).
+    /// </summary>
+    public static int MatchWindowDaysFor(Frequency frequency) => Math.Min(MaxMatchWindowDays, MinIntervalDays(frequency) / 2);
+
+    private static int MinIntervalDays(Frequency frequency) => frequency switch
+    {
+        Frequency.Weekly => 7,
+        Frequency.Biweekly => 14,
+        Frequency.Monthly => 28,
+        Frequency.Quarterly => 90,
+        Frequency.Annual => 365,
+        _ => throw new ArgumentOutOfRangeException(nameof(frequency))
+    };
+
     public List<LedgerLine> Expand(
         IEnumerable<RecurringRule> rules,
         IEnumerable<OneTimeEvent> events,
@@ -28,9 +53,14 @@ public class RecurrenceExpander
 
             var signedAmount = rule.Direction == Direction.Income ? rule.Amount : -rule.Amount;
 
+            var matchWindowDays = MatchWindowDaysFor(rule.Frequency);
             foreach (var date in Occurrences(rule.Anchor, rule.Frequency, rangeStart, rangeEnd))
             {
-                lines.Add(new LedgerLine { Date = date, Description = rule.Name, Amount = signedAmount, AccountId = rule.AccountId });
+                lines.Add(new LedgerLine
+                {
+                    Date = date, Description = rule.Name, Amount = signedAmount, AccountId = rule.AccountId,
+                    CategoryId = rule.CategoryId, MatchWindowDays = matchWindowDays
+                });
             }
         }
 

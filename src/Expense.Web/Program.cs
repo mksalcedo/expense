@@ -37,6 +37,7 @@ builder.Services.AddScoped<RecurrenceExpander>();
 builder.Services.AddScoped<AmexCycleCalculator>();
 builder.Services.AddScoped<ForecastEngine>();
 builder.Services.AddScoped<PaymentDeferralService>();
+builder.Services.AddScoped<PaymentConfirmationService>();
 builder.Services.AddScoped<IForecastResultProvider, ForecastResultProvider>();
 
 builder.Services.AddScoped<CategorizationService>();

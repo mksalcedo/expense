@@ -37,24 +37,28 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             Frequency = p.Frequency,
             Anchor = p.Anchor!.Value,
             AccountId = p.AccountId!.Value,
+            CategoryId = p.CategoryId,
             Active = true,
             StartDate = DateOnly.MinValue
         }).ToList();
 
-        var oneTimeEvents = await context.OneTimeEvents.ToListAsync(cancellationToken);
-
-        var lines = recurrenceExpander.Expand(recurringRules, oneTimeEvents, asOfDate, windowEnd);
-
         var debtAccounts = await context.Accounts
             .Where(a => a.Type == AccountType.Debt && a.IsActive && a.PaymentDueDay != null)
             .ToListAsync(cancellationToken);
+
+        // Which category a debt account's real payment transactions get tagged with
+        // (e.g. Discover -> "Discover Payment"), for the same actual-vs-scheduled
+        // reconciliation Direct-funded categories get below.
+        var accountPaymentCategoryIds = await context.FundingRules
+            .Where(f => f.Strategy == FundingStrategies.AccountPayment && f.AccountId != null)
+            .ToDictionaryAsync(f => f.AccountId!.Value, f => (int?)f.CategoryId, cancellationToken);
 
         foreach (var account in debtAccounts)
         {
             var amount = (account.MinPayment ?? 0m) + (account.ExtraPayment ?? 0m);
             if (amount == 0m) continue;
 
-            var syntheticRule = new RecurringRule
+            recurringRules.Add(new RecurringRule
             {
                 Name = $"{account.Name} Payment",
                 Direction = Direction.Expense,
@@ -62,12 +66,27 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 Frequency = Frequency.Monthly,
                 Anchor = ClampedDate(asOfDate.Year, asOfDate.Month, account.PaymentDueDay!.Value),
                 AccountId = account.Id,
+                CategoryId = accountPaymentCategoryIds.GetValueOrDefault(account.Id),
                 Active = true,
                 StartDate = DateOnly.MinValue
-            };
-
-            lines.AddRange(recurrenceExpander.Expand([syntheticRule], [], asOfDate, windowEnd));
+            });
         }
+
+        // Widened backward so a recently-due-but-unmatched occurrence isn't silently
+        // dropped just because its scheduled date already passed - it stays projected
+        // until a real matching transaction (checked below) excludes it.
+        var lines = recurrenceExpander.Expand(
+            recurringRules, [], asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays), windowEnd);
+
+        var reconciliationTransactions = await context.BankTransactions
+            .Where(t => t.CategoryId != null && t.PostedDate != null
+                        && t.PostedDate >= asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays) && t.PostedDate <= asOfDate)
+            .ToListAsync(cancellationToken);
+
+        lines = lines.Where(l => !IsAlreadyReflectedInAnActualTransaction(l, reconciliationTransactions)).ToList();
+
+        var oneTimeEvents = await context.OneTimeEvents.ToListAsync(cancellationToken);
+        lines.AddRange(recurrenceExpander.Expand([], oneTimeEvents, asOfDate, windowEnd));
 
         var activeSpendingAccounts = await context.Accounts
             .Where(a => a.Type == AccountType.ActiveSpending && a.IsActive
@@ -120,6 +139,10 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             }
         }
 
+        var confirmations = await context.PaymentConfirmations.Include(c => c.Account).ToListAsync(cancellationToken);
+        var confirmedAccountAndDates = confirmations.Select(c => (c.AccountId, c.OriginalDate)).ToHashSet();
+        lines = lines.Where(l => !confirmedAccountAndDates.Contains((l.AccountId, l.Date))).ToList();
+
         var deferrals = await context.PaymentDeferrals.ToListAsync(cancellationToken);
         var deferralsByAccountAndDate = deferrals.ToDictionary(d => (d.AccountId, d.OriginalDate));
 
@@ -142,9 +165,32 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             });
         }
 
-        return new ForecastResult { StartingBalance = startingBalance, Rows = rows };
+        return new ForecastResult
+        {
+            StartingBalance = startingBalance,
+            Rows = rows,
+            Confirmations = confirmations.Select(c => new ConfirmedPayment
+            {
+                ConfirmationId = c.Id, AccountId = c.AccountId, AccountName = c.Account.Name, OriginalDate = c.OriginalDate
+            }).ToList()
+        };
     }
 
     private static DateOnly ClampedDate(int year, int month, int day) =>
         new(year, month, Math.Min(day, DateTime.DaysInMonth(year, month)));
+
+    // Matches purely on CategoryId, deliberately not AccountId too - a debt account's
+    // synthetic rule uses the debt account's own AccountId (see above, it's also the
+    // PaymentDeferral matching key), not the checking account the real payment actually
+    // posts against, so AccountId isn't a usable signal here. CategoryId alone is already
+    // unique per obligation (one current BudgetPeriod per category; one FundingRule per
+    // debt account), so it doesn't need the extra filter.
+    private static bool IsAlreadyReflectedInAnActualTransaction(LedgerLine line, IReadOnlyList<BankTransaction> transactions)
+    {
+        if (line.CategoryId is null) return false;
+
+        var windowStart = line.Date.AddDays(-line.MatchWindowDays);
+        var windowEnd = line.Date.AddDays(line.MatchWindowDays);
+        return transactions.Any(t => t.CategoryId == line.CategoryId && t.PostedDate is { } posted && posted >= windowStart && posted <= windowEnd);
+    }
 }

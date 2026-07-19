@@ -9,7 +9,7 @@ public class RecurrenceExpanderTests
 
     private static RecurringRule MakeRule(
         Direction direction, decimal amount, Frequency frequency, DateOnly anchor,
-        DateOnly? startDate = null, DateOnly? endDate = null, bool active = true, string name = "Rule") => new()
+        DateOnly? startDate = null, DateOnly? endDate = null, bool active = true, string name = "Rule", int? categoryId = null) => new()
     {
         Name = name,
         Direction = direction,
@@ -17,6 +17,7 @@ public class RecurrenceExpanderTests
         Frequency = frequency,
         Anchor = anchor,
         AccountId = 1,
+        CategoryId = categoryId,
         Active = active,
         StartDate = startDate ?? anchor,
         EndDate = endDate
@@ -166,5 +167,57 @@ public class RecurrenceExpanderTests
         var lines = _sut.Expand([], [evt], new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31));
 
         Assert.Empty(lines);
+    }
+
+    [Fact]
+    public void Expand_PropagatesCategoryIdFromRuleOntoEachLine()
+    {
+        var rule = MakeRule(Direction.Expense, 150m, Frequency.Monthly, new DateOnly(2026, 1, 15), categoryId: 42);
+
+        var lines = _sut.Expand([rule], [], new DateOnly(2026, 1, 1), new DateOnly(2026, 2, 28));
+
+        Assert.All(lines, l => Assert.Equal(42, l.CategoryId));
+    }
+
+    [Fact]
+    public void Expand_RuleWithNoCategoryId_ProducesLinesWithNullCategoryId()
+    {
+        var rule = MakeRule(Direction.Expense, 150m, Frequency.Monthly, new DateOnly(2026, 1, 15));
+
+        var lines = _sut.Expand([rule], [], new DateOnly(2026, 1, 1), new DateOnly(2026, 1, 31));
+
+        Assert.All(lines, l => Assert.Null(l.CategoryId));
+    }
+
+    [Fact]
+    public void Expand_OneTimeEvent_AlwaysHasNullCategoryId()
+    {
+        var evt = new OneTimeEvent { Name = "HVAC repair", Amount = 850m, Direction = Direction.Expense, Date = new DateOnly(2026, 3, 5), AccountId = 1 };
+
+        var lines = _sut.Expand([], [evt], new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31));
+
+        var line = Assert.Single(lines);
+        Assert.Null(line.CategoryId);
+    }
+
+    [Theory]
+    [InlineData(Frequency.Weekly, 3)]
+    [InlineData(Frequency.Biweekly, 7)]
+    [InlineData(Frequency.Monthly, 14)]
+    [InlineData(Frequency.Quarterly, 14)]
+    [InlineData(Frequency.Annual, 14)]
+    public void MatchWindowDaysFor_CapsAtHalfTheFrequencysInterval_OrFourteenDaysWhicheverIsSmaller(Frequency frequency, int expected)
+    {
+        Assert.Equal(expected, RecurrenceExpander.MatchWindowDaysFor(frequency));
+    }
+
+    [Fact]
+    public void Expand_SetsEachLinesMatchWindowDays_FromItsRulesFrequency()
+    {
+        var rule = MakeRule(Direction.Expense, 150m, Frequency.Weekly, new DateOnly(2026, 1, 4), categoryId: 1);
+
+        var lines = _sut.Expand([rule], [], new DateOnly(2026, 1, 1), new DateOnly(2026, 1, 31));
+
+        Assert.All(lines, l => Assert.Equal(3, l.MatchWindowDays));
     }
 }

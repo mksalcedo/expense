@@ -22,7 +22,7 @@ else
     </p>
     <p><a id="export-excel-link" href="/export/forecast.xlsx" target="_blank">Export to Excel</a></p>
 
-    <table style="border-collapse: collapse">
+    <table id="ledger-table" style="border-collapse: collapse">
         <thead>
             <tr>
                 <th style="@CellStyle()">Date</th>
@@ -60,12 +60,40 @@ else
                             <input id="defer-date-@index" type="date" value="@GetDeferDate(index, row).ToString("yyyy-MM-dd")"
                                    @onchange="e => _deferDateInputs[index] = DateOnly.Parse((string)e.Value!)" />
                             <button id="defer-btn-@index" @onclick="() => DeferAsync(row, index)">Defer...</button>
+                            <button id="confirm-btn-@index" @onclick="() => ConfirmAsync(row)">Confirm paid</button>
                         }
                     </td>
                 </tr>
             }
         </tbody>
     </table>
+
+    @if (_result.Confirmations.Count > 0)
+    {
+        <h2>Confirmed payments</h2>
+        <p>Manually marked as already happened - not covered by automatic reconciliation.</p>
+        <table id="confirmations-table" style="border-collapse: collapse">
+            <thead>
+                <tr>
+                    <th style="@CellStyle()">Date</th>
+                    <th style="@CellStyle()">Account</th>
+                    <th style="@CellStyle()"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var confirmation in _result.Confirmations)
+                {
+                    <tr>
+                        <td style="@CellStyle()">@confirmation.OriginalDate.ToString("MM/dd/yyyy")</td>
+                        <td style="@CellStyle()">@confirmation.AccountName</td>
+                        <td style="@CellStyle()">
+                            <button id="undo-confirmation-btn-@confirmation.ConfirmationId" @onclick="() => RemoveConfirmationAsync(confirmation)">Undo</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
 }
 
 @code {
@@ -92,6 +120,18 @@ else
     {
         if (row.DeferralId is not { } deferralId) return;
         await ForecastResultProvider.RemoveDeferralAsync(deferralId);
+        await RefreshAsync();
+    }
+
+    private async Task ConfirmAsync(ForecastLedgerRow row)
+    {
+        await ForecastResultProvider.ConfirmPaymentAsync(row.AccountId, row.OriginalDate);
+        await RefreshAsync();
+    }
+
+    private async Task RemoveConfirmationAsync(ConfirmedPayment confirmation)
+    {
+        await ForecastResultProvider.RemoveConfirmationAsync(confirmation.ConfirmationId);
         await RefreshAsync();
     }
 

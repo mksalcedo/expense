@@ -7,12 +7,14 @@ namespace Expense.Web.Tests.Pages;
 
 public class ForecastTests : BunitContext
 {
-    // Stateful fake: DeferPaymentAsync/RemoveDeferralAsync actually mutate the underlying
-    // result (mirroring what re-querying the real backend would show) so tests can drive
-    // the full defer -> re-render -> remove -> re-render cycle, not just verify the call happened.
+    // Stateful fake: DeferPaymentAsync/RemoveDeferralAsync/ConfirmPaymentAsync/
+    // RemoveConfirmationAsync actually mutate the underlying result (mirroring what
+    // re-querying the real backend would show) so tests can drive the full action ->
+    // re-render -> undo -> re-render cycle, not just verify the call happened.
     private class FakeForecastResultProvider(ForecastResult result) : IForecastResultProvider
     {
         private int _nextDeferralId = 1;
+        private int _nextConfirmationId = 1;
 
         public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(result);
 
@@ -31,6 +33,29 @@ public class ForecastTests : BunitContext
             row.Date = row.OriginalDate;
             row.IsDeferred = false;
             row.DeferralId = null;
+            return Task.CompletedTask;
+        }
+
+        public Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default)
+        {
+            var row = result.Rows.Single(r => r.AccountId == accountId && r.OriginalDate == originalDate);
+            result.Rows.Remove(row);
+            result.Confirmations.Add(new ConfirmedPayment
+            {
+                ConfirmationId = _nextConfirmationId++, AccountId = accountId, AccountName = row.Description, OriginalDate = originalDate
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default)
+        {
+            var confirmation = result.Confirmations.Single(c => c.ConfirmationId == confirmationId);
+            result.Confirmations.Remove(confirmation);
+            result.Rows.Add(new ForecastLedgerRow
+            {
+                Date = confirmation.OriginalDate, Description = confirmation.AccountName, Amount = 0m, RunningBalance = 0m,
+                AccountId = confirmation.AccountId, OriginalDate = confirmation.OriginalDate
+            });
             return Task.CompletedTask;
         }
     }
@@ -248,6 +273,58 @@ public class ForecastTests : BunitContext
         var row = cut.Find("tbody tr");
         Assert.DoesNotContain("background-color: orange", row.GetAttribute("style") ?? "");
         Assert.NotNull(cut.Find("#defer-btn-0"));
+    }
+
+    [Fact]
+    public void Forecast_ShowsAConfirmPaidActionOnEachUndeferredRow()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m, AccountId = 5, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.NotNull(cut.Find("#confirm-btn-0"));
+    }
+
+    [Fact]
+    public void ConfirmingAPayment_RemovesItFromTheLedgerAndListsItAsConfirmed()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m, AccountId = 5, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#confirm-btn-0").Click();
+
+        Assert.Empty(cut.Find("#ledger-table").QuerySelectorAll("tbody tr"));
+        Assert.Contains("Chase Amazon Prime Visa Payment", cut.Markup);
+        Assert.Contains("08/20/2026", cut.Markup);
+        Assert.NotNull(cut.Find("#undo-confirmation-btn-1"));
+    }
+
+    [Fact]
+    public void UndoingAConfirmation_BringsTheRowBackToTheLedger()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m, AccountId = 5, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#confirm-btn-0").Click();
+        cut.Find("#undo-confirmation-btn-1").Click();
+
+        Assert.Single(cut.FindAll("tbody tr"));
+        Assert.NotNull(cut.Find("#confirm-btn-0"));
     }
 
     [Fact]

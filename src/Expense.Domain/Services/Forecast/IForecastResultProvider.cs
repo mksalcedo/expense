@@ -8,4 +8,8 @@ public interface IForecastResultProvider
     Task DeferPaymentAsync(int accountId, DateOnly originalDate, DateOnly deferredToDate, string? note, CancellationToken cancellationToken = default);
 
     Task RemoveDeferralAsync(int deferralId, CancellationToken cancellationToken = default);
+
+    Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default);
+
+    Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default);
 }

@@ -44,6 +44,14 @@ public class ForecastEngineTests : DatabaseTestBase
             CategoryId = paycheck.Id, Amount = 2000m, Frequency = Frequency.Biweekly, Direction = Direction.Income,
             Anchor = new DateOnly(2026, 7, 17), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
         });
+        // The prior Biweekly occurrence (7/3) already came in for real - without this,
+        // the widened reconciliation lookback would (correctly) still show it as an
+        // unconfirmed, still-pending occurrence too.
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 3), PostedDate = new DateOnly(2026, 7, 3),
+            Description = "EFX PAYROLL", Amount = 2000m, ImportSource = "Test", CategoryId = paycheck.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
         await Context.SaveChangesAsync();
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 25));
@@ -335,6 +343,243 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(new DateOnly(2026, 7, 20), row.OriginalDate);
         Assert.False(row.IsDeferred);
         Assert.Null(row.DeferralId);
+    }
+
+    [Fact]
+    public async Task DirectCategory_AlreadyPaidEarly_IsExcludedFromTheForecast_NoDoubleCount()
+    {
+        // Mortgage anchored for the 15th, but the real payment already posted on the 13th
+        // (asOfDate is the 14th) - the forecast must not also project it on the 15th.
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var mortgage = new Category { Name = "Truist" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = mortgage.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = mortgage.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 15), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
+            Description = "TRUIST MORTGAGE", Amount = -2681.22m, ImportSource = "Test", CategoryId = mortgage.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Empty(result.Rows);
+    }
+
+    [Fact]
+    public async Task DirectCategory_PastDueAndNotYetPaid_StaysProjectedRatherThanSilentlyDropping()
+    {
+        // Anchored for the 10th, asOfDate is the 14th (4 days overdue) - no matching
+        // transaction has posted, so it must still show as still-owed, not vanish.
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var mortgage = new Category { Name = "Truist" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = mortgage.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = mortgage.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 10), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(new DateOnly(2026, 7, 10), row.Date);
+        Assert.Equal(-2681.22m, row.Amount);
+    }
+
+    [Fact]
+    public async Task DirectCategory_PaidLate_IsExcludedOnceTheRealTransactionPosts()
+    {
+        // Anchored for the 10th, actually posted on the 12th - even though it posted
+        // after its due date, it's still a match and must be excluded.
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var mortgage = new Category { Name = "Truist" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = mortgage.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = mortgage.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 10), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 12), PostedDate = new DateOnly(2026, 7, 12),
+            Description = "TRUIST MORTGAGE", Amount = -2681.22m, ImportSource = "Test", CategoryId = mortgage.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Empty(result.Rows);
+    }
+
+    [Fact]
+    public async Task DirectCategory_AnOldUnrelatedTransactionOutsideTheMatchWindow_DoesNotFalselyExcludeIt()
+    {
+        // A same-category transaction from two months ago (last month's mortgage payment)
+        // must not be mistaken for satisfying this month's occurrence.
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var mortgage = new Category { Name = "Truist" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = mortgage.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = mortgage.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 10), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 6, 10), PostedDate = new DateOnly(2026, 6, 10),
+            Description = "TRUIST MORTGAGE", Amount = -2681.22m, ImportSource = "Test", CategoryId = mortgage.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(new DateOnly(2026, 7, 10), row.Date);
+    }
+
+    [Fact]
+    public async Task DebtAccountPayment_AlreadyPaidEarly_IsExcludedFromTheForecast_ViaItsLinkedCategory()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var discover = new Account { Name = "Discover", Type = AccountType.Debt, MinPayment = 50m, ExtraPayment = 100m, PaymentDueDay = 15 };
+        Context.Accounts.Add(discover);
+        await Context.SaveChangesAsync();
+
+        var discoverPayment = new Category { Name = "Discover Payment" };
+        Context.Categories.Add(discoverPayment);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = discoverPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = discover.Id });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = discover.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
+            Description = "DISCOVER PAYMENT", Amount = -150m, ImportSource = "Test", CategoryId = discoverPayment.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Empty(result.Rows);
+    }
+
+    [Fact]
+    public async Task DebtAccountPayment_PastDueAndNotYetPaid_StaysProjected()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var discover = new Account { Name = "Discover", Type = AccountType.Debt, MinPayment = 50m, ExtraPayment = 100m, PaymentDueDay = 10 };
+        Context.Accounts.Add(discover);
+        await Context.SaveChangesAsync();
+
+        var discoverPayment = new Category { Name = "Discover Payment" };
+        Context.Categories.Add(discoverPayment);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = discoverPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = discover.Id });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(new DateOnly(2026, 7, 10), row.Date);
+        Assert.Equal(-150m, row.Amount);
+    }
+
+    [Fact]
+    public async Task ManuallyConfirmedPayment_IsExcludedFromTheForecast_EvenWithNoMatchingTransaction()
+    {
+        // Chase-shaped case: no merchant rule can ever tell this account's real payments
+        // apart from another card's, so the user confirms it by hand instead.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
+        Context.Accounts.Add(chaseAmazon);
+        await Context.SaveChangesAsync();
+
+        Context.PaymentConfirmations.Add(new PaymentConfirmation
+        {
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Empty(result.Rows);
+    }
+
+    [Fact]
+    public async Task ManuallyConfirmedPayment_AppearsInTheConfirmationsListForUndo()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
+        Context.Accounts.Add(chaseAmazon);
+        await Context.SaveChangesAsync();
+
+        var confirmation = new PaymentConfirmation
+        {
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.PaymentConfirmations.Add(confirmation);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var entry = Assert.Single(result.Confirmations);
+        Assert.Equal(confirmation.Id, entry.ConfirmationId);
+        Assert.Equal(chaseAmazon.Id, entry.AccountId);
+        Assert.Equal("Chase Amazon Prime Visa", entry.AccountName);
+        Assert.Equal(new DateOnly(2026, 7, 7), entry.OriginalDate);
+    }
+
+    [Fact]
+    public async Task PaymentConfirmation_ForADifferentDate_DoesNotAffectOtherOccurrences()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
+        Context.Accounts.Add(chaseAmazon);
+        await Context.SaveChangesAsync();
+
+        // Confirms a totally different (already-past) month's occurrence, not this month's.
+        Context.PaymentConfirmations.Add(new PaymentConfirmation
+        {
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 6, 7), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(new DateOnly(2026, 7, 7), row.Date);
     }
 
     [Fact]

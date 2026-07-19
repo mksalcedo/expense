@@ -12,7 +12,7 @@ namespace Expense.Domain.Services.Forecast;
 /// </summary>
 public class ForecastResultProvider(
     IDbContextFactory<ExpenseDbContext> contextFactory, ForecastEngine engine, IOptions<AppSettings> options,
-    PaymentDeferralService deferrals) : IForecastResultProvider
+    PaymentDeferralService deferrals, PaymentConfirmationService confirmations) : IForecastResultProvider
 {
     public async Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default)
     {
@@ -33,5 +33,17 @@ public class ForecastResultProvider(
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await deferrals.RemoveAsync(context, deferralId);
+    }
+
+    public async Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await confirmations.CreateAsync(context, accountId, originalDate);
+    }
+
+    public async Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await confirmations.RemoveAsync(context, confirmationId);
     }
 }
