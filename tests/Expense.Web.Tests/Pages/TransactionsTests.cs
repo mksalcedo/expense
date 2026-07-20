@@ -490,4 +490,29 @@ public class TransactionsTests : BunitContext
         Assert.Contains("PUBLIX NORCROSS GA", cut.Markup);
         Assert.DoesNotContain("TRUIST MORTG PAYMENT", cut.Markup);
     }
+
+    [Fact]
+    public void ArrivingViaASearchDeepLink_ShowsABackToReviewQueueLink()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var nav = Services.GetRequiredService<Bunit.TestDoubles.BunitNavigationManager>();
+        nav.NavigateTo(nav.GetUriWithQueryParameter("search", "PUBLIX"));
+        var cut = Render<Transactions>();
+
+        var link = cut.Find("#back-to-review-queue-link");
+        Assert.Equal("/review-queue", link.GetAttribute("href"));
+    }
+
+    [Fact]
+    public void NavigatingDirectly_DoesNotShowABackToReviewQueueLink()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+
+        Assert.Empty(cut.FindAll("#back-to-review-queue-link"));
+    }
 }

@@ -8,6 +8,11 @@
 
 <h1>Transactions</h1>
 
+@if (!string.IsNullOrEmpty(SearchQuery))
+{
+    <p><a id="back-to-review-queue-link" href="/review-queue">&larr; Back to Review Queue</a></p>
+}
+
 <p>
     <input id="search-box" placeholder="Search description..." value="@_searchText" @onchange="e => SearchAsync((string?)e.Value)" />
     <select id="category-filter" @onchange="e => FilterByCategoryAsync((string)e.Value!)">
