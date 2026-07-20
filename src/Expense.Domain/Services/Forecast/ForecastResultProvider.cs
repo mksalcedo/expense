@@ -13,7 +13,7 @@ namespace Expense.Domain.Services.Forecast;
 /// </summary>
 public class ForecastResultProvider(
     IDbContextFactory<ExpenseDbContext> contextFactory, ForecastEngine engine, IOptions<AppSettings> options,
-    PaymentDeferralService deferrals, PaymentConfirmationService confirmations) : IForecastResultProvider
+    PaymentDeferralService deferrals, PaymentConfirmationService confirmations, PartialPaymentService partialPayments) : IForecastResultProvider
 {
     public async Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default)
     {
@@ -36,21 +36,36 @@ public class ForecastResultProvider(
         await deferrals.RemoveAsync(context, deferralId);
     }
 
-    public async Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default)
+    public async Task ConfirmPaymentAsync(
+        int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await confirmations.CreateAsync(context, accountId, originalDate, ConfirmationReason.AlreadyPaid);
+        await confirmations.CreateAsync(context, accountId, originalDate, effectiveDate, amount, ConfirmationReason.AlreadyPaid);
     }
 
-    public async Task OverridePaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default)
+    public async Task OverridePaymentAsync(
+        int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await confirmations.CreateAsync(context, accountId, originalDate, ConfirmationReason.Overridden);
+        await confirmations.CreateAsync(context, accountId, originalDate, effectiveDate, amount, ConfirmationReason.Overridden);
     }
 
     public async Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await confirmations.RemoveAsync(context, confirmationId);
+    }
+
+    public async Task PayPartialAmountAsync(
+        int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await partialPayments.CreateAsync(context, accountId, originalDate, paidDate, amount, cancellationToken);
+    }
+
+    public async Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await partialPayments.RemoveAsync(context, partialPaymentId, cancellationToken);
     }
 }

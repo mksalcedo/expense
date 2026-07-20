@@ -12,12 +12,15 @@ namespace Expense.Domain.Services.Forecast;
 /// </summary>
 public class PaymentConfirmationService
 {
-    public async Task<PaymentConfirmation> CreateAsync(ExpenseDbContext context, int accountId, DateOnly originalDate, ConfirmationReason reason)
+    public async Task<PaymentConfirmation> CreateAsync(
+        ExpenseDbContext context, int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, ConfirmationReason reason)
     {
         var confirmation = new PaymentConfirmation
         {
             AccountId = accountId,
             OriginalDate = originalDate,
+            EffectiveDate = effectiveDate,
+            Amount = amount,
             Reason = reason,
             CreatedAt = DateTimeOffset.UtcNow
         };

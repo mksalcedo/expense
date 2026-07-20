@@ -18,9 +18,11 @@ public class DashboardTests : BunitContext
         public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(Result);
         public Task DeferPaymentAsync(int accountId, DateOnly originalDate, DateOnly deferredToDate, string? note, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemoveDeferralAsync(int deferralId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task OverridePaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task OverridePaymentAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private class FakeSpendingTrackerPageProvider(SpendingTrackerPageData data) : ISpendingTrackerPageProvider
@@ -142,9 +144,10 @@ public class DashboardTests : BunitContext
         Categories = []
     };
 
-    private FakeSyncStatusProvider RegisterFakes(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, List<SyncIssue>? activeSyncIssues = null)
+    private FakeSyncStatusProvider RegisterFakes(
+        ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, List<SyncIssue>? activeSyncIssues = null, ForecastResult? forecast = null)
     {
-        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(MakeForecast()));
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(forecast ?? MakeForecast()));
         Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeSpendingTracker()));
         Services.AddSingleton<IReviewQueueProvider>(new FakeReviewQueueProvider(MakeReviewQueue()));
         var syncStatusProvider = new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun) { ActiveSyncIssues = activeSyncIssues ?? [] };
@@ -161,6 +164,48 @@ public class DashboardTests : BunitContext
 
         Assert.Contains("6,463.02", cut.Markup);
         Assert.Contains("Discover Payment", cut.Markup);
+    }
+
+    [Fact]
+    public void CashFlow_ShowsAnExcludedRow_StruckThroughWithItsReason()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow
+            {
+                Date = new DateOnly(2026, 7, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m,
+                AccountId = 5, OriginalDate = new DateOnly(2026, 7, 20), IsExcluded = true, ExclusionReason = ConfirmationReason.AlreadyPaid, ConfirmationId = 1
+            }]
+        };
+        RegisterFakes(forecast: forecast);
+
+        var cut = Render<Dashboard>();
+
+        var row = cut.FindAll("tbody tr").First(r => r.TextContent.Contains("Chase Amazon Prime Visa Payment"));
+        Assert.Contains("line-through", row.GetAttribute("style") ?? "");
+        Assert.Contains("AlreadyPaid", row.TextContent);
+    }
+
+    [Fact]
+    public void CashFlow_ShowsADeferredRow_HighlightedWithItsOriginalDate()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow
+            {
+                Date = new DateOnly(2026, 7, 22), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m,
+                AccountId = 2, OriginalDate = new DateOnly(2026, 7, 20), IsDeferred = true, DeferralId = 1
+            }]
+        };
+        RegisterFakes(forecast: forecast);
+
+        var cut = Render<Dashboard>();
+
+        var row = cut.FindAll("tbody tr").First(r => r.TextContent.Contains("Amex Payment"));
+        Assert.Contains("background-color: orange", row.GetAttribute("style") ?? "");
+        Assert.Contains("Originally estimated for 07/20/2026", row.TextContent);
     }
 
     [Fact]

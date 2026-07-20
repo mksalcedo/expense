@@ -29,17 +29,22 @@ else
                 <th style="@CellStyle()">Description</th>
                 <th style="@CellStyle(rightAlign: true)">Amount</th>
                 <th style="@CellStyle(rightAlign: true)">Running balance</th>
-                <th style="@CellStyle()">Deferral</th>
+                <th style="@CellStyle()">Actions</th>
             </tr>
         </thead>
         <tbody>
             @foreach (var (row, index) in _result.Rows.Select((r, i) => (r, i)))
             {
-                <tr style="@(row.IsDeferred ? "background-color: orange" : row == _lowestRow ? "background-color: yellow" : null)">
+                <tr style="@RowStyle(row)">
                     <td style="@CellStyle()">@row.Date.ToString("MM/dd/yyyy")</td>
                     <td style="@CellStyle()">
                         @row.Description
-                        @if (row.IsDeferred)
+                        @if (row.IsExcluded)
+                        {
+                            <br />
+                            <span style="color: #666">(@row.ExclusionReason)</span>
+                        }
+                        else if (row.IsDeferred)
                         {
                             <br />
                             <span style="color: red">
@@ -47,64 +52,57 @@ else
                                 reschedule this payment for real.
                             </span>
                         }
+                        @foreach (var partialPayment in row.PartialPayments)
+                        {
+                            <br />
+                            <span style="color: #555">
+                                Paid $@partialPayment.Amount.ToString("N2") on @partialPayment.PaidDate.ToString("MM/dd/yyyy")
+                                <button id="undo-partial-payment-btn-@partialPayment.PartialPaymentId" @onclick="() => UndoPartialPaymentAsync(partialPayment)">Undo</button>
+                            </span>
+                        }
                     </td>
                     <td style="@CellStyle(rightAlign: true)">@row.Amount.ToString("N2")</td>
                     <td style="@CellStyle(rightAlign: true)">@row.RunningBalance.ToString("N2")</td>
                     <td style="@CellStyle()">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            @if (row.IsDeferred)
-                            {
-                                <button id="remove-deferral-btn-@index" title="Remove deferral" @onclick="() => RemoveDeferralAsync(row)">&#8617;</button>
-                            }
-                            else
-                            {
-                                <input id="defer-date-@index" type="date" value="@GetDeferDate(index, row).ToString("yyyy-MM-dd")"
-                                       @onchange="e => _deferDateInputs[index] = DateOnly.Parse((string)e.Value!)" />
-                                <button id="defer-btn-@index" title="Defer..." @onclick="() => DeferAsync(row, index)">&#128337;</button>
-                            }
-                            <button id="confirm-btn-@index" title="Confirm paid" @onclick="() => ConfirmAsync(row)">&#10003;</button>
-                            <button id="override-btn-@index" title="Override" @onclick="() => OverrideAsync(row)">&#8644;</button>
-                        </div>
+                        @if (row.IsExcluded)
+                        {
+                            <button id="undo-confirmation-btn-@row.ConfirmationId" @onclick="() => RemoveConfirmationAsync(row)">Undo</button>
+                        }
+                        else
+                        {
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                @if (row.IsDeferred)
+                                {
+                                    <button id="remove-deferral-btn-@index" title="Remove deferral" @onclick="() => RemoveDeferralAsync(row)">&#8617;</button>
+                                }
+                                else
+                                {
+                                    <input id="defer-date-@index" type="date" value="@GetDeferDate(index, row).ToString("yyyy-MM-dd")"
+                                           @onchange="e => _deferDateInputs[index] = DateOnly.Parse((string)e.Value!)" />
+                                    <button id="defer-btn-@index" title="Defer..." @onclick="() => DeferAsync(row, index)">&#128337;</button>
+                                }
+                                <button id="confirm-btn-@index" title="Confirm paid" @onclick="() => ConfirmAsync(row)">&#10003;</button>
+                                <button id="override-btn-@index" title="Override" @onclick="() => OverrideAsync(row)">&#8644;</button>
+                                <input id="partial-amount-@index" type="number" step="0.01" placeholder="Amount" style="width: 90px;"
+                                       @onchange="e => _partialAmountInputs[index] = decimal.Parse((string)e.Value!)" />
+                                <input id="partial-date-@index" type="date" value="@GetPartialDate(index).ToString("yyyy-MM-dd")"
+                                       @onchange="e => _partialDateInputs[index] = DateOnly.Parse((string)e.Value!)" />
+                                <button id="partial-pay-btn-@index" title="Pay partial amount" @onclick="() => PayPartialAsync(row, index)">&#128176;</button>
+                            </div>
+                        }
                     </td>
                 </tr>
             }
         </tbody>
     </table>
-
-    @if (_result.Confirmations.Count > 0)
-    {
-        <h2>Manually excluded payments</h2>
-        <p>Removed from the forecast by hand - either confirmed as already paid, or intentionally overridden with a custom plan (e.g. a split payment), rather than caught by automatic reconciliation.</p>
-        <table id="confirmations-table" style="border-collapse: collapse">
-            <thead>
-                <tr>
-                    <th style="@CellStyle()">Date</th>
-                    <th style="@CellStyle()">Account</th>
-                    <th style="@CellStyle()">Reason</th>
-                    <th style="@CellStyle()"></th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var confirmation in _result.Confirmations)
-                {
-                    <tr>
-                        <td style="@CellStyle()">@confirmation.OriginalDate.ToString("MM/dd/yyyy")</td>
-                        <td style="@CellStyle()">@confirmation.AccountName</td>
-                        <td style="@CellStyle()">@confirmation.Reason</td>
-                        <td style="@CellStyle()">
-                            <button id="undo-confirmation-btn-@confirmation.ConfirmationId" @onclick="() => RemoveConfirmationAsync(confirmation)">Undo</button>
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
 }
 
 @code {
     private ForecastResult? _result;
     private ForecastLedgerRow? _lowestRow;
     private readonly Dictionary<int, DateOnly> _deferDateInputs = [];
+    private readonly Dictionary<int, decimal> _partialAmountInputs = [];
+    private readonly Dictionary<int, DateOnly> _partialDateInputs = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -130,28 +128,54 @@ else
 
     private async Task ConfirmAsync(ForecastLedgerRow row)
     {
-        await ForecastResultProvider.ConfirmPaymentAsync(row.AccountId, row.OriginalDate);
+        await ForecastResultProvider.ConfirmPaymentAsync(row.AccountId, row.OriginalDate, row.Date, row.Amount);
         await RefreshAsync();
     }
 
     private async Task OverrideAsync(ForecastLedgerRow row)
     {
-        await ForecastResultProvider.OverridePaymentAsync(row.AccountId, row.OriginalDate);
+        await ForecastResultProvider.OverridePaymentAsync(row.AccountId, row.OriginalDate, row.Date, row.Amount);
         await RefreshAsync();
     }
 
-    private async Task RemoveConfirmationAsync(ConfirmedPayment confirmation)
+    private async Task RemoveConfirmationAsync(ForecastLedgerRow row)
     {
-        await ForecastResultProvider.RemoveConfirmationAsync(confirmation.ConfirmationId);
+        if (row.ConfirmationId is not { } confirmationId) return;
+        await ForecastResultProvider.RemoveConfirmationAsync(confirmationId);
+        await RefreshAsync();
+    }
+
+    private DateOnly GetPartialDate(int index) =>
+        _partialDateInputs.GetValueOrDefault(index, DateOnly.FromDateTime(DateTime.Today));
+
+    private async Task PayPartialAsync(ForecastLedgerRow row, int index)
+    {
+        var amount = _partialAmountInputs.GetValueOrDefault(index, 0m);
+        if (amount <= 0m) return;
+        await ForecastResultProvider.PayPartialAmountAsync(row.AccountId, row.OriginalDate, GetPartialDate(index), amount);
+        await RefreshAsync();
+    }
+
+    private async Task UndoPartialPaymentAsync(PartialPaymentSummary partialPayment)
+    {
+        await ForecastResultProvider.RemovePartialPaymentAsync(partialPayment.PartialPaymentId);
         await RefreshAsync();
     }
 
     private async Task RefreshAsync()
     {
         _result = await ForecastResultProvider.GetForecastAsync();
-        _lowestRow = _result.Rows.FirstOrDefault(r => r.RunningBalance == _result.LowestProjectedBalance);
+        _lowestRow = _result.Rows.FirstOrDefault(r => !r.IsExcluded && r.RunningBalance == _result.LowestProjectedBalance);
         _deferDateInputs.Clear();
+        _partialAmountInputs.Clear();
+        _partialDateInputs.Clear();
     }
+
+    private string RowStyle(ForecastLedgerRow row) =>
+        row.IsExcluded ? "text-decoration: line-through; color: #888;"
+        : row.IsDeferred ? "background-color: orange"
+        : row == _lowestRow ? "background-color: yellow"
+        : "";
 
     private static string CellStyle(bool rightAlign = false) =>
         $"border: 1px solid #ccc; padding: 6px 16px;{(rightAlign ? " text-align: right;" : "")}";

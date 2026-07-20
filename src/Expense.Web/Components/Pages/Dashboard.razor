@@ -43,9 +43,21 @@ else
                 <tbody>
                     @foreach (var row in _forecast.Rows.Take(20))
                     {
-                        <tr>
+                        <tr style="@CashFlowRowStyle(row)">
                             <td>@row.Date.ToString("yyyy-MM-dd")</td>
-                            <td>@row.Description</td>
+                            <td>
+                                @row.Description
+                                @if (row.IsExcluded)
+                                {
+                                    <br />
+                                    <span style="color: #666">(@row.ExclusionReason)</span>
+                                }
+                                else if (row.IsDeferred)
+                                {
+                                    <br />
+                                    <span style="color: red">&#9888; Originally estimated for @row.OriginalDate.ToString("MM/dd/yyyy")</span>
+                                }
+                            </td>
                             <td class="text-right">@row.Amount.ToString("N2")</td>
                             <td class="text-right">@row.RunningBalance.ToString("N2")</td>
                         </tr>
@@ -168,6 +180,7 @@ else
 
 @code {
     private ForecastResult? _forecast;
+    private ForecastLedgerRow? _lowestForecastRow;
     private SpendingTrackerPageData? _spendingTracker;
     private ReviewQueueData? _reviewQueue;
     private ImportRun? _lastSimpleFinRun;
@@ -291,9 +304,18 @@ else
     private async Task RefreshDashboardDataAsync()
     {
         _forecast = await ForecastProvider.GetForecastAsync();
+        _lowestForecastRow = _forecast.Rows.FirstOrDefault(r => !r.IsExcluded && r.RunningBalance == _forecast.LowestProjectedBalance);
         _spendingTracker = await SpendingTrackerProvider.GetSpendingTrackerAsync();
         _reviewQueue = await ReviewQueueProvider.GetReviewQueueAsync();
     }
+
+    // Mirrors Forecast.razor's own row styling, so a deferred/excluded payment looks the
+    // same whether you're looking at the Dashboard's summary or the full Forecast page.
+    private string CashFlowRowStyle(ForecastLedgerRow row) =>
+        row.IsExcluded ? "text-decoration: line-through; color: #888;"
+        : row.IsDeferred ? "background-color: orange"
+        : row == _lowestForecastRow ? "background-color: yellow"
+        : "";
 
     private static string FormatRunStatus(ImportRun? run)
     {

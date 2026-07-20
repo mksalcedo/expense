@@ -20,4 +20,10 @@ public class LedgerLine
     /// when CategoryId is null.
     /// </summary>
     public int MatchWindowDays { get; set; }
+
+    /// <summary>Set only for a line derived from a OneTimeEvent - lets ForecastEngine tell
+    /// apart an unrelated one-time event from the recurring bill it happens to share an
+    /// (AccountId, Date) with, so a partial payment's own auto-created event never gets
+    /// mistaken for the bill it was paid against (see the PartialPayment doc comment).</summary>
+    public int? SourceOneTimeEventId { get; set; }
 }

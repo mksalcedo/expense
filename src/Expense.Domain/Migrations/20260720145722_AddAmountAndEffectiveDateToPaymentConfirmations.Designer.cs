@@ -3,6 +3,7 @@ using System;
 using Expense.Domain.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Expense.Domain.Migrations
 {
     [DbContext(typeof(ExpenseDbContext))]
-    partial class ExpenseDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260720145722_AddAmountAndEffectiveDateToPaymentConfirmations")]
+    partial class AddAmountAndEffectiveDateToPaymentConfirmations
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -531,51 +534,6 @@ namespace Expense.Domain.Migrations
                     b.ToTable("one_time_events", (string)null);
                 });
 
-            modelBuilder.Entity("Expense.Domain.Entities.PartialPayment", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasColumnName("id");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("AccountId")
-                        .HasColumnType("integer")
-                        .HasColumnName("account_id");
-
-                    b.Property<decimal>("Amount")
-                        .HasColumnType("numeric")
-                        .HasColumnName("amount");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<int>("OneTimeEventId")
-                        .HasColumnType("integer")
-                        .HasColumnName("one_time_event_id");
-
-                    b.Property<DateOnly>("OriginalDate")
-                        .HasColumnType("date")
-                        .HasColumnName("original_date");
-
-                    b.Property<DateOnly>("PaidDate")
-                        .HasColumnType("date")
-                        .HasColumnName("paid_date");
-
-                    b.HasKey("Id")
-                        .HasName("pk_partial_payments");
-
-                    b.HasIndex("AccountId")
-                        .HasDatabaseName("ix_partial_payments_account_id");
-
-                    b.HasIndex("OneTimeEventId")
-                        .HasDatabaseName("ix_partial_payments_one_time_event_id");
-
-                    b.ToTable("partial_payments", (string)null);
-                });
-
             modelBuilder.Entity("Expense.Domain.Entities.PaymentConfirmation", b =>
                 {
                     b.Property<int>("Id")
@@ -861,27 +819,6 @@ namespace Expense.Domain.Migrations
                         .HasConstraintName("fk_one_time_events_accounts_account_id");
 
                     b.Navigation("Account");
-                });
-
-            modelBuilder.Entity("Expense.Domain.Entities.PartialPayment", b =>
-                {
-                    b.HasOne("Expense.Domain.Entities.Account", "Account")
-                        .WithMany()
-                        .HasForeignKey("AccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_partial_payments_accounts_account_id");
-
-                    b.HasOne("Expense.Domain.Entities.OneTimeEvent", "OneTimeEvent")
-                        .WithMany()
-                        .HasForeignKey("OneTimeEventId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_partial_payments_one_time_events_one_time_event_id");
-
-                    b.Navigation("Account");
-
-                    b.Navigation("OneTimeEvent");
                 });
 
             modelBuilder.Entity("Expense.Domain.Entities.PaymentConfirmation", b =>

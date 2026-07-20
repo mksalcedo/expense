@@ -207,7 +207,7 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
 
-        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment");
+        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment" && r.Date == new DateOnly(2026, 3, 15));
         Assert.Equal(-1250m, amexRow.Amount); // actual (1250) beats budget (900), plus $0 extra principal
     }
 
@@ -252,7 +252,7 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
 
-        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment");
+        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment" && r.Date == new DateOnly(2026, 3, 15));
         Assert.Equal(-215m, amexRow.Amount); // 200 (categorized) + 15 (uncategorized) - both are real charges
     }
 
@@ -295,8 +295,117 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
 
-        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment");
+        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment" && r.Date == new DateOnly(2026, 3, 15));
         Assert.Equal(-200m, amexRow.Amount); // the $150 payment must not offset the $200 charge
+    }
+
+    [Fact]
+    public async Task OneTimeEvent_StillShows_ShortlyAfterItsOwnDateHasPassed()
+    {
+        // A deferred/confirmed one-time event's OriginalDate can end up in the past relative
+        // to asOfDate - it must not vanish the instant that happens, the same reason
+        // RecurringRule-based lines are widened backward too.
+        await SeedCheckingBalanceAsync(5000m, new DateOnly(2026, 7, 13));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        Context.OneTimeEvents.Add(new OneTimeEvent
+        {
+            Name = "HVAC repair", Amount = 850m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 10), AccountId = checking.Id
+        });
+        await Context.SaveChangesAsync();
+
+        // asOfDate (7/20) is 10 days after the event's date - within the 14-day window.
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 20), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("HVAC repair", row.Description);
+    }
+
+    [Fact]
+    public async Task AmexCycle_AutoReconciles_WhenARealAmexPaymentTransactionHasPosted()
+    {
+        // Amex already has its own "Amex Payment" category/merchant rules like any other
+        // account (see AccountManagementService.CreateAccountAsync) - a real payment gets
+        // categorized into it just like a Chase/Discover payment would.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 16));
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        var amexPayment = new Category { Name = "Amex Payment" };
+        Context.Categories.AddRange(groceries, amexPayment);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.AddRange(
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex },
+            new FundingRule { CategoryId = amexPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = amex.Id });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+                Description = "TRADER JOE S", Amount = -1250m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 3, 14), PostedDate = new DateOnly(2026, 3, 14),
+                Description = "AMEX EPAYMENT ACH PMT", Amount = 1250m, ImportSource = "Test", CategoryId = amexPayment.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        // asOfDate is just after the 3/15 due date - the real payment already posted 3/14.
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 16), new DateOnly(2026, 3, 31));
+
+        Assert.DoesNotContain(result.Rows, r => r.Description == "Amex Payment");
+    }
+
+    [Fact]
+    public async Task AmexCycle_StaysProjected_WhenDueDateHasPassedButNoRealPaymentTransactionExistsYet()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 20));
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        var amexPayment = new Category { Name = "Amex Payment" };
+        Context.Categories.AddRange(groceries, amexPayment);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.AddRange(
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex },
+            new FundingRule { CategoryId = amexPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = amex.Id });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+            Description = "TRADER JOE S", Amount = -1250m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        // asOfDate is 5 days past the 3/15 due date - still within the 14-day grace window,
+        // and no real Amex Payment transaction has posted yet.
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 20), new DateOnly(2026, 3, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment" && r.Date == new DateOnly(2026, 3, 15));
+        Assert.Equal(-1250m, amexRow.Amount);
     }
 
     [Fact]
@@ -496,6 +605,87 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task DebtAccountPayment_MatchingTransactionSlightlyLower_StillReconciles_WithinTolerance()
+    {
+        // The issuer raised the real minimum payment slightly since this was configured -
+        // a small underpayment relative to what's configured shouldn't block reconciliation.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var discover = new Account { Name = "Discover", Type = AccountType.Debt, MinPayment = 50m, ExtraPayment = 100m, PaymentDueDay = 15 };
+        Context.Accounts.Add(discover);
+        await Context.SaveChangesAsync();
+
+        var discoverPayment = new Category { Name = "Discover Payment" };
+        Context.Categories.Add(discoverPayment);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = discoverPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = discover.Id });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            // Configured/expected is $150; real payment is $145 - a 3.3% shortfall, within tolerance.
+            AccountId = discover.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
+            Description = "DISCOVER PAYMENT", Amount = -145m, ImportSource = "Test", CategoryId = discoverPayment.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Empty(result.Rows);
+    }
+
+    [Fact]
+    public async Task DebtAccountPayment_MatchingTransactionHigher_StillReconciles_NoUpperBound()
+    {
+        // Paid extra toward principal one month - overpaying must never block reconciliation.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var discover = new Account { Name = "Discover", Type = AccountType.Debt, MinPayment = 50m, ExtraPayment = 100m, PaymentDueDay = 15 };
+        Context.Accounts.Add(discover);
+        await Context.SaveChangesAsync();
+
+        var discoverPayment = new Category { Name = "Discover Payment" };
+        Context.Categories.Add(discoverPayment);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = discoverPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = discover.Id });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            // Configured/expected is $150; real payment is $500 (way more than 5% over).
+            AccountId = discover.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
+            Description = "DISCOVER PAYMENT", Amount = -500m, ImportSource = "Test", CategoryId = discoverPayment.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Empty(result.Rows);
+    }
+
+    [Fact]
+    public async Task DebtAccountPayment_MatchingTransactionMuchLower_DoesNotReconcile_APartialPaymentIsNotAFullOne()
+    {
+        // The real-world bug this guards against: a partial payment must not be mistaken
+        // for having satisfied the full forecasted amount.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var discover = new Account { Name = "Discover", Type = AccountType.Debt, MinPayment = 50m, ExtraPayment = 100m, PaymentDueDay = 15 };
+        Context.Accounts.Add(discover);
+        await Context.SaveChangesAsync();
+
+        var discoverPayment = new Category { Name = "Discover Payment" };
+        Context.Categories.Add(discoverPayment);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = discoverPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = discover.Id });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            // Configured/expected is $150; only $60 was actually paid (40%) - well outside tolerance.
+            AccountId = discover.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
+            Description = "DISCOVER PAYMENT", Amount = -60m, ImportSource = "Test", CategoryId = discoverPayment.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(-150m, row.Amount);
+    }
+
+    [Fact]
     public async Task DebtAccountPayment_PastDueAndNotYetPaid_StaysProjected()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
@@ -517,7 +707,216 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task ManuallyConfirmedPayment_IsExcludedFromTheForecast_EvenWithNoMatchingTransaction()
+    public async Task PartialPayment_ReducesTheRemainingForecastedAmount()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var oneTimeEvent = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 1000m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 14), AccountId = amex.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Amount = 1000m, PaidDate = new DateOnly(2026, 7, 14),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.AccountId == amex.Id && r.OriginalDate == new DateOnly(2026, 7, 20));
+        Assert.Equal(-1000m, amexRow.Amount);
+    }
+
+    [Fact]
+    public async Task PartialPayment_AppearsAsItsOwnSeparateLedgerLine_OnItsPaidDate()
+    {
+        // PartialPaymentService always records the paid amount as a real OneTimeEvent too -
+        // the actual cash impact must show up on its own date, not just reduce the bill.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var oneTimeEvent = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 1000m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 14), AccountId = amex.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Amount = 1000m, PaidDate = new DateOnly(2026, 7, 14),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var paidRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment (partial)");
+        Assert.Equal(new DateOnly(2026, 7, 14), paidRow.Date);
+        Assert.Equal(-1000m, paidRow.Amount);
+    }
+
+    [Fact]
+    public async Task MultiplePartialPayments_AgainstTheSameOccurrence_SumTogether()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var event1 = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 500m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 14), AccountId = amex.Id };
+        var event2 = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 300m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 17), AccountId = amex.Id };
+        Context.OneTimeEvents.AddRange(event1, event2);
+        await Context.SaveChangesAsync();
+
+        Context.PartialPayments.AddRange(
+            new PartialPayment { AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Amount = 500m, PaidDate = new DateOnly(2026, 7, 14), OneTimeEventId = event1.Id, CreatedAt = DateTimeOffset.UtcNow },
+            new PartialPayment { AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Amount = 300m, PaidDate = new DateOnly(2026, 7, 17), OneTimeEventId = event2.Id, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.AccountId == amex.Id && r.OriginalDate == new DateOnly(2026, 7, 20));
+        Assert.Equal(-1200m, amexRow.Amount); // 2000 - 500 - 300
+        Assert.Equal(2, amexRow.PartialPayments.Count);
+    }
+
+    [Fact]
+    public async Task PartialPayment_ComposesWithADeferral_ReducingAmountWithoutAffectingTheNewDate()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        Context.PaymentDeferrals.Add(new PaymentDeferral
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), DeferredToDate = new DateOnly(2026, 7, 27), CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        var oneTimeEvent = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 1000m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 14), AccountId = amex.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Amount = 1000m, PaidDate = new DateOnly(2026, 7, 14),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.AccountId == amex.Id && r.OriginalDate == new DateOnly(2026, 7, 20));
+        Assert.Equal(new DateOnly(2026, 7, 27), amexRow.Date);
+        Assert.True(amexRow.IsDeferred);
+        Assert.Equal(-1000m, amexRow.Amount);
+    }
+
+    [Fact]
+    public async Task PartialPayment_PaidOnTheSameDateAsAnUnrelatedDeferral_DoesNotGetSweptIntoIt()
+    {
+        // Real-world bug: paying (partially) on the bill's original due date, which already
+        // has its own deferral, must not cause the auto-created "cash paid" OneTimeEvent to
+        // be treated as the SAME occurrence as the deferred bill just because it happens to
+        // share the same account and date.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        Context.PaymentDeferrals.Add(new PaymentDeferral
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), DeferredToDate = new DateOnly(2026, 7, 25), CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        // Paid on 7/20 - the bill's own original due date, same as the existing deferral.
+        var oneTimeEvent = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 1000m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 20), AccountId = amex.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Amount = 1000m, PaidDate = new DateOnly(2026, 7, 20),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var paidRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment (partial)");
+        Assert.Equal(new DateOnly(2026, 7, 20), paidRow.Date); // shows on the real paid date, not swept into the deferral
+        Assert.False(paidRow.IsDeferred);
+        Assert.Equal(-1000m, paidRow.Amount); // its own amount, not reduced by matching itself
+        Assert.Empty(paidRow.PartialPayments);
+
+        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment");
+        Assert.Equal(new DateOnly(2026, 7, 25), amexRow.Date);
+        Assert.True(amexRow.IsDeferred);
+        Assert.Equal(-1000m, amexRow.Amount); // 2000 - 1000 partial payment, correctly applied to the real bill
+    }
+
+    [Fact]
+    public async Task PartialPayment_ShowsUpOnTheRow_WithIdAndDateForUndo()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var oneTimeEvent = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 1000m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 14), AccountId = amex.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        var partialPayment = new PartialPayment
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Amount = 1000m, PaidDate = new DateOnly(2026, 7, 14),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.PartialPayments.Add(partialPayment);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.AccountId == amex.Id && r.OriginalDate == new DateOnly(2026, 7, 20));
+        var summary = Assert.Single(amexRow.PartialPayments);
+        Assert.Equal(partialPayment.Id, summary.PartialPaymentId);
+        Assert.Equal(1000m, summary.Amount);
+        Assert.Equal(new DateOnly(2026, 7, 14), summary.PaidDate);
+    }
+
+    [Fact]
+    public async Task PartialPayment_ForADifferentOccurrence_DoesNotAffectThisOne()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var oneTimeEvent = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 1000m, Direction = Direction.Expense, Date = new DateOnly(2026, 6, 14), AccountId = amex.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        // A partial payment against last month's occurrence, not this month's.
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 6, 20), Amount = 1000m, PaidDate = new DateOnly(2026, 6, 14),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.AccountId == amex.Id && r.OriginalDate == new DateOnly(2026, 7, 20));
+        Assert.Equal(-2000m, amexRow.Amount);
+        Assert.Empty(amexRow.PartialPayments);
+    }
+
+    [Fact]
+    public async Task ManuallyConfirmedPayment_StaysInTheLedgerMarkedExcluded_EvenWithNoMatchingTransaction()
     {
         // Chase-shaped case: no merchant rule can ever tell this account's real payments
         // apart from another card's, so the user confirms it by hand instead.
@@ -528,17 +927,22 @@ public class ForecastEngineTests : DatabaseTestBase
 
         Context.PaymentConfirmations.Add(new PaymentConfirmation
         {
-            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), EffectiveDate = new DateOnly(2026, 7, 7),
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
 
-        Assert.Empty(result.Rows);
+        var row = Assert.Single(result.Rows);
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.AlreadyPaid, row.ExclusionReason);
+        Assert.Equal(-357m, row.Amount);
+        Assert.Equal(3000m, row.RunningBalance); // unaffected - the excluded amount never counts toward the balance
     }
 
     [Fact]
-    public async Task ManuallyOverriddenPayment_IsExcludedFromTheForecast_EvenThoughItWasNeverActuallyPaidAsScheduled()
+    public async Task ManuallyOverriddenPayment_StaysInTheLedgerMarkedExcluded_EvenThoughItWasNeverActuallyPaidAsScheduled()
     {
         // Split-payment case: the user is replacing this occurrence with their own plan
         // (e.g. two One-Time Events), not claiming it was paid as originally scheduled.
@@ -549,17 +953,21 @@ public class ForecastEngineTests : DatabaseTestBase
 
         Context.PaymentConfirmations.Add(new PaymentConfirmation
         {
-            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Reason = ConfirmationReason.Overridden, CreatedAt = DateTimeOffset.UtcNow
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), EffectiveDate = new DateOnly(2026, 7, 20),
+            Amount = -2000m, Reason = ConfirmationReason.Overridden, CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
 
-        Assert.Empty(result.Rows);
+        var row = Assert.Single(result.Rows);
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.Overridden, row.ExclusionReason);
+        Assert.Equal(-2000m, row.Amount);
     }
 
     [Fact]
-    public async Task ManuallyConfirmedPayment_AppearsInTheConfirmationsListForUndo_WithItsReason()
+    public async Task ManuallyExcludedPayment_CarriesItsConfirmationIdForUndo()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
         var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
@@ -568,19 +976,68 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var confirmation = new PaymentConfirmation
         {
-            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), EffectiveDate = new DateOnly(2026, 7, 7),
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
         };
         Context.PaymentConfirmations.Add(confirmation);
         await Context.SaveChangesAsync();
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
 
-        var entry = Assert.Single(result.Confirmations);
-        Assert.Equal(confirmation.Id, entry.ConfirmationId);
-        Assert.Equal(chaseAmazon.Id, entry.AccountId);
-        Assert.Equal("Chase Amazon Prime Visa", entry.AccountName);
-        Assert.Equal(new DateOnly(2026, 7, 7), entry.OriginalDate);
-        Assert.Equal(ConfirmationReason.AlreadyPaid, entry.Reason);
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(confirmation.Id, row.ConfirmationId);
+        Assert.Equal(chaseAmazon.Id, row.AccountId);
+        Assert.Equal(new DateOnly(2026, 7, 7), row.OriginalDate);
+    }
+
+    [Fact]
+    public async Task ManuallyExcludedPayment_DisplaysAtItsCapturedEffectiveDate_NotTheOriginalScheduledDate()
+    {
+        // Simulates confirming/overriding a payment that had already been deferred to 7/15 at
+        // the moment the user acted - the excluded row should stay where the user last saw it,
+        // not jump back to the original 7/7 due date.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
+        Context.Accounts.Add(chaseAmazon);
+        await Context.SaveChangesAsync();
+
+        Context.PaymentConfirmations.Add(new PaymentConfirmation
+        {
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), EffectiveDate = new DateOnly(2026, 7, 15),
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(new DateOnly(2026, 7, 15), row.Date);
+        Assert.Equal(new DateOnly(2026, 7, 7), row.OriginalDate);
+    }
+
+    [Fact]
+    public async Task ExcludedPayment_DoesNotAffectTheRunningBalanceOfLaterRows()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.AddRange(chaseAmazon, checking);
+        await Context.SaveChangesAsync();
+
+        Context.PaymentConfirmations.Add(new PaymentConfirmation
+        {
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), EffectiveDate = new DateOnly(2026, 7, 7),
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.OneTimeEvents.Add(
+            new OneTimeEvent { Name = "HVAC repair", Amount = 850m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 20), AccountId = checking.Id });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Equal(2, result.Rows.Count);
+        var laterRow = result.Rows.Single(r => !r.IsExcluded);
+        Assert.Equal(2150m, laterRow.RunningBalance); // 3000 - 850, the excluded 357 never subtracted
     }
 
     [Fact]
@@ -591,17 +1048,90 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.Accounts.Add(chaseAmazon);
         await Context.SaveChangesAsync();
 
-        // Confirms a totally different (already-past) month's occurrence, not this month's.
+        // Confirms a totally different (already-past) month's occurrence, not this month's -
+        // it still shows up as its own excluded row (from its own captured snapshot, since no
+        // live line matches it this run), but must not touch this month's real occurrence.
         Context.PaymentConfirmations.Add(new PaymentConfirmation
         {
-            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 6, 7), CreatedAt = DateTimeOffset.UtcNow
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 6, 7), EffectiveDate = new DateOnly(2026, 6, 7),
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows, r => !r.IsExcluded);
+        Assert.Equal(new DateOnly(2026, 7, 7), row.Date);
+    }
+
+    [Fact]
+    public async Task PaymentConfirmation_WithNoMatchingLineThisRun_StillShowsAsAnExcludedRow_ForUndo()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
+        Context.Accounts.Add(chaseAmazon);
+        await Context.SaveChangesAsync();
+
+        // A different month's occurrence, but recent enough (within the 7-day visibility
+        // window) that it should still show up.
+        var confirmation = new PaymentConfirmation
+        {
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 6, 7), EffectiveDate = new DateOnly(2026, 7, 10),
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.PaymentConfirmations.Add(confirmation);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows, r => r.IsExcluded);
+        Assert.Equal(confirmation.Id, row.ConfirmationId);
+        Assert.Equal(-357m, row.Amount);
+        Assert.Equal(new DateOnly(2026, 7, 10), row.Date);
+    }
+
+    [Fact]
+    public async Task ExcludedPayment_OlderThanTheVisibilityWindow_IsHiddenFromTheLedger()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
+        Context.Accounts.Add(chaseAmazon);
+        await Context.SaveChangesAsync();
+
+        // Effective date is more than 7 days before asOfDate (2026-7-14) - resolved long
+        // enough ago that it shouldn't clutter a forward-looking forecast anymore.
+        Context.PaymentConfirmations.Add(new PaymentConfirmation
+        {
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), EffectiveDate = new DateOnly(2026, 7, 6),
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        Assert.Empty(result.Rows);
+    }
+
+    [Fact]
+    public async Task ExcludedPayment_WithinTheVisibilityWindow_StillShowsInTheLedger()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var chaseAmazon = new Account { Name = "Chase Amazon Prime Visa", Type = AccountType.Debt, MinPayment = 357m, PaymentDueDay = 7 };
+        Context.Accounts.Add(chaseAmazon);
+        await Context.SaveChangesAsync();
+
+        // Exactly 7 days before asOfDate - still within the window (inclusive).
+        Context.PaymentConfirmations.Add(new PaymentConfirmation
+        {
+            AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), EffectiveDate = new DateOnly(2026, 7, 7),
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
 
         var row = Assert.Single(result.Rows);
-        Assert.Equal(new DateOnly(2026, 7, 7), row.Date);
+        Assert.True(row.IsExcluded);
     }
 
     [Fact]

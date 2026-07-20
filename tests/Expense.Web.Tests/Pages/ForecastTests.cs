@@ -11,11 +11,14 @@ public class ForecastTests : BunitContext
     // Stateful fake: DeferPaymentAsync/RemoveDeferralAsync/ConfirmPaymentAsync/
     // RemoveConfirmationAsync actually mutate the underlying result (mirroring what
     // re-querying the real backend would show) so tests can drive the full action ->
-    // re-render -> undo -> re-render cycle, not just verify the call happened.
+    // re-render -> undo -> re-render cycle, not just verify the call happened. Confirm/
+    // Override mark the row excluded in place (matching ForecastEngine) rather than
+    // removing it, and Undo simply clears that same flag - nothing is ever recreated.
     private class FakeForecastResultProvider(ForecastResult result) : IForecastResultProvider
     {
         private int _nextDeferralId = 1;
         private int _nextConfirmationId = 1;
+        private int _nextPartialPaymentId = 1;
 
         public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(result);
 
@@ -37,32 +40,47 @@ public class ForecastTests : BunitContext
             return Task.CompletedTask;
         }
 
-        public Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default) =>
-            ExcludeAsync(accountId, originalDate, ConfirmationReason.AlreadyPaid);
+        public Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) =>
+            ExcludeAsync(accountId, originalDate, effectiveDate, amount, ConfirmationReason.AlreadyPaid);
 
-        public Task OverridePaymentAsync(int accountId, DateOnly originalDate, CancellationToken cancellationToken = default) =>
-            ExcludeAsync(accountId, originalDate, ConfirmationReason.Overridden);
+        public Task OverridePaymentAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) =>
+            ExcludeAsync(accountId, originalDate, effectiveDate, amount, ConfirmationReason.Overridden);
 
-        private Task ExcludeAsync(int accountId, DateOnly originalDate, ConfirmationReason reason)
+        private Task ExcludeAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, ConfirmationReason reason)
         {
             var row = result.Rows.Single(r => r.AccountId == accountId && r.OriginalDate == originalDate);
-            result.Rows.Remove(row);
-            result.Confirmations.Add(new ConfirmedPayment
-            {
-                ConfirmationId = _nextConfirmationId++, AccountId = accountId, AccountName = row.Description, OriginalDate = originalDate, Reason = reason
-            });
+            row.Date = effectiveDate;
+            row.Amount = amount;
+            row.IsExcluded = true;
+            row.ExclusionReason = reason;
+            row.ConfirmationId = _nextConfirmationId++;
             return Task.CompletedTask;
         }
 
         public Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default)
         {
-            var confirmation = result.Confirmations.Single(c => c.ConfirmationId == confirmationId);
-            result.Confirmations.Remove(confirmation);
-            result.Rows.Add(new ForecastLedgerRow
-            {
-                Date = confirmation.OriginalDate, Description = confirmation.AccountName, Amount = 0m, RunningBalance = 0m,
-                AccountId = confirmation.AccountId, OriginalDate = confirmation.OriginalDate
-            });
+            var row = result.Rows.Single(r => r.ConfirmationId == confirmationId);
+            row.Date = row.OriginalDate;
+            row.IsExcluded = false;
+            row.ExclusionReason = null;
+            row.ConfirmationId = null;
+            return Task.CompletedTask;
+        }
+
+        public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, CancellationToken cancellationToken = default)
+        {
+            var row = result.Rows.Single(r => r.AccountId == accountId && r.OriginalDate == originalDate);
+            row.Amount += amount;
+            row.PartialPayments.Add(new PartialPaymentSummary { PartialPaymentId = _nextPartialPaymentId++, Amount = amount, PaidDate = paidDate });
+            return Task.CompletedTask;
+        }
+
+        public Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default)
+        {
+            var row = result.Rows.Single(r => r.PartialPayments.Any(p => p.PartialPaymentId == partialPaymentId));
+            var partialPayment = row.PartialPayments.Single(p => p.PartialPaymentId == partialPaymentId);
+            row.Amount -= partialPayment.Amount;
+            row.PartialPayments.Remove(partialPayment);
             return Task.CompletedTask;
         }
     }
@@ -163,8 +181,8 @@ public class ForecastTests : BunitContext
 
         var cut = Render<Forecast>();
 
-        Assert.Contains("07/20/2026", cut.Markup);
-        Assert.DoesNotContain("2026-07-20", cut.Markup);
+        var dateCell = cut.Find("#ledger-table tbody td:first-child");
+        Assert.Equal("07/20/2026", dateCell.TextContent);
     }
 
     [Fact]
@@ -298,7 +316,7 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
-    public void ConfirmingAPayment_RemovesItFromTheLedgerAndListsItAsConfirmed()
+    public void ConfirmingAPayment_MarksItExcludedInPlace_WithAnUndoButton()
     {
         var result = new ForecastResult
         {
@@ -310,14 +328,16 @@ public class ForecastTests : BunitContext
         var cut = Render<Forecast>();
         cut.Find("#confirm-btn-0").Click();
 
-        Assert.Empty(cut.Find("#ledger-table").QuerySelectorAll("tbody tr"));
-        Assert.Contains("Chase Amazon Prime Visa Payment", cut.Markup);
-        Assert.Contains("08/20/2026", cut.Markup);
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("Chase Amazon Prime Visa Payment", row!.TextContent);
+        Assert.Contains("08/20/2026", row.TextContent);
+        Assert.Contains("357.00", row.TextContent); // the amount stays visible, not just the date
         Assert.NotNull(cut.Find("#undo-confirmation-btn-1"));
+        Assert.Empty(cut.FindAll("#confirm-btn-0")); // action icons replaced by Undo, not left alongside it
     }
 
     [Fact]
-    public void UndoingAConfirmation_BringsTheRowBackToTheLedger()
+    public void UndoingAConfirmation_RestoresTheNormalActionButtons()
     {
         var result = new ForecastResult
         {
@@ -332,6 +352,24 @@ public class ForecastTests : BunitContext
 
         Assert.Single(cut.FindAll("tbody tr"));
         Assert.NotNull(cut.Find("#confirm-btn-0"));
+        Assert.Empty(cut.FindAll("#undo-confirmation-btn-1"));
+    }
+
+    [Fact]
+    public void ExcludedRow_IsStyledDistinctly_NotJustRemoved()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("line-through", row!.GetAttribute("style") ?? "");
     }
 
     [Fact]
@@ -350,7 +388,7 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
-    public void OverridingAPayment_RemovesItFromTheLedgerAndListsItWithAnOverriddenReason()
+    public void OverridingAPayment_MarksItExcludedInPlace_WithAnOverriddenReason()
     {
         var result = new ForecastResult
         {
@@ -362,10 +400,10 @@ public class ForecastTests : BunitContext
         var cut = Render<Forecast>();
         cut.Find("#override-btn-0").Click();
 
-        Assert.Empty(cut.Find("#ledger-table").QuerySelectorAll("tbody tr"));
-        var confirmationsRow = cut.Find("#confirmations-table").QuerySelector("tbody tr");
-        Assert.Contains("Amex Payment", confirmationsRow!.TextContent);
-        Assert.Contains("Overridden", confirmationsRow.TextContent);
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("Amex Payment", row!.TextContent);
+        Assert.Contains("Overridden", row.TextContent);
+        Assert.Contains("2,000.00", row.TextContent);
     }
 
     [Fact]
@@ -381,8 +419,8 @@ public class ForecastTests : BunitContext
         var cut = Render<Forecast>();
         cut.Find("#confirm-btn-0").Click();
 
-        var confirmationsRow = cut.Find("#confirmations-table").QuerySelector("tbody tr");
-        Assert.Contains("AlreadyPaid", confirmationsRow!.TextContent);
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("AlreadyPaid", row!.TextContent);
     }
 
     [Fact]
@@ -402,6 +440,98 @@ public class ForecastTests : BunitContext
         Assert.NotNull(cut.Find("#remove-deferral-btn-0"));
         Assert.NotNull(cut.Find("#confirm-btn-0"));
         Assert.NotNull(cut.Find("#override-btn-0"));
+    }
+
+    [Fact]
+    public void Forecast_ShowsAPayPartialAmountAction_OnEachUndeferredRow()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.NotNull(cut.Find("#partial-amount-0"));
+        Assert.NotNull(cut.Find("#partial-date-0"));
+        Assert.NotNull(cut.Find("#partial-pay-btn-0"));
+    }
+
+    [Fact]
+    public void PartialPaymentAction_IsAvailableEvenOnADeferredRow()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#defer-date-0").Change("2026-08-22");
+        cut.Find("#defer-btn-0").Click();
+
+        Assert.NotNull(cut.Find("#partial-pay-btn-0"));
+    }
+
+    [Fact]
+    public void PayingAPartialAmount_ReducesTheRowAndListsItWithAnUndoButton()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-amount-0").Change("1000");
+        cut.Find("#partial-date-0").Change("2026-07-20");
+        cut.Find("#partial-pay-btn-0").Click();
+
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("1,000.00", row!.TextContent);
+        Assert.Contains("07/20/2026", row.TextContent);
+        Assert.NotNull(cut.Find("#undo-partial-payment-btn-1"));
+    }
+
+    [Fact]
+    public void UndoingAPartialPayment_RestoresTheOriginalAmount()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-amount-0").Change("1000");
+        cut.Find("#partial-date-0").Change("2026-07-20");
+        cut.Find("#partial-pay-btn-0").Click();
+        cut.Find("#undo-partial-payment-btn-1").Click();
+
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("2,000.00", row!.TextContent);
+        Assert.Empty(cut.FindAll("#undo-partial-payment-btn-1"));
+    }
+
+    [Fact]
+    public void PartialPaymentAction_IsNotShownOnAnExcludedRow()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+
+        Assert.Empty(cut.FindAll("#partial-pay-btn-0"));
     }
 
     [Fact]

@@ -1,0 +1,102 @@
+@page "/confirmed-payments"
+@using System.Globalization
+@using Expense.Domain.Services.Forecast
+@inject IConfirmedPaymentsPageProvider ConfirmedPaymentsProvider
+
+<PageTitle>Confirmed Payments</PageTitle>
+
+<h1>Confirmed Payments</h1>
+<p>Every payment manually confirmed as paid or overridden, past and present - the Forecast page only keeps a recent one visible in the ledger, so look here to find or undo an older one.</p>
+
+@if (_rows is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div>
+        <select id="filter-year" @onchange="e => _filterYear = ParseNullableInt((string)e.Value!)">
+            <option value="">All years</option>
+            @foreach (var year in AvailableYears())
+            {
+                <option value="@year">@year</option>
+            }
+        </select>
+        <select id="filter-month" @onchange="e => _filterMonth = ParseNullableInt((string)e.Value!)">
+            <option value="">All months</option>
+            @foreach (var (value, name) in Months)
+            {
+                <option value="@value">@name</option>
+            }
+        </select>
+    </div>
+
+    <table id="confirmed-payments-table" style="border-collapse: collapse">
+        <thead>
+            <tr>
+                <th style="@CellStyle()">Date</th>
+                <th style="@CellStyle()">Account</th>
+                <th style="@CellStyle(rightAlign: true)">Amount</th>
+                <th style="@CellStyle()">Reason</th>
+                <th style="@CellStyle()">Confirmed on</th>
+                <th style="@CellStyle()"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in VisibleRows())
+            {
+                <tr @key="row.ConfirmationId">
+                    <td style="@CellStyle()">@row.Date.ToString("MM/dd/yyyy")</td>
+                    <td style="@CellStyle()">@row.AccountName</td>
+                    <td style="@CellStyle(rightAlign: true)">@row.Amount.ToString("N2")</td>
+                    <td style="@CellStyle()">@row.Reason</td>
+                    <td style="@CellStyle()">@row.ConfirmedAt.ToLocalTime().ToString("MM/dd/yyyy")</td>
+                    <td style="@CellStyle()">
+                        <button id="undo-confirmation-btn-@row.ConfirmationId" @onclick="() => UndoAsync(row)">Undo</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<ConfirmedPaymentRow>? _rows;
+    private int? _filterYear;
+    private int? _filterMonth;
+
+    private static readonly (int Value, string Name)[] Months = Enumerable.Range(1, 12)
+        .Select(m => (m, CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(m)))
+        .ToArray();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private IEnumerable<int> AvailableYears() =>
+        (_rows ?? []).Select(r => r.Date.Year).Distinct().OrderByDescending(y => y);
+
+    private List<ConfirmedPaymentRow> VisibleRows() =>
+        (_rows ?? [])
+            .Where(r => _filterYear is null || r.Date.Year == _filterYear)
+            .Where(r => _filterMonth is null || r.Date.Month == _filterMonth)
+            .OrderByDescending(r => r.Date)
+            .ToList();
+
+    private async Task UndoAsync(ConfirmedPaymentRow row)
+    {
+        await ConfirmedPaymentsProvider.RemoveConfirmationAsync(row.ConfirmationId);
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _rows = await ConfirmedPaymentsProvider.GetConfirmedPaymentsAsync();
+    }
+
+    private static int? ParseNullableInt(string value) => string.IsNullOrEmpty(value) ? null : int.Parse(value);
+
+    private static string CellStyle(bool rightAlign = false) =>
+        $"border: 1px solid #ccc; padding: 6px 16px;{(rightAlign ? " text-align: right;" : "")}";
+}

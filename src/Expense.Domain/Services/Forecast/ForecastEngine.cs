@@ -13,6 +13,13 @@ namespace Expense.Domain.Services.Forecast;
 /// </summary>
 public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander recurrenceExpander, AmexCycleCalculator amexCycleCalculator)
 {
+    // How long a manually confirmed/overridden occurrence stays visible in the ledger after
+    // its effective date - long enough to catch a mistaken click, short enough that resolved
+    // payments don't clutter a forward-looking forecast forever. The underlying
+    // PaymentConfirmation row is never deleted by this - see the Confirmed Payments page for
+    // the unbounded, filterable history.
+    private const int ExcludedPaymentVisibilityDays = 7;
+
     public async Task<ForecastResult> GenerateAsync(
         ExpenseDbContext context, DateOnly asOfDate, DateOnly windowEnd, CancellationToken cancellationToken = default)
     {
@@ -85,8 +92,11 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
 
         lines = lines.Where(l => !IsAlreadyReflectedInAnActualTransaction(l, reconciliationTransactions)).ToList();
 
+        // Same backward-widening as above - a deferred/confirmed one-time event's original
+        // date can end up in the past relative to asOfDate, and it must not vanish just
+        // because of that.
         var oneTimeEvents = await context.OneTimeEvents.ToListAsync(cancellationToken);
-        lines.AddRange(recurrenceExpander.Expand([], oneTimeEvents, asOfDate, windowEnd));
+        lines.AddRange(recurrenceExpander.Expand([], oneTimeEvents, asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays), windowEnd));
 
         var activeSpendingAccounts = await context.Accounts
             .Where(a => a.Type == AccountType.ActiveSpending && a.IsActive
@@ -126,58 +136,161 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 .Where(t => t.AccountId == account.Id && t.PostedDate != null && t.Amount < 0)
                 .ToListAsync(cancellationToken);
 
+            // Widened backward same as the debt-account/Direct path above, for the same
+            // reason - a recently-due cycle isn't excluded just because its date passed,
+            // only once a real matching payment transaction is found (or it ages fully out).
             var cycles = amexCycleCalculator.CalculateDuePayments(
                 account.StatementCloseDay!.Value, account.PaymentDueDay!.Value, account.ExtraPayment ?? 0m,
-                monthlyBudgetTotal, chargeTransactions, asOfDate, asOfDate, windowEnd);
+                monthlyBudgetTotal, chargeTransactions, asOfDate, asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays), windowEnd);
 
+            // Every account (including Amex) gets its own "{Name} Payment" category/merchant
+            // rules at creation time (see AccountManagementService) - a real Amex payment
+            // gets categorized into it exactly like a Chase/Discover payment would, so the
+            // same reconciliation check applies here instead of leaving Amex permanently
+            // manual-only.
+            var amexPaymentCategoryId = accountPaymentCategoryIds.GetValueOrDefault(account.Id);
             foreach (var cycle in cycles)
             {
-                lines.Add(new LedgerLine
+                var line = new LedgerLine
                 {
-                    Date = cycle.DueDate, Description = $"{account.Name} Payment", Amount = -cycle.Amount, AccountId = account.Id
-                });
+                    Date = cycle.DueDate, Description = $"{account.Name} Payment", Amount = -cycle.Amount, AccountId = account.Id,
+                    CategoryId = amexPaymentCategoryId, MatchWindowDays = RecurrenceExpander.MatchWindowDaysFor(Frequency.Monthly)
+                };
+                if (!IsAlreadyReflectedInAnActualTransaction(line, reconciliationTransactions))
+                {
+                    lines.Add(line);
+                }
             }
         }
 
+        // Manually confirmed/overridden occurrences stay in the ledger rather than being
+        // removed - marked IsExcluded and pinned at the EffectiveDate/Amount captured at the
+        // moment the user acted, so the row (and its dollar amount) stay visible and in place
+        // instead of only living in a separate undo list. Deferral is looked up independently
+        // of confirmation status, so undoing a confirmation on a previously-deferred payment
+        // naturally brings it back still deferred - nothing here needs to know about that.
         var confirmations = await context.PaymentConfirmations.Include(c => c.Account).ToListAsync(cancellationToken);
-        var confirmedAccountAndDates = confirmations.Select(c => (c.AccountId, c.OriginalDate)).ToHashSet();
-        lines = lines.Where(l => !confirmedAccountAndDates.Contains((l.AccountId, l.Date))).ToList();
+        var confirmationsByAccountAndDate = confirmations.ToDictionary(c => (c.AccountId, c.OriginalDate));
+        var matchedConfirmationIds = new HashSet<int>();
 
         var deferrals = await context.PaymentDeferrals.ToListAsync(cancellationToken);
         var deferralsByAccountAndDate = deferrals.ToDictionary(d => (d.AccountId, d.OriginalDate));
 
+        // Real partial payments already made toward an occurrence - reduce its remaining
+        // amount without excluding it entirely (unlike a confirmation), and independent of
+        // deferral status, same reasoning as above.
+        var partialPayments = await context.PartialPayments.ToListAsync(cancellationToken);
+        var partialPaymentsByAccountAndDate = partialPayments
+            .GroupBy(p => (p.AccountId, p.OriginalDate))
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // A partial payment's own auto-created OneTimeEvent (the "$1000 today" cash record)
+        // can coincidentally share its (AccountId, Date) with an unrelated deferral/
+        // confirmation/other partial payment on the same account (e.g. paid on the bill's own
+        // due date) - it must never be mistaken for that occurrence just because of that, so
+        // it's excluded from all three matching lookups below and always shown as a plain row.
+        var partialPaymentOwnEventIds = partialPayments.Select(p => p.OneTimeEventId).ToHashSet();
+
         var rows = new List<ForecastLedgerRow>();
-        var runningBalance = startingBalance;
-        foreach (var line in lines.OrderBy(l => deferralsByAccountAndDate.TryGetValue((l.AccountId, l.Date), out var d) ? d.DeferredToDate : l.Date))
+        foreach (var line in lines)
         {
+            if (line.SourceOneTimeEventId is { } sourceEventId && partialPaymentOwnEventIds.Contains(sourceEventId))
+            {
+                rows.Add(new ForecastLedgerRow
+                {
+                    Date = line.Date,
+                    Description = line.Description,
+                    Amount = line.Amount,
+                    RunningBalance = 0m,
+                    AccountId = line.AccountId,
+                    OriginalDate = line.Date
+                });
+                continue;
+            }
+
+            if (confirmationsByAccountAndDate.TryGetValue((line.AccountId, line.Date), out var confirmation))
+            {
+                matchedConfirmationIds.Add(confirmation.Id);
+                rows.Add(new ForecastLedgerRow
+                {
+                    Date = confirmation.EffectiveDate,
+                    Description = line.Description,
+                    Amount = confirmation.Amount,
+                    RunningBalance = 0m,
+                    AccountId = line.AccountId,
+                    OriginalDate = line.Date,
+                    IsExcluded = true,
+                    ExclusionReason = confirmation.Reason,
+                    ConfirmationId = confirmation.Id
+                });
+                continue;
+            }
+
             var isDeferred = deferralsByAccountAndDate.TryGetValue((line.AccountId, line.Date), out var deferral);
-            runningBalance += line.Amount;
+            var appliedPartialPayments = partialPaymentsByAccountAndDate.GetValueOrDefault((line.AccountId, line.Date), []);
             rows.Add(new ForecastLedgerRow
             {
                 Date = isDeferred ? deferral!.DeferredToDate : line.Date,
                 Description = line.Description,
-                Amount = line.Amount,
-                RunningBalance = runningBalance,
+                Amount = line.Amount + appliedPartialPayments.Sum(p => p.Amount),
+                RunningBalance = 0m,
                 AccountId = line.AccountId,
                 OriginalDate = line.Date,
+                PartialPayments = appliedPartialPayments
+                    .Select(p => new PartialPaymentSummary { PartialPaymentId = p.Id, Amount = p.Amount, PaidDate = p.PaidDate })
+                    .ToList(),
                 IsDeferred = isDeferred,
                 DeferralId = isDeferred ? deferral!.Id : null
             });
         }
 
+        // A confirmation whose original occurrence didn't get (re)generated this run (e.g. it
+        // has since aged outside the window) still needs to be reachable for Undo - shown from
+        // its own captured snapshot rather than tied to a live line.
+        foreach (var confirmation in confirmations.Where(c => !matchedConfirmationIds.Contains(c.Id)))
+        {
+            rows.Add(new ForecastLedgerRow
+            {
+                Date = confirmation.EffectiveDate,
+                Description = $"{confirmation.Account.Name} Payment",
+                Amount = confirmation.Amount,
+                RunningBalance = 0m,
+                AccountId = confirmation.AccountId,
+                OriginalDate = confirmation.OriginalDate,
+                IsExcluded = true,
+                ExclusionReason = confirmation.Reason,
+                ConfirmationId = confirmation.Id
+            });
+        }
+
+        var excludedVisibilityCutoff = asOfDate.AddDays(-ExcludedPaymentVisibilityDays);
+        rows = rows.Where(r => !r.IsExcluded || r.Date >= excludedVisibilityCutoff).OrderBy(r => r.Date).ToList();
+        var runningBalance = startingBalance;
+        foreach (var row in rows)
+        {
+            if (!row.IsExcluded)
+            {
+                runningBalance += row.Amount;
+            }
+            row.RunningBalance = runningBalance;
+        }
+
         return new ForecastResult
         {
             StartingBalance = startingBalance,
-            Rows = rows,
-            Confirmations = confirmations.Select(c => new ConfirmedPayment
-            {
-                ConfirmationId = c.Id, AccountId = c.AccountId, AccountName = c.Account.Name, OriginalDate = c.OriginalDate, Reason = c.Reason
-            }).ToList()
+            Rows = rows
         };
     }
 
     private static DateOnly ClampedDate(int year, int month, int day) =>
         new(year, month, Math.Min(day, DateTime.DaysInMonth(year, month)));
+
+    // A real payment can fall a little short of what's configured (e.g. an issuer raises the
+    // real minimum payment before the user updates it here) without meaning the obligation
+    // is unpaid - but a genuine partial payment must not be mistaken for a full one (see the
+    // Amex case this guards against: a $2,334 payment is not proof a $5,852 cycle is settled).
+    // Only a floor, not a band - overpaying by any amount always still counts as paid.
+    private const decimal ReconciliationAmountToleranceFraction = 0.05m;
 
     // Matches purely on CategoryId, deliberately not AccountId too - a debt account's
     // synthetic rule uses the debt account's own AccountId (see above, it's also the
@@ -191,6 +304,10 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
 
         var windowStart = line.Date.AddDays(-line.MatchWindowDays);
         var windowEnd = line.Date.AddDays(line.MatchWindowDays);
-        return transactions.Any(t => t.CategoryId == line.CategoryId && t.PostedDate is { } posted && posted >= windowStart && posted <= windowEnd);
+        var expectedAmount = Math.Abs(line.Amount);
+        var minimumAcceptedAmount = expectedAmount * (1m - ReconciliationAmountToleranceFraction);
+
+        return transactions.Any(t => t.CategoryId == line.CategoryId && t.PostedDate is { } posted && posted >= windowStart && posted <= windowEnd
+            && Math.Abs(t.Amount) >= minimumAcceptedAmount);
     }
 }

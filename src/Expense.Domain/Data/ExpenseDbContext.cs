@@ -19,6 +19,7 @@ public class ExpenseDbContext(DbContextOptions<ExpenseDbContext> options) : DbCo
     public DbSet<ImportRun> ImportRuns => Set<ImportRun>();
     public DbSet<PaymentDeferral> PaymentDeferrals => Set<PaymentDeferral>();
     public DbSet<PaymentConfirmation> PaymentConfirmations => Set<PaymentConfirmation>();
+    public DbSet<PartialPayment> PartialPayments => Set<PartialPayment>();
     public DbSet<SyncIssue> SyncIssues => Set<SyncIssue>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
