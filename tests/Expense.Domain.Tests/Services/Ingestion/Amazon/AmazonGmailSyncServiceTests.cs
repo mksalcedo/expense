@@ -20,6 +20,38 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
         31.77 USD
         """;
 
+    private const string SimplifiedNoItemDetailEmail = """
+        Amazon.com Order Confirmation
+        www.amazon.com/ref=TE_simp_tex_h
+        _______________________________________________________________________________________
+
+        Hello Mark,
+
+        Thank you for shopping with us.
+
+        We'll send a confirmation when your item ships.
+
+        View or manage your orders in Your Orders:
+        https://www.amazon.com/gp/css/order-details?orderId=113-1132648-3403446&ref_=TE_simp_od
+
+        Details
+        Order #113-1132648-3403446
+
+            Arriving:
+            Thursday, Jul 17, 5 p.m. - 10 p.m.
+
+            Ship to:
+            Mark
+            NORCROSS, GA
+
+            Order Total: $22.00
+
+        ======================================================================================
+        We hope to see you again soon.
+
+        Amazon.com
+        """;
+
     private const string RefundEmail = """
         Hello, We're writing to let you know we processed your refund of $23.31 for your Order 112-1510135-3538618 from JFP Western Inc..
 
@@ -94,6 +126,108 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
         Assert.Single(result.ParseFailures);
         Assert.Contains("could not extract a plain-text body", result.ParseFailures[0]);
         Assert.Contains("1 email(s) failed to parse", result.Run.Summary);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportsTheFallbackWindow_WhenNoPriorSuccessfulRunExists()
+    {
+        var lines = new List<SyncProgressLine>();
+        var sut = CreateSut();
+
+        await sut.RunAsync(Context, onProgress: lines.Add);
+
+        Assert.Contains(lines, l => l.Text.Contains("400 days") && !l.IsError);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportsTheComputedWindowStartDate_WhenAPriorSuccessfulRunExists()
+    {
+        Context.ImportRuns.Add(new ImportRun { Source = ImportSource.AmazonGmail, RanAt = new DateTimeOffset(2026, 7, 18, 9, 0, 0, TimeSpan.Zero), Success = true });
+        await Context.SaveChangesAsync();
+        var lines = new List<SyncProgressLine>();
+        var sut = CreateSut();
+
+        await sut.RunAsync(Context, onProgress: lines.Add);
+
+        Assert.Contains(lines, l => l.Text.Contains("2026/07/14")); // 4-day overlap before 7/18
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportsHowManyOrderAndRefundEmailsWereFound()
+    {
+        var lines = new List<SyncProgressLine>();
+        var sut = CreateSut(
+            orderMessages: [new GmailMessage("msg-1", "Your order", SingleItemOrderEmail, new DateOnly(2026, 7, 14))],
+            refundMessages: [new GmailMessage("msg-2", "Your refund", RefundEmail, new DateOnly(2026, 7, 15))]);
+
+        await sut.RunAsync(Context, onProgress: lines.Add);
+
+        Assert.Contains(lines, l => l.Text.Contains("Found 1 order"));
+        Assert.Contains(lines, l => l.Text.Contains("Found 1 refund"));
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportsEachOrderEmailsSubjectBodyAndResult()
+    {
+        var lines = new List<SyncProgressLine>();
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-1", "Your order", SingleItemOrderEmail, new DateOnly(2026, 7, 14))]);
+
+        await sut.RunAsync(Context, onProgress: lines.Add);
+
+        var messageLine = Assert.Single(lines, l => l.Text.Contains("Your order"));
+        Assert.Contains(SingleItemOrderEmail, messageLine.Text);
+        Assert.Contains("Qunol Ultra CoQ10", messageLine.Text);
+        Assert.False(messageLine.IsError);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportsANeedsReviewNote_ForAPlaceholderItem()
+    {
+        var lines = new List<SyncProgressLine>();
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-5", "Simplified order", SimplifiedNoItemDetailEmail, new DateOnly(2026, 7, 14))]);
+
+        await sut.RunAsync(Context, onProgress: lines.Add);
+
+        var messageLine = Assert.Single(lines, l => l.Text.Contains("Simplified order"));
+        Assert.Contains("needs review", messageLine.Text);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportsAParseFailureLine_MarkedAsError_IncludingTheBody()
+    {
+        var lines = new List<SyncProgressLine>();
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-4", "Garbled order", "not a real order body", new DateOnly(2026, 7, 14))]);
+
+        await sut.RunAsync(Context, onProgress: lines.Add);
+
+        var messageLine = Assert.Single(lines, l => l.Text.Contains("Garbled order"));
+        Assert.True(messageLine.IsError);
+        Assert.Contains("not a real order body", messageLine.Text);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportsANoPlainTextBodyFailureLine_MarkedAsError()
+    {
+        var lines = new List<SyncProgressLine>();
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-3", "HTML-only order", null, new DateOnly(2026, 7, 14))]);
+
+        await sut.RunAsync(Context, onProgress: lines.Add);
+
+        var messageLine = Assert.Single(lines, l => l.Text.Contains("HTML-only order"));
+        Assert.True(messageLine.IsError);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportsAFinalSummaryLine()
+    {
+        var lines = new List<SyncProgressLine>();
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-1", "Your order", SingleItemOrderEmail, new DateOnly(2026, 7, 14))]);
+
+        await sut.RunAsync(Context, onProgress: lines.Add);
+
+        var lastLine = lines[^1];
+        Assert.Contains("Done", lastLine.Text);
+        Assert.Contains("Order items added: 1", lastLine.Text);
     }
 
     [Fact]

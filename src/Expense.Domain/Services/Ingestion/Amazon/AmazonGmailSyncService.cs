@@ -29,24 +29,45 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
     // not a wide margin of safety.
     private const int OverlapDays = 4;
 
-    public async Task<AmazonGmailSyncResult> RunAsync(ExpenseDbContext context, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// onProgress, if given, is invoked synchronously and directly (not via IProgress&lt;T&gt;'s
+    /// SynchronizationContext-based marshaling) - the caller's own await chain already keeps
+    /// execution on whatever context it started on (e.g. a Blazor Server circuit), and a plain
+    /// callback is simpler to test deterministically than IProgress&lt;T&gt;'s ThreadPool-hop
+    /// when there's no ambient SynchronizationContext (as in a unit test).
+    /// </summary>
+    public async Task<AmazonGmailSyncResult> RunAsync(
+        ExpenseDbContext context, Action<SyncProgressLine>? onProgress = null, CancellationToken cancellationToken = default)
     {
-        var run = new ImportRun { Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = false };
+        var startedAt = DateTimeOffset.UtcNow;
+        var run = new ImportRun { Source = ImportSource.AmazonGmail, RanAt = startedAt, Success = false };
         var result = new AmazonGmailSyncResult { Run = run };
 
         try
         {
             var lastSuccessfulRun = await ImportRunLookup.GetLastSuccessfulRunAsync(context, ImportSource.AmazonGmail, cancellationToken);
-            var window = lastSuccessfulRun is null
-                ? FallbackLookbackWindow
-                : $"after:{lastSuccessfulRun.RanAt.AddDays(-OverlapDays):yyyy/MM/dd}";
+            string window;
+            if (lastSuccessfulRun is null)
+            {
+                window = FallbackLookbackWindow;
+                onProgress?.Invoke(new SyncProgressLine("No prior successful sync found - scanning the last 400 days."));
+            }
+            else
+            {
+                var windowStartDate = lastSuccessfulRun.RanAt.AddDays(-OverlapDays);
+                window = $"after:{windowStartDate:yyyy/MM/dd}";
+                onProgress?.Invoke(new SyncProgressLine(
+                    $"Last successful sync: {lastSuccessfulRun.RanAt.ToLocalTime():MM/dd/yyyy h:mm tt} - " +
+                    $"scanning since {windowStartDate:yyyy/MM/dd} ({OverlapDays}-day overlap)."));
+            }
 
             var orderMessages = await messageSource.SearchAsync($"from:auto-confirm@amazon.com {window}", cancellationToken);
+            onProgress?.Invoke(new SyncProgressLine($"Found {orderMessages.Count} order confirmation email(s) to check."));
             foreach (var message in orderMessages)
             {
                 if (message.PlainTextBody is null)
                 {
-                    await RecordParseFailureAsync(context, result, message, "could not extract a plain-text body", cancellationToken);
+                    await RecordParseFailureAsync(context, result, message, "could not extract a plain-text body", onProgress, cancellationToken);
                     continue;
                 }
 
@@ -55,19 +76,21 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
                     var summary = await importService.ImportOrderAsync(context, message.PlainTextBody, message.ReceivedDate, cancellationToken);
                     result.ItemsAdded += summary.ItemsAdded;
                     result.DuplicatesSkipped += summary.DuplicatesSkipped;
+                    onProgress?.Invoke(new SyncProgressLine(FormatMessageProgress(message, summary.ItemOutcomes)));
                 }
                 catch (FormatException ex)
                 {
-                    await RecordParseFailureAsync(context, result, message, ex.Message, cancellationToken);
+                    await RecordParseFailureAsync(context, result, message, ex.Message, onProgress, cancellationToken);
                 }
             }
 
             var refundMessages = await messageSource.SearchAsync($"from:payments-messages@amazon.com {window}", cancellationToken);
+            onProgress?.Invoke(new SyncProgressLine($"Found {refundMessages.Count} refund email(s) to check."));
             foreach (var message in refundMessages)
             {
                 if (message.PlainTextBody is null)
                 {
-                    await RecordParseFailureAsync(context, result, message, "could not extract a plain-text body", cancellationToken);
+                    await RecordParseFailureAsync(context, result, message, "could not extract a plain-text body", onProgress, cancellationToken);
                     continue;
                 }
 
@@ -76,10 +99,11 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
                     var summary = await importService.ImportRefundAsync(context, message.PlainTextBody, message.ReceivedDate, cancellationToken);
                     result.RefundsApplied += summary.RefundsApplied;
                     result.RefundDuplicatesSkipped += summary.RefundDuplicatesSkipped;
+                    onProgress?.Invoke(new SyncProgressLine(FormatMessageProgress(message, summary.ItemOutcomes)));
                 }
                 catch (FormatException ex)
                 {
-                    await RecordParseFailureAsync(context, result, message, ex.Message, cancellationToken);
+                    await RecordParseFailureAsync(context, result, message, ex.Message, onProgress, cancellationToken);
                 }
             }
 
@@ -92,6 +116,9 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
             run.Summary = $"Order items added: {result.ItemsAdded}, duplicates skipped: {result.DuplicatesSkipped}, refunds applied: {result.RefundsApplied}"
                 + (result.ParseFailures.Count > 0 ? $"; {result.ParseFailures.Count} email(s) failed to parse" : "")
                 + (reapplied.ItemsUpdated > 0 ? $"; re-categorized {reapplied.ItemsUpdated} previously pending item(s)" : "");
+
+            var elapsed = DateTimeOffset.UtcNow - startedAt;
+            onProgress?.Invoke(new SyncProgressLine($"Done in {elapsed.TotalSeconds:0.0}s - {run.Summary}"));
         }
         catch (Exception ex)
         {
@@ -100,6 +127,7 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
             // into a recorded, visible ImportRun on the Dashboard rather than an unhandled
             // error in the Blazor circuit.
             run.ErrorMessage = ex.Message;
+            onProgress?.Invoke(new SyncProgressLine($"FAILED: {ex.Message}", IsError: true));
         }
 
         context.ImportRuns.Add(run);
@@ -107,14 +135,33 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
         return result;
     }
 
+    // One block per email: subject/date header, the full raw body, and what happened -
+    // so reviewing the sync means looking at the actual evidence, not a description of it.
+    private static string FormatMessageProgress(GmailMessage message, IReadOnlyList<AmazonItemOutcome> outcomes)
+    {
+        var resultLines = outcomes.Count == 0
+            ? "(no items)"
+            : string.Join("\n\n", outcomes.Select(o =>
+                (o.WasDuplicate
+                    ? $"• Already imported (duplicate): {o.ItemTitle}"
+                    : $"• Added: {o.ItemTitle} - ${o.Price:N2} x{o.Quantity}")
+                + (o.NeedsReview ? " — needs review: check Amazon order page for item details" : "")));
+
+        return $"[{message.ReceivedDate:yyyy-MM-dd}] \"{message.Subject}\"\n--- Email body ---\n{message.PlainTextBody}\n--- Result ---\n{resultLines}";
+    }
+
     // Adds to the in-memory summary (for this run's point-in-time display/console output)
     // and, only the first time this exact message is ever seen, a durable SyncIssue row -
     // re-scanning the same still-broken message on a later run (within the overlap window)
     // must not create a duplicate row or resurrect one the user already dismissed.
     private static async Task RecordParseFailureAsync(
-        ExpenseDbContext context, AmazonGmailSyncResult result, GmailMessage message, string reason, CancellationToken cancellationToken)
+        ExpenseDbContext context, AmazonGmailSyncResult result, GmailMessage message, string reason, Action<SyncProgressLine>? onProgress,
+        CancellationToken cancellationToken)
     {
         result.ParseFailures.Add($"[{message.Id}] \"{message.Subject}\": {reason}");
+        onProgress?.Invoke(new SyncProgressLine(
+            $"[{message.ReceivedDate:yyyy-MM-dd}] \"{message.Subject}\"\n--- Email body ---\n{message.PlainTextBody ?? "(no plain-text body)"}\n--- Result ---\nFAILED: {reason}",
+            IsError: true));
 
         var exists = await context.SyncIssues.AnyAsync(i => i.Source == ImportSource.AmazonGmail && i.MessageId == message.Id, cancellationToken);
         if (!exists)

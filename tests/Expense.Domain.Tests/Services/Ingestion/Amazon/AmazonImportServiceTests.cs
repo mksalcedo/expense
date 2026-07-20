@@ -21,6 +21,38 @@ public class AmazonImportServiceTests : DatabaseTestBase
         31.77 USD
         """;
 
+    private const string SimplifiedNoItemDetailEmail = """
+        Amazon.com Order Confirmation
+        www.amazon.com/ref=TE_simp_tex_h
+        _______________________________________________________________________________________
+
+        Hello Mark,
+
+        Thank you for shopping with us.
+
+        We'll send a confirmation when your item ships.
+
+        View or manage your orders in Your Orders:
+        https://www.amazon.com/gp/css/order-details?orderId=113-1132648-3403446&ref_=TE_simp_od
+
+        Details
+        Order #113-1132648-3403446
+
+            Arriving:
+            Thursday, Jul 17, 5 p.m. - 10 p.m.
+
+            Ship to:
+            Mark
+            NORCROSS, GA
+
+            Order Total: $22.00
+
+        ======================================================================================
+        We hope to see you again soon.
+
+        Amazon.com
+        """;
+
     private const string RefundEmail = """
         Hello, We're writing to let you know we processed your refund of $23.31 for your Order 112-1510135-3538618 from JFP Western Inc..
 
@@ -69,6 +101,53 @@ public class AmazonImportServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ImportOrder_ReportsAnItemOutcome_ForEachItemAdded()
+    {
+        var summary = await _sut.ImportOrderAsync(Context, SingleItemEmail, new DateOnly(2026, 7, 14));
+
+        var outcome = Assert.Single(summary.ItemOutcomes);
+        Assert.Contains("Qunol Ultra CoQ10", outcome.ItemTitle);
+        Assert.Equal(29.97m, outcome.Price);
+        Assert.Equal(1, outcome.Quantity);
+        Assert.False(outcome.WasDuplicate);
+        Assert.False(outcome.NeedsReview);
+    }
+
+    [Fact]
+    public async Task ImportOrder_ReportsAnItemOutcome_ForADuplicateToo()
+    {
+        await _sut.ImportOrderAsync(Context, SingleItemEmail, new DateOnly(2026, 7, 14));
+
+        var summary = await _sut.ImportOrderAsync(Context, SingleItemEmail, new DateOnly(2026, 7, 14));
+
+        var outcome = Assert.Single(summary.ItemOutcomes);
+        Assert.Contains("Qunol Ultra CoQ10", outcome.ItemTitle);
+        Assert.True(outcome.WasDuplicate);
+    }
+
+    [Fact]
+    public async Task ImportOrder_ReportsAnItemOutcome_FlaggedNeedsReview_ForAPlaceholderItem()
+    {
+        var summary = await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 7, 14));
+
+        var outcome = Assert.Single(summary.ItemOutcomes);
+        Assert.False(outcome.WasDuplicate);
+        Assert.True(outcome.NeedsReview);
+    }
+
+    [Fact]
+    public async Task ImportOrder_ReportsAnItemOutcome_FlaggedNeedsReview_ForAPlaceholderDuplicateToo()
+    {
+        await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 7, 14));
+
+        var summary = await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 7, 14));
+
+        var outcome = Assert.Single(summary.ItemOutcomes);
+        Assert.True(outcome.WasDuplicate);
+        Assert.True(outcome.NeedsReview);
+    }
+
+    [Fact]
     public async Task ImportRefund_ProductMatch_CreatesItsOwnNegativeCategorizedEntry()
     {
         var officeSupplies = new Category { Name = "Office Supplies" };
@@ -84,6 +163,17 @@ public class AmazonImportServiceTests : DatabaseTestBase
         Assert.Equal(-23.31m, item.Price);
         Assert.Equal(officeSupplies.Id, item.CategoryId);
         Assert.NotNull(item.ProductId);
+    }
+
+    [Fact]
+    public async Task ImportRefund_ReportsAnItemOutcome()
+    {
+        var summary = await _sut.ImportRefundAsync(Context, RefundEmail, new DateOnly(2026, 7, 19));
+
+        var outcome = Assert.Single(summary.ItemOutcomes);
+        Assert.Contains("Cardstock", outcome.ItemTitle);
+        Assert.Equal(-23.31m, outcome.Price);
+        Assert.False(outcome.WasDuplicate);
     }
 
     [Fact]

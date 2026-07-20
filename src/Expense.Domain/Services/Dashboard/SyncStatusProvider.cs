@@ -58,7 +58,7 @@ public class SyncStatusProvider(
         return await simpleFinSync.RunAsync(context, accessUrl, accountMap, DateTimeOffset.UtcNow.AddDays(-45), cancellationToken);
     }
 
-    public async Task<ImportRun> RunAmazonGmailSyncAsync(CancellationToken cancellationToken = default)
+    public async Task<ImportRun> RunAmazonGmailSyncAsync(Action<SyncProgressLine>? onProgress = null, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
 
@@ -76,7 +76,7 @@ public class SyncStatusProvider(
         }
 
         var syncService = new AmazonGmailSyncService(new GoogleGmailMessageSource(gmail), amazonImportService, categorization);
-        var result = await syncService.RunAsync(context, cancellationToken);
+        var result = await syncService.RunAsync(context, onProgress, cancellationToken);
         return result.Run;
     }
 

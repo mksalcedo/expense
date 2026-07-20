@@ -36,6 +36,7 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
             if (exists)
             {
                 summary.DuplicatesSkipped++;
+                summary.ItemOutcomes.Add(new AmazonItemOutcome(item.ItemTitle, item.Price, item.Quantity, WasDuplicate: true, NeedsReview: item.NeedsReview));
                 continue;
             }
 
@@ -48,6 +49,7 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
 
             context.AmazonOrderItems.Add(item);
             summary.ItemsAdded++;
+            summary.ItemOutcomes.Add(new AmazonItemOutcome(item.ItemTitle, item.Price, item.Quantity, WasDuplicate: false, NeedsReview: item.NeedsReview));
         }
 
         await context.SaveChangesAsync(cancellationToken);
@@ -73,6 +75,7 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
             if (exists)
             {
                 summary.RefundDuplicatesSkipped++;
+                summary.ItemOutcomes.Add(new AmazonItemOutcome(refund.ItemTitle, refundPrice, 1, WasDuplicate: true));
                 continue;
             }
 
@@ -90,6 +93,7 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
                 CreatedAt = DateTimeOffset.UtcNow
             });
             summary.RefundsApplied++;
+            summary.ItemOutcomes.Add(new AmazonItemOutcome(refund.ItemTitle, refundPrice, 1, WasDuplicate: false));
         }
 
         await context.SaveChangesAsync(cancellationToken);

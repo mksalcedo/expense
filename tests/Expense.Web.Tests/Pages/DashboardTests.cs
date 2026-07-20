@@ -3,6 +3,7 @@ using Expense.Domain.Entities;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Dashboard;
 using Expense.Domain.Services.Forecast;
+using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Services.SpendingTracker;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -58,10 +59,21 @@ public class DashboardTests : BunitContext
             return Task.FromResult(NextSimpleFinRunResult);
         }
 
-        public Task<ImportRun> RunAmazonGmailSyncAsync(CancellationToken cancellationToken = default)
+        public List<SyncProgressLine> ProgressLinesToReport { get; set; } = [];
+        public TaskCompletionSource? RunGate { get; set; }
+
+        public async Task<ImportRun> RunAmazonGmailSyncAsync(Action<SyncProgressLine>? onProgress = null, CancellationToken cancellationToken = default)
         {
             AmazonGmailRunCount++;
-            return Task.FromResult(NextAmazonGmailRunResult);
+            foreach (var line in ProgressLinesToReport)
+            {
+                onProgress?.Invoke(line);
+            }
+            if (RunGate is not null)
+            {
+                await RunGate.Task;
+            }
+            return NextAmazonGmailRunResult;
         }
 
         public Task<List<SyncIssue>> GetActiveSyncIssuesAsync(CancellationToken cancellationToken = default) => Task.FromResult(ActiveSyncIssues);
@@ -344,6 +356,97 @@ public class DashboardTests : BunitContext
 
         Assert.Equal(1, fake.AmazonGmailRunCount);
         Assert.Equal(0, fake.SimpleFinRunCount);
+    }
+
+    [Fact]
+    public void Dashboard_NoModalShownBeforeAnAmazonSyncIsStarted()
+    {
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        Assert.Empty(cut.FindAll("#amazon-sync-modal"));
+    }
+
+    [Fact]
+    public void ClickingAmazonSync_OpensAModal_ShowingEachProgressLineAsItStreamsIn()
+    {
+        var fake = RegisterFakes();
+        fake.ProgressLinesToReport =
+        [
+            new SyncProgressLine("Found 1 order confirmation email(s) to check."),
+            new SyncProgressLine("[2026-07-18] \"Your order\"\n--- Email body ---\nOrder #\n113-TEST\n--- Result ---\nAdded: Widget - $9.99 x1")
+        ];
+        var cut = Render<Dashboard>();
+
+        cut.Find("#sync-amazon-btn").Click();
+
+        var modal = cut.Find("#amazon-sync-modal");
+        Assert.Contains("Found 1 order confirmation email(s)", modal.TextContent);
+        Assert.Contains("Order #", modal.TextContent);
+        Assert.Contains("113-TEST", modal.TextContent);
+        Assert.Contains("Added: Widget", modal.TextContent);
+    }
+
+    [Fact]
+    public void AmazonSyncModal_MarksErrorLinesDistinctly()
+    {
+        var fake = RegisterFakes();
+        fake.ProgressLinesToReport = [new SyncProgressLine("FAILED: could not parse", IsError: true)];
+        var cut = Render<Dashboard>();
+
+        cut.Find("#sync-amazon-btn").Click();
+
+        var errorLine = cut.Find("#amazon-sync-modal .sync-progress-error");
+        Assert.Contains("FAILED: could not parse", errorLine.TextContent);
+    }
+
+    [Fact]
+    public void AmazonSyncModal_HasNoCloseButtonWhileTheSyncIsStillRunning()
+    {
+        var fake = RegisterFakes();
+        fake.RunGate = new TaskCompletionSource();
+        var cut = Render<Dashboard>();
+
+        cut.Find("#sync-amazon-btn").Click();
+
+        Assert.Empty(cut.FindAll("#close-amazon-sync-modal-btn"));
+
+        fake.RunGate.SetResult();
+    }
+
+    [Fact]
+    public void AmazonSyncModal_ShowsACloseButton_OnceTheSyncCompletes()
+    {
+        var fake = RegisterFakes();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#sync-amazon-btn").Click();
+
+        Assert.NotNull(cut.Find("#close-amazon-sync-modal-btn"));
+    }
+
+    [Fact]
+    public void ClosingTheAmazonSyncModal_HidesIt()
+    {
+        RegisterFakes();
+        var cut = Render<Dashboard>();
+        cut.Find("#sync-amazon-btn").Click();
+
+        cut.Find("#close-amazon-sync-modal-btn").Click();
+
+        Assert.Empty(cut.FindAll("#amazon-sync-modal"));
+    }
+
+    [Fact]
+    public void ClickingSimpleFinSync_DoesNotOpenTheAmazonModal()
+    {
+        RegisterFakes();
+        var cut = Render<Dashboard>();
+
+        cut.Find("#sync-simplefin-btn").Click();
+
+        Assert.Empty(cut.FindAll("#amazon-sync-modal"));
     }
 
     [Fact]
