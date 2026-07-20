@@ -86,10 +86,17 @@ public class SyncStatusProvider(
         return await syncIssues.GetActiveAsync(context, cancellationToken);
     }
 
-    public async Task DismissSyncIssueAsync(int syncIssueId, CancellationToken cancellationToken = default)
+    public async Task ResolveSyncIssueAsync(
+        int syncIssueId, string orderId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await syncIssues.DismissAsync(context, syncIssueId, cancellationToken);
+        await syncIssues.ResolveAsync(context, syncIssueId, orderId, itemTitle, price, quantity, cancellationToken);
+    }
+
+    public async Task IgnoreSyncIssueAsync(int syncIssueId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await syncIssues.IgnoreAsNotAnOrderAsync(context, syncIssueId, cancellationToken);
     }
 
     private static async Task<ImportRun> RecordConfigurationFailureAsync(

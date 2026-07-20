@@ -108,11 +108,13 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
         Assert.Equal("msg-3", issue.MessageId);
         Assert.Equal("HTML-only order", issue.Subject);
         Assert.Contains("could not extract a plain-text body", issue.Reason);
-        Assert.False(issue.Dismissed);
+        Assert.Equal(new DateOnly(2026, 7, 14), issue.ReceivedDate);
+        Assert.Null(issue.Body); // no plain-text body is exactly why this one failed
+        Assert.Equal(SyncIssueResolution.None, issue.Resolution);
     }
 
     [Fact]
-    public async Task RunAsync_WhenAMessageFailsToParseWithAFormatException_AlsoPersistsADurableSyncIssue()
+    public async Task RunAsync_WhenAMessageFailsToParseWithAFormatException_AlsoPersistsADurableSyncIssue_IncludingTheRawBody()
     {
         var sut = CreateSut(orderMessages: [new GmailMessage("msg-4", "Garbled order", "not a real order body", new DateOnly(2026, 7, 14))]);
 
@@ -121,6 +123,7 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
         var issue = await Context.SyncIssues.SingleAsync();
         Assert.Equal("msg-4", issue.MessageId);
         Assert.Equal("Garbled order", issue.Subject);
+        Assert.Equal("not a real order body", issue.Body); // captured so resolving it never requires opening Gmail
     }
 
     [Fact]
@@ -135,18 +138,18 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task RunAsync_ReScanningADismissedIssue_DoesNotUndismissIt()
+    public async Task RunAsync_ReScanningAResolvedIssue_DoesNotResetItsResolution()
     {
         var sut = CreateSut(orderMessages: [new GmailMessage("msg-3", "HTML-only order", null, new DateOnly(2026, 7, 14))]);
         await sut.RunAsync(Context);
         var issue = await Context.SyncIssues.SingleAsync();
-        issue.Dismissed = true;
+        issue.Resolution = SyncIssueResolution.NotAnOrder;
         await Context.SaveChangesAsync();
 
         await sut.RunAsync(Context);
 
         var reloaded = await Context.SyncIssues.SingleAsync();
-        Assert.True(reloaded.Dismissed);
+        Assert.Equal(SyncIssueResolution.NotAnOrder, reloaded.Resolution);
     }
 
     [Fact]

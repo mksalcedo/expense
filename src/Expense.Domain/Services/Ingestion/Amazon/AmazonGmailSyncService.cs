@@ -125,6 +125,8 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
                 MessageId = message.Id,
                 Subject = message.Subject,
                 Reason = reason,
+                ReceivedDate = message.ReceivedDate,
+                Body = message.PlainTextBody,
                 CreatedAt = DateTimeOffset.UtcNow
             });
         }

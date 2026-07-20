@@ -66,7 +66,22 @@ public class DashboardTests : BunitContext
 
         public Task<List<SyncIssue>> GetActiveSyncIssuesAsync(CancellationToken cancellationToken = default) => Task.FromResult(ActiveSyncIssues);
 
-        public Task DismissSyncIssueAsync(int syncIssueId, CancellationToken cancellationToken = default)
+        public string? LastResolvedOrderId { get; private set; }
+        public string? LastResolvedItemTitle { get; private set; }
+        public decimal? LastResolvedPrice { get; private set; }
+        public int? LastResolvedQuantity { get; private set; }
+
+        public Task ResolveSyncIssueAsync(int syncIssueId, string orderId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+        {
+            LastResolvedOrderId = orderId;
+            LastResolvedItemTitle = itemTitle;
+            LastResolvedPrice = price;
+            LastResolvedQuantity = quantity;
+            ActiveSyncIssues = ActiveSyncIssues.Where(i => i.Id != syncIssueId).ToList();
+            return Task.CompletedTask;
+        }
+
+        public Task IgnoreSyncIssueAsync(int syncIssueId, CancellationToken cancellationToken = default)
         {
             ActiveSyncIssues = ActiveSyncIssues.Where(i => i.Id != syncIssueId).ToList();
             return Task.CompletedTask;
@@ -400,11 +415,16 @@ public class DashboardTests : BunitContext
     }
 
     [Fact]
-    public void Dashboard_WithActiveSyncIssues_ShowsThemForReview()
+    public void Dashboard_WithActiveSyncIssues_ShowsThemForReview_IncludingTheRawEmailBody()
     {
         var issues = new List<SyncIssue>
         {
-            new() { Id = 1, Source = ImportSource.AmazonGmail, MessageId = "msg-1", Subject = "Ordered: 2 Nutrition items", Reason = "could not find any items in the email body", CreatedAt = DateTimeOffset.UtcNow }
+            new()
+            {
+                Id = 1, Source = ImportSource.AmazonGmail, MessageId = "msg-1", Subject = "Ordered: 2 Nutrition items",
+                Reason = "could not find any items in the email body", ReceivedDate = new DateOnly(2026, 7, 18),
+                Body = "Order #\n113-3763507-4662613\n\nGrand Total:\n56.17 USD", CreatedAt = DateTimeOffset.UtcNow
+            }
         };
         RegisterFakes(activeSyncIssues: issues);
 
@@ -414,19 +434,44 @@ public class DashboardTests : BunitContext
         Assert.Contains("1", section.TextContent);
         Assert.Contains("Ordered: 2 Nutrition items", section.TextContent);
         Assert.Contains("could not find any items in the email body", section.TextContent);
+        Assert.Contains("07/18/2026", section.TextContent);
+        Assert.Contains("56.17 USD", section.TextContent); // the raw body, so Gmail never needs to be opened
     }
 
     [Fact]
-    public void DismissingASyncIssue_RemovesItFromTheList()
+    public void ResolvingASyncIssue_SubmitsTheEnteredDetails_AndRemovesItFromTheList()
     {
         var issues = new List<SyncIssue>
         {
-            new() { Id = 1, Source = ImportSource.AmazonGmail, MessageId = "msg-1", Subject = "Ordered: 2 Nutrition items", Reason = "could not find any items", CreatedAt = DateTimeOffset.UtcNow }
+            new() { Id = 1, Source = ImportSource.AmazonGmail, MessageId = "msg-1", Subject = "Ordered: 2 Nutrition items", Reason = "could not find any items", ReceivedDate = new DateOnly(2026, 7, 18), CreatedAt = DateTimeOffset.UtcNow }
+        };
+        var fake = RegisterFakes(activeSyncIssues: issues);
+        var cut = Render<Dashboard>();
+
+        cut.Find("#resolve-order-id-1").Change("113-3763507-4662613");
+        cut.Find("#resolve-item-title-1").Change("Some Supplement");
+        cut.Find("#resolve-price-1").Change("56.17");
+        cut.Find("#resolve-quantity-1").Change("2");
+        cut.Find("#resolve-btn-1").Click();
+
+        Assert.Equal("113-3763507-4662613", fake.LastResolvedOrderId);
+        Assert.Equal("Some Supplement", fake.LastResolvedItemTitle);
+        Assert.Equal(56.17m, fake.LastResolvedPrice);
+        Assert.Equal(2, fake.LastResolvedQuantity);
+        Assert.Empty(cut.FindAll("#sync-issues-section"));
+    }
+
+    [Fact]
+    public void IgnoringASyncIssueAsNotAnOrder_RemovesItFromTheList()
+    {
+        var issues = new List<SyncIssue>
+        {
+            new() { Id = 1, Source = ImportSource.AmazonGmail, MessageId = "msg-1", Subject = "An Amazon Gift Card you sent was received", Reason = "could not find an 'Order #' line", ReceivedDate = new DateOnly(2026, 7, 18), CreatedAt = DateTimeOffset.UtcNow }
         };
         RegisterFakes(activeSyncIssues: issues);
         var cut = Render<Dashboard>();
 
-        cut.Find("#dismiss-sync-issue-btn-1").Click();
+        cut.Find("#ignore-not-order-btn-1").Click();
 
         Assert.Empty(cut.FindAll("#sync-issues-section"));
     }

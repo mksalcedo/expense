@@ -14,5 +14,6 @@ public class SyncIssueConfiguration : IEntityTypeConfiguration<SyncIssue>
         builder.Property(i => i.Subject).HasMaxLength(500);
         builder.Property(i => i.Reason).HasMaxLength(1000);
         builder.HasIndex(i => new { i.Source, i.MessageId }).IsUnique();
+        builder.HasOne(i => i.ResolvedAmazonOrderItem).WithMany().HasForeignKey(i => i.ResolvedAmazonOrderItemId);
     }
 }

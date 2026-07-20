@@ -95,4 +95,33 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
         await context.SaveChangesAsync(cancellationToken);
         return summary;
     }
+
+    /// <summary>
+    /// Adds a single item the user typed in by hand - e.g. resolving a SyncIssue whose
+    /// email never parsed into a real order at all. Same product-match-or-pending
+    /// treatment as a normal import; no dedup check, since this is a deliberate one-off
+    /// action rather than a re-scannable sync.
+    /// </summary>
+    public async Task<AmazonOrderItem> AddManualItemAsync(
+        ExpenseDbContext context, string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity,
+        CancellationToken cancellationToken = default)
+    {
+        var products = await context.Products.ToListAsync(cancellationToken);
+        var match = products.FirstOrDefault(p => MerchantPatternMatcher.Matches(itemTitle, p.ProductPattern));
+
+        var item = new AmazonOrderItem
+        {
+            OrderId = orderId,
+            OrderDate = orderDate,
+            ItemTitle = itemTitle,
+            Price = price,
+            Quantity = quantity,
+            ProductId = match?.Id,
+            CategoryId = match?.CategoryId,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        context.AmazonOrderItems.Add(item);
+        await context.SaveChangesAsync(cancellationToken);
+        return item;
+    }
 }

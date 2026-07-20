@@ -10,5 +10,6 @@ public interface ISyncStatusProvider
     Task<ImportRun> RunAmazonGmailSyncAsync(CancellationToken cancellationToken = default);
 
     Task<List<SyncIssue>> GetActiveSyncIssuesAsync(CancellationToken cancellationToken = default);
-    Task DismissSyncIssueAsync(int syncIssueId, CancellationToken cancellationToken = default);
+    Task ResolveSyncIssueAsync(int syncIssueId, string orderId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default);
+    Task IgnoreSyncIssueAsync(int syncIssueId, CancellationToken cancellationToken = default);
 }

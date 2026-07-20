@@ -135,4 +135,36 @@ public class AmazonImportServiceTests : DatabaseTestBase
         var count = await Context.AmazonOrderItems.CountAsync(i => i.OrderId == "112-1510135-3538618");
         Assert.Equal(1, count); // still just one row, not two
     }
+
+    [Fact]
+    public async Task AddManualItem_CreatesTheItem_WithProductMatchApplied()
+    {
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+        Context.Products.Add(new Product { ProductPattern = "%QUNOL%", CategoryId = supplements.Id });
+        await Context.SaveChangesAsync();
+
+        var item = await _sut.AddManualItemAsync(Context, "113-MANUAL", new DateOnly(2026, 7, 18), "Qunol Ultra CoQ10 100mg", 29.97m, 1);
+
+        var reloaded = await Context.AmazonOrderItems.SingleAsync(i => i.Id == item.Id);
+        Assert.Equal("113-MANUAL", reloaded.OrderId);
+        Assert.Equal(new DateOnly(2026, 7, 18), reloaded.OrderDate);
+        Assert.Equal("Qunol Ultra CoQ10 100mg", reloaded.ItemTitle);
+        Assert.Equal(29.97m, reloaded.Price);
+        Assert.Equal(1, reloaded.Quantity);
+        Assert.Equal(supplements.Id, reloaded.CategoryId);
+        Assert.NotNull(reloaded.ProductId);
+    }
+
+    [Fact]
+    public async Task AddManualItem_NoMatchingProduct_LeavesPendingCategorization()
+    {
+        var item = await _sut.AddManualItemAsync(Context, "113-MANUAL", new DateOnly(2026, 7, 18), "Some Unknown Thing", 10m, 2);
+
+        var reloaded = await Context.AmazonOrderItems.SingleAsync(i => i.Id == item.Id);
+        Assert.Null(reloaded.ProductId);
+        Assert.Null(reloaded.CategoryId);
+        Assert.Equal(2, reloaded.Quantity);
+    }
 }
