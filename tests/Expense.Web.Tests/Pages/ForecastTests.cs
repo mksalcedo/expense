@@ -405,6 +405,50 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
+    public void ActionButtons_AreIconsWithADescriptiveTooltip_NotFullText()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var deferBtn = cut.Find("#defer-btn-0");
+        Assert.Equal("Defer...", deferBtn.GetAttribute("title"));
+        Assert.NotEqual("Defer...", deferBtn.TextContent.Trim());
+
+        var confirmBtn = cut.Find("#confirm-btn-0");
+        Assert.Equal("Confirm paid", confirmBtn.GetAttribute("title"));
+        Assert.NotEqual("Confirm paid", confirmBtn.TextContent.Trim());
+
+        var overrideBtn = cut.Find("#override-btn-0");
+        Assert.Equal("Override", overrideBtn.GetAttribute("title"));
+        Assert.NotEqual("Override", overrideBtn.TextContent.Trim());
+    }
+
+    [Fact]
+    public void RemoveDeferralButton_IsAnIconWithADescriptiveTooltip()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#defer-date-0").Change("2026-08-22");
+        cut.Find("#defer-btn-0").Click();
+
+        var removeBtn = cut.Find("#remove-deferral-btn-0");
+        Assert.Equal("Remove deferral", removeBtn.GetAttribute("title"));
+        Assert.NotEqual("Remove deferral", removeBtn.TextContent.Trim());
+    }
+
+    [Fact]
     public void Forecast_HasAnExportToExcelLink()
     {
         var result = new ForecastResult { StartingBalance = 1000m, Rows = [] };

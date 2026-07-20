@@ -53,16 +53,16 @@ else
                     <td style="@CellStyle()">
                         @if (row.IsDeferred)
                         {
-                            <button id="remove-deferral-btn-@index" @onclick="() => RemoveDeferralAsync(row)">Remove deferral</button>
+                            <button id="remove-deferral-btn-@index" title="Remove deferral" @onclick="() => RemoveDeferralAsync(row)">&#8617;</button>
                         }
                         else
                         {
                             <input id="defer-date-@index" type="date" value="@GetDeferDate(index, row).ToString("yyyy-MM-dd")"
                                    @onchange="e => _deferDateInputs[index] = DateOnly.Parse((string)e.Value!)" />
-                            <button id="defer-btn-@index" @onclick="() => DeferAsync(row, index)">Defer...</button>
+                            <button id="defer-btn-@index" title="Defer..." @onclick="() => DeferAsync(row, index)">&#128337;</button>
                         }
-                        <button id="confirm-btn-@index" @onclick="() => ConfirmAsync(row)">Confirm paid</button>
-                        <button id="override-btn-@index" @onclick="() => OverrideAsync(row)">Override</button>
+                        <button id="confirm-btn-@index" title="Confirm paid" @onclick="() => ConfirmAsync(row)">&#10003;</button>
+                        <button id="override-btn-@index" title="Override" @onclick="() => OverrideAsync(row)">&#8644;</button>
                     </td>
                 </tr>
             }
