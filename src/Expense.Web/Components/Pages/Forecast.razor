@@ -51,18 +51,20 @@ else
                     <td style="@CellStyle(rightAlign: true)">@row.Amount.ToString("N2")</td>
                     <td style="@CellStyle(rightAlign: true)">@row.RunningBalance.ToString("N2")</td>
                     <td style="@CellStyle()">
-                        @if (row.IsDeferred)
-                        {
-                            <button id="remove-deferral-btn-@index" title="Remove deferral" @onclick="() => RemoveDeferralAsync(row)">&#8617;</button>
-                        }
-                        else
-                        {
-                            <input id="defer-date-@index" type="date" value="@GetDeferDate(index, row).ToString("yyyy-MM-dd")"
-                                   @onchange="e => _deferDateInputs[index] = DateOnly.Parse((string)e.Value!)" />
-                            <button id="defer-btn-@index" title="Defer..." @onclick="() => DeferAsync(row, index)">&#128337;</button>
-                        }
-                        <button id="confirm-btn-@index" title="Confirm paid" @onclick="() => ConfirmAsync(row)">&#10003;</button>
-                        <button id="override-btn-@index" title="Override" @onclick="() => OverrideAsync(row)">&#8644;</button>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            @if (row.IsDeferred)
+                            {
+                                <button id="remove-deferral-btn-@index" title="Remove deferral" @onclick="() => RemoveDeferralAsync(row)">&#8617;</button>
+                            }
+                            else
+                            {
+                                <input id="defer-date-@index" type="date" value="@GetDeferDate(index, row).ToString("yyyy-MM-dd")"
+                                       @onchange="e => _deferDateInputs[index] = DateOnly.Parse((string)e.Value!)" />
+                                <button id="defer-btn-@index" title="Defer..." @onclick="() => DeferAsync(row, index)">&#128337;</button>
+                            }
+                            <button id="confirm-btn-@index" title="Confirm paid" @onclick="() => ConfirmAsync(row)">&#10003;</button>
+                            <button id="override-btn-@index" title="Override" @onclick="() => OverrideAsync(row)">&#8644;</button>
+                        </div>
                     </td>
                 </tr>
             }
