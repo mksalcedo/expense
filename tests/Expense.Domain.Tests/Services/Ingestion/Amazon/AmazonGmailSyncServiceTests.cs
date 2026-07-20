@@ -97,6 +97,59 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task RunAsync_WhenAMessageHasNoPlainTextBody_AlsoPersistsADurableSyncIssue()
+    {
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-3", "HTML-only order", null, new DateOnly(2026, 7, 14))]);
+
+        await sut.RunAsync(Context);
+
+        var issue = await Context.SyncIssues.SingleAsync();
+        Assert.Equal(ImportSource.AmazonGmail, issue.Source);
+        Assert.Equal("msg-3", issue.MessageId);
+        Assert.Equal("HTML-only order", issue.Subject);
+        Assert.Contains("could not extract a plain-text body", issue.Reason);
+        Assert.False(issue.Dismissed);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenAMessageFailsToParseWithAFormatException_AlsoPersistsADurableSyncIssue()
+    {
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-4", "Garbled order", "not a real order body", new DateOnly(2026, 7, 14))]);
+
+        await sut.RunAsync(Context);
+
+        var issue = await Context.SyncIssues.SingleAsync();
+        Assert.Equal("msg-4", issue.MessageId);
+        Assert.Equal("Garbled order", issue.Subject);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReScanningTheSameFailingMessage_DoesNotDuplicateTheSyncIssue()
+    {
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-3", "HTML-only order", null, new DateOnly(2026, 7, 14))]);
+
+        await sut.RunAsync(Context);
+        await sut.RunAsync(Context);
+
+        Assert.Equal(1, await Context.SyncIssues.CountAsync());
+    }
+
+    [Fact]
+    public async Task RunAsync_ReScanningADismissedIssue_DoesNotUndismissIt()
+    {
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-3", "HTML-only order", null, new DateOnly(2026, 7, 14))]);
+        await sut.RunAsync(Context);
+        var issue = await Context.SyncIssues.SingleAsync();
+        issue.Dismissed = true;
+        await Context.SaveChangesAsync();
+
+        await sut.RunAsync(Context);
+
+        var reloaded = await Context.SyncIssues.SingleAsync();
+        Assert.True(reloaded.Dismissed);
+    }
+
+    [Fact]
     public async Task RunAsync_OnSuccess_AlsoSweepsUpOtherStillPendingItemsAgainstCurrentProducts()
     {
         var supplements = new Category { Name = "Supplements" };

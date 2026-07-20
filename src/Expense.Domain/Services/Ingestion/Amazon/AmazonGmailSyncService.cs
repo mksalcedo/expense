@@ -46,7 +46,7 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
             {
                 if (message.PlainTextBody is null)
                 {
-                    result.ParseFailures.Add($"[{message.Id}] \"{message.Subject}\": could not extract a plain-text body");
+                    await RecordParseFailureAsync(context, result, message, "could not extract a plain-text body", cancellationToken);
                     continue;
                 }
 
@@ -58,7 +58,7 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
                 }
                 catch (FormatException ex)
                 {
-                    result.ParseFailures.Add($"[{message.Id}] \"{message.Subject}\": {ex.Message}");
+                    await RecordParseFailureAsync(context, result, message, ex.Message, cancellationToken);
                 }
             }
 
@@ -67,7 +67,7 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
             {
                 if (message.PlainTextBody is null)
                 {
-                    result.ParseFailures.Add($"[{message.Id}] \"{message.Subject}\": could not extract a plain-text body");
+                    await RecordParseFailureAsync(context, result, message, "could not extract a plain-text body", cancellationToken);
                     continue;
                 }
 
@@ -79,7 +79,7 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
                 }
                 catch (FormatException ex)
                 {
-                    result.ParseFailures.Add($"[{message.Id}] \"{message.Subject}\": {ex.Message}");
+                    await RecordParseFailureAsync(context, result, message, ex.Message, cancellationToken);
                 }
             }
 
@@ -105,5 +105,28 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
         context.ImportRuns.Add(run);
         await context.SaveChangesAsync(cancellationToken);
         return result;
+    }
+
+    // Adds to the in-memory summary (for this run's point-in-time display/console output)
+    // and, only the first time this exact message is ever seen, a durable SyncIssue row -
+    // re-scanning the same still-broken message on a later run (within the overlap window)
+    // must not create a duplicate row or resurrect one the user already dismissed.
+    private static async Task RecordParseFailureAsync(
+        ExpenseDbContext context, AmazonGmailSyncResult result, GmailMessage message, string reason, CancellationToken cancellationToken)
+    {
+        result.ParseFailures.Add($"[{message.Id}] \"{message.Subject}\": {reason}");
+
+        var exists = await context.SyncIssues.AnyAsync(i => i.Source == ImportSource.AmazonGmail && i.MessageId == message.Id, cancellationToken);
+        if (!exists)
+        {
+            context.SyncIssues.Add(new SyncIssue
+            {
+                Source = ImportSource.AmazonGmail,
+                MessageId = message.Id,
+                Subject = message.Subject,
+                Reason = reason,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
     }
 }

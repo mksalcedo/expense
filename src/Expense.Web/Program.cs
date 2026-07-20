@@ -71,6 +71,7 @@ builder.Services.AddScoped<AmazonOrderEmailParser>();
 builder.Services.AddScoped<AmazonRefundEmailParser>();
 builder.Services.AddScoped<AmazonImportService>();
 
+builder.Services.AddScoped<SyncIssueService>();
 builder.Services.AddScoped<ISyncStatusProvider, SyncStatusProvider>();
 
 builder.Services.AddScoped<TransactionManagementService>();

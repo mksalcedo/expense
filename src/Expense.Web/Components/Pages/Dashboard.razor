@@ -73,6 +73,10 @@ else
                     @(_simpleFinRunning ? "Syncing..." : "Sync Bank Accounts (SimpleFin)")
                 </button>
                 <p id="sync-simplefin-status">@FormatRunStatus(_lastSimpleFinRun)</p>
+                @if (_lastSimpleFinRun?.Summary is { } simpleFinSummary)
+                {
+                    <p id="sync-simplefin-summary">@simpleFinSummary</p>
+                }
             </div>
             <div>
                 <button id="sync-amazon-btn" @onclick="RunAmazonGmailSyncAsync" disabled="@_amazonRunning">
@@ -80,7 +84,27 @@ else
                 </button>
                 <p><em>Scans Gmail for Amazon order/refund emails - this is how Amazon purchases get into Expense.</em></p>
                 <p id="sync-amazon-status">@FormatRunStatus(_lastAmazonRun)</p>
+                @if (_lastAmazonRun?.Summary is { } amazonSummary)
+                {
+                    <p id="sync-amazon-summary">@amazonSummary</p>
+                }
             </div>
+
+            @if (_syncIssues.Count > 0)
+            {
+                <div id="sync-issues-section">
+                    <h3>Sync issues need review (@_syncIssues.Count)</h3>
+                    <ul>
+                        @foreach (var issue in _syncIssues)
+                        {
+                            <li id="sync-issue-@issue.Id">
+                                @issue.Subject &mdash; @issue.Reason
+                                <button id="dismiss-sync-issue-btn-@issue.Id" @onclick="() => DismissSyncIssueAsync(issue.Id)">Dismiss</button>
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
         </div>
     </div>
 }
@@ -93,6 +117,7 @@ else
     private ImportRun? _lastAmazonRun;
     private bool _simpleFinRunning;
     private bool _amazonRunning;
+    private List<SyncIssue> _syncIssues = [];
 
     private int PendingGroupCount => (_reviewQueue?.TransactionGroups.Count ?? 0) + (_reviewQueue?.AmazonItemGroups.Count ?? 0);
 
@@ -101,6 +126,7 @@ else
         await RefreshDashboardDataAsync();
         _lastSimpleFinRun = await SyncStatusProvider.GetLastSimpleFinRunAsync();
         _lastAmazonRun = await SyncStatusProvider.GetLastAmazonGmailRunAsync();
+        _syncIssues = await SyncStatusProvider.GetActiveSyncIssuesAsync();
     }
 
     private async Task RunSimpleFinSyncAsync()
@@ -124,11 +150,18 @@ else
         {
             _lastAmazonRun = await SyncStatusProvider.RunAmazonGmailSyncAsync();
             await RefreshDashboardDataAsync();
+            _syncIssues = await SyncStatusProvider.GetActiveSyncIssuesAsync();
         }
         finally
         {
             _amazonRunning = false;
         }
+    }
+
+    private async Task DismissSyncIssueAsync(int syncIssueId)
+    {
+        await SyncStatusProvider.DismissSyncIssueAsync(syncIssueId);
+        _syncIssues = await SyncStatusProvider.GetActiveSyncIssuesAsync();
     }
 
     // A sync can add transactions/orders that change every figure shown on this page -

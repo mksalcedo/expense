@@ -47,6 +47,7 @@ public class DashboardTests : BunitContext
         public int AmazonGmailRunCount { get; private set; }
         public ImportRun NextSimpleFinRunResult { get; set; } = new() { Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" };
         public ImportRun NextAmazonGmailRunResult { get; set; } = new() { Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" };
+        public List<SyncIssue> ActiveSyncIssues { get; set; } = [];
 
         public Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastSimpleFinRun);
         public Task<ImportRun?> GetLastAmazonGmailRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastAmazonRun);
@@ -61,6 +62,14 @@ public class DashboardTests : BunitContext
         {
             AmazonGmailRunCount++;
             return Task.FromResult(NextAmazonGmailRunResult);
+        }
+
+        public Task<List<SyncIssue>> GetActiveSyncIssuesAsync(CancellationToken cancellationToken = default) => Task.FromResult(ActiveSyncIssues);
+
+        public Task DismissSyncIssueAsync(int syncIssueId, CancellationToken cancellationToken = default)
+        {
+            ActiveSyncIssues = ActiveSyncIssues.Where(i => i.Id != syncIssueId).ToList();
+            return Task.CompletedTask;
         }
     }
 
@@ -106,12 +115,12 @@ public class DashboardTests : BunitContext
         Categories = []
     };
 
-    private FakeSyncStatusProvider RegisterFakes(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null)
+    private FakeSyncStatusProvider RegisterFakes(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, List<SyncIssue>? activeSyncIssues = null)
     {
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(MakeForecast()));
         Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeSpendingTracker()));
         Services.AddSingleton<IReviewQueueProvider>(new FakeReviewQueueProvider(MakeReviewQueue()));
-        var syncStatusProvider = new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun);
+        var syncStatusProvider = new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun) { ActiveSyncIssues = activeSyncIssues ?? [] };
         Services.AddSingleton<ISyncStatusProvider>(syncStatusProvider);
         return syncStatusProvider;
     }
@@ -363,5 +372,79 @@ public class DashboardTests : BunitContext
         var cut = Render<Dashboard>();
 
         Assert.DoesNotContain("Manage", cut.Markup);
+    }
+
+    [Fact]
+    public void Dashboard_ShowsTheLastRunsSummary_NotJustTheTimestamp()
+    {
+        var lastAmazonRun = new ImportRun
+        {
+            Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true,
+            Summary = "Order items added: 3, duplicates skipped: 319, refunds applied: 0; 2 email(s) failed to parse"
+        };
+        RegisterFakes(lastAmazonRun: lastAmazonRun);
+
+        var cut = Render<Dashboard>();
+
+        Assert.Contains("2 email(s) failed to parse", cut.Markup);
+    }
+
+    [Fact]
+    public void Dashboard_WithNoSyncIssues_DoesNotShowTheSyncIssuesSection()
+    {
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        Assert.Empty(cut.FindAll("#sync-issues-section"));
+    }
+
+    [Fact]
+    public void Dashboard_WithActiveSyncIssues_ShowsThemForReview()
+    {
+        var issues = new List<SyncIssue>
+        {
+            new() { Id = 1, Source = ImportSource.AmazonGmail, MessageId = "msg-1", Subject = "Ordered: 2 Nutrition items", Reason = "could not find any items in the email body", CreatedAt = DateTimeOffset.UtcNow }
+        };
+        RegisterFakes(activeSyncIssues: issues);
+
+        var cut = Render<Dashboard>();
+
+        var section = cut.Find("#sync-issues-section");
+        Assert.Contains("1", section.TextContent);
+        Assert.Contains("Ordered: 2 Nutrition items", section.TextContent);
+        Assert.Contains("could not find any items in the email body", section.TextContent);
+    }
+
+    [Fact]
+    public void DismissingASyncIssue_RemovesItFromTheList()
+    {
+        var issues = new List<SyncIssue>
+        {
+            new() { Id = 1, Source = ImportSource.AmazonGmail, MessageId = "msg-1", Subject = "Ordered: 2 Nutrition items", Reason = "could not find any items", CreatedAt = DateTimeOffset.UtcNow }
+        };
+        RegisterFakes(activeSyncIssues: issues);
+        var cut = Render<Dashboard>();
+
+        cut.Find("#dismiss-sync-issue-btn-1").Click();
+
+        Assert.Empty(cut.FindAll("#sync-issues-section"));
+    }
+
+    [Fact]
+    public void Dashboard_AfterAmazonSync_RefreshesTheSyncIssuesList()
+    {
+        var fake = RegisterFakes();
+        var cut = Render<Dashboard>();
+        Assert.Empty(cut.FindAll("#sync-issues-section"));
+
+        fake.ActiveSyncIssues =
+        [
+            new SyncIssue { Id = 2, Source = ImportSource.AmazonGmail, MessageId = "msg-2", Subject = "New failure", Reason = "bad format", CreatedAt = DateTimeOffset.UtcNow }
+        ];
+        cut.Find("#sync-amazon-btn").Click();
+
+        Assert.NotNull(cut.Find("#sync-issues-section"));
+        Assert.Contains("New failure", cut.Markup);
     }
 }

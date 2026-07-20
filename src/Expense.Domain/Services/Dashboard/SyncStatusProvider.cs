@@ -22,7 +22,8 @@ public class SyncStatusProvider(
     SimpleFinSyncService simpleFinSync,
     AmazonImportService amazonImportService,
     CategorizationService categorization,
-    IConfiguration configuration) : ISyncStatusProvider
+    IConfiguration configuration,
+    SyncIssueService syncIssues) : ISyncStatusProvider
 {
     public async Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default)
     {
@@ -77,6 +78,18 @@ public class SyncStatusProvider(
         var syncService = new AmazonGmailSyncService(new GoogleGmailMessageSource(gmail), amazonImportService, categorization);
         var result = await syncService.RunAsync(context, cancellationToken);
         return result.Run;
+    }
+
+    public async Task<List<SyncIssue>> GetActiveSyncIssuesAsync(CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await syncIssues.GetActiveAsync(context, cancellationToken);
+    }
+
+    public async Task DismissSyncIssueAsync(int syncIssueId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await syncIssues.DismissAsync(context, syncIssueId, cancellationToken);
     }
 
     private static async Task<ImportRun> RecordConfigurationFailureAsync(
