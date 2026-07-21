@@ -18,42 +18,59 @@ public class TransactionManagementService(CategorizationService categorization)
     public const int UncategorizedFilterValue = 0;
 
     public async Task<TransactionsPageResult> GetTransactionsAsync(
-        ExpenseDbContext context, string? searchText, int? categoryFilter, bool needsReviewOnly = false, int page = 1, int pageSize = 20)
+        ExpenseDbContext context, string? searchText, int? categoryFilter, bool needsReviewOnly = false,
+        TransactionSource? sourceFilter = null, int? accountFilter = null, int page = 1, int pageSize = 20)
     {
-        var bankTransactions = await context.BankTransactions
-            .Include(t => t.Category)
-            .Where(t => !t.IsAmazonMerchant)
-            .ToListAsync();
-
-        var amazonItems = await context.AmazonOrderItems
-            .Include(i => i.Category)
-            .ToListAsync();
-
         var rows = new List<TransactionRow>();
-        rows.AddRange(bankTransactions.Select(t => new TransactionRow
+
+        // An account filter only ever matches bank rows - Amazon items aren't tied to a
+        // specific account (see AmazonOrderItem) - so it implicitly excludes Amazon too.
+        if (sourceFilter != TransactionSource.Amazon)
         {
-            Source = TransactionSource.Bank,
-            Id = t.Id,
-            Date = t.TransactionDate,
-            Description = t.Description,
-            Amount = t.Amount,
-            CategoryId = t.CategoryId,
-            CategoryName = t.Category?.Name
-        }));
-        rows.AddRange(amazonItems.Select(i => new TransactionRow
+            var bankQuery = context.BankTransactions
+                .Include(t => t.Category)
+                .Include(t => t.Account)
+                .Where(t => !t.IsAmazonMerchant)
+                .AsQueryable();
+            if (accountFilter is { } accountId)
+            {
+                bankQuery = bankQuery.Where(t => t.AccountId == accountId);
+            }
+
+            var bankTransactions = await bankQuery.ToListAsync();
+            rows.AddRange(bankTransactions.Select(t => new TransactionRow
+            {
+                Source = TransactionSource.Bank,
+                Id = t.Id,
+                Date = t.TransactionDate,
+                Description = t.Description,
+                Amount = t.Amount,
+                CategoryId = t.CategoryId,
+                CategoryName = t.Category?.Name,
+                AccountName = t.Account.Name
+            }));
+        }
+
+        if (sourceFilter != TransactionSource.Bank && accountFilter is null)
         {
-            Source = TransactionSource.Amazon,
-            Id = i.Id,
-            Date = i.OrderDate,
-            Description = i.ItemTitle,
-            Amount = -(i.Price * i.Quantity + i.TaxAllocated - (i.RefundAmount ?? 0m)),
-            CategoryId = i.CategoryId,
-            CategoryName = i.Category?.Name,
-            OrderId = i.OrderId,
-            Price = i.Price,
-            Quantity = i.Quantity,
-            NeedsReview = i.NeedsReview
-        }));
+            var amazonItems = await context.AmazonOrderItems
+                .Include(i => i.Category)
+                .ToListAsync();
+            rows.AddRange(amazonItems.Select(i => new TransactionRow
+            {
+                Source = TransactionSource.Amazon,
+                Id = i.Id,
+                Date = i.OrderDate,
+                Description = i.ItemTitle,
+                Amount = -(i.Price * i.Quantity + i.TaxAllocated - (i.RefundAmount ?? 0m)),
+                CategoryId = i.CategoryId,
+                CategoryName = i.Category?.Name,
+                OrderId = i.OrderId,
+                Price = i.Price,
+                Quantity = i.Quantity,
+                NeedsReview = i.NeedsReview
+            }));
+        }
 
         if (!string.IsNullOrWhiteSpace(searchText))
         {

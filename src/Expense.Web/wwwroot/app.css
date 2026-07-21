@@ -44,6 +44,22 @@ th, td {
     text-align: right;
 }
 
+/* A right-aligned number input's native up/down spinner reserves space on the box's right
+   edge, so its digits stop short of where plain right-aligned text sits in an adjacent
+   column (e.g. Transactions' Amazon price/quantity vs. Bank amounts) - removing it lets the
+   decimal points actually line up. */
+.no-spinner::-webkit-inner-spin-button,
+.no-spinner::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.no-spinner {
+    -moz-appearance: textfield;
+    -webkit-appearance: textfield;
+    appearance: textfield;
+}
+
 th {
     background: var(--color-primary-light);
     color: var(--color-primary-dark);
@@ -56,6 +72,18 @@ button, select, input[type=text], input[type=number], input[type=date], input[ty
     border-radius: 4px;
     padding: 4px 8px;
     background: var(--color-surface);
+}
+
+/* Even with the spinner gone, the input's own right padding/border (from the general
+   button/select/input rule above) still insets its text further than a plain <td>'s
+   right-aligned text does - this trims that back down so a right-aligned amount input
+   lines up with plain right-aligned text in an adjacent row/column. Declared after that
+   rule deliberately: both selectors have equal specificity, and the general rule's
+   shorthand `padding` would otherwise win by source order and silently reset this back
+   to 8px. */
+.amount-input {
+    text-align: right;
+    padding-right: 0;
 }
 
 button {

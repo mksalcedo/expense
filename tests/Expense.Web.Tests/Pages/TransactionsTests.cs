@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Transactions;
 using Expense.Web.Components.Pages;
 using Microsoft.AspNetCore.Components;
@@ -21,10 +22,13 @@ public class TransactionsTests : BunitContext
     {
         public List<TransactionRow> Transactions { get; set; } = [];
         public List<Category> Categories { get; set; } = [];
+        public List<AccountOption> Accounts { get; set; } = [];
         public string? LastSearchText { get; private set; }
         public int? LastCategoryFilter { get; private set; }
         public bool LastCategoryFilterWasSet { get; private set; }
         public bool LastNeedsReviewOnly { get; private set; }
+        public TransactionSource? LastSourceFilter { get; private set; }
+        public int? LastAccountFilter { get; private set; }
         public TransactionSource? LastUpdatedSource { get; private set; }
         public int? LastUpdatedId { get; private set; }
         public int? LastUpdatedCategoryId { get; private set; }
@@ -38,12 +42,16 @@ public class TransactionsTests : BunitContext
         public int? LastPage { get; private set; }
         public int? LastPageSize { get; private set; }
 
-        public Task<TransactionsPageData> GetTransactionsAsync(string? searchText, int? categoryFilter, bool needsReviewOnly = false, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
+        public Task<TransactionsPageData> GetTransactionsAsync(
+            string? searchText, int? categoryFilter, bool needsReviewOnly = false, TransactionSource? sourceFilter = null,
+            int? accountFilter = null, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
         {
             LastSearchText = searchText;
             LastCategoryFilter = categoryFilter;
             LastCategoryFilterWasSet = true;
             LastNeedsReviewOnly = needsReviewOnly;
+            LastSourceFilter = sourceFilter;
+            LastAccountFilter = accountFilter;
             LastPage = page;
             LastPageSize = pageSize;
             var filtered = Transactions.AsEnumerable();
@@ -63,9 +71,18 @@ public class TransactionsTests : BunitContext
             {
                 filtered = filtered.Where(t => t.NeedsReview);
             }
+            if (sourceFilter is { } source)
+            {
+                filtered = filtered.Where(t => t.Source == source);
+            }
+            if (accountFilter is { } accountId)
+            {
+                var accountName = Accounts.FirstOrDefault(a => a.Id == accountId)?.Name;
+                filtered = filtered.Where(t => t.AccountName == accountName);
+            }
             var filteredList = filtered.OrderByDescending(t => t.Date).ToList();
             var pageItems = filteredList.Skip((page - 1) * pageSize).Take(pageSize).ToList();
-            return Task.FromResult(new TransactionsPageData { Transactions = pageItems, Categories = Categories, TotalCount = filteredList.Count });
+            return Task.FromResult(new TransactionsPageData { Transactions = pageItems, Categories = Categories, Accounts = Accounts, TotalCount = filteredList.Count });
         }
 
         public Task UpdateCategoryAsync(TransactionSource source, int id, int? categoryId, CancellationToken cancellationToken = default)
@@ -97,10 +114,11 @@ public class TransactionsTests : BunitContext
     private static FakeTransactionsPageProvider MakeProvider() => new()
     {
         Categories = [new Category { Id = 1, Name = "Groceries" }, new Category { Id = 2, Name = "Supplements" }],
+        Accounts = [new AccountOption { Id = 1, Name = "Wells Fargo Checking" }, new AccountOption { Id = 2, Name = "Amex" }],
         Transactions =
         [
-            new TransactionRow { Source = TransactionSource.Bank, Id = 100, Date = new DateOnly(2026, 7, 1), Description = "PUBLIX NORCROSS GA", Amount = -40m, CategoryId = 1, CategoryName = "Groceries" },
-            new TransactionRow { Source = TransactionSource.Bank, Id = 101, Date = new DateOnly(2026, 7, 5), Description = "TRUIST MORTG PAYMENT", Amount = -2681.22m, CategoryId = null, CategoryName = null },
+            new TransactionRow { Source = TransactionSource.Bank, Id = 100, Date = new DateOnly(2026, 7, 1), Description = "PUBLIX NORCROSS GA", Amount = -40m, CategoryId = 1, CategoryName = "Groceries", AccountName = "Wells Fargo Checking" },
+            new TransactionRow { Source = TransactionSource.Bank, Id = 101, Date = new DateOnly(2026, 7, 5), Description = "TRUIST MORTG PAYMENT", Amount = -2681.22m, CategoryId = null, CategoryName = null, AccountName = "Wells Fargo Checking" },
             new TransactionRow { Source = TransactionSource.Amazon, Id = 200, Date = new DateOnly(2026, 7, 3), Description = "Qunol Ultra CoQ10", Amount = -30m, CategoryId = 2, CategoryName = "Supplements", OrderId = "112-123", Price = 30m, Quantity = 1 },
             new TransactionRow { Source = TransactionSource.Amazon, Id = 201, Date = new DateOnly(2026, 7, 4), Description = "(Item details unavailable in email - check Amazon order page)", Amount = -22m, CategoryId = null, CategoryName = null, OrderId = "113-456", Price = 22m, Quantity = 1, NeedsReview = true }
         ]
@@ -131,6 +149,54 @@ public class TransactionsTests : BunitContext
         var amazonRow = cut.Find("#select-amazon-200").Closest("tr")!;
         Assert.Contains("Bank", bankRow.TextContent);
         Assert.Contains("Amazon", amazonRow.TextContent);
+    }
+
+    [Fact]
+    public void Transactions_ShowsAccountColumn_BlankForAmazonRows()
+    {
+        Services.AddSingleton<ITransactionsPageProvider>(MakeProvider());
+
+        var cut = Render<Transactions>();
+
+        var bankRow = cut.Find("#select-bank-100").Closest("tr")!;
+        var amazonRow = cut.Find("#select-amazon-200").Closest("tr")!;
+        Assert.Contains("Wells Fargo Checking", bankRow.TextContent);
+        Assert.DoesNotContain("Wells Fargo Checking", amazonRow.TextContent);
+    }
+
+    [Fact]
+    public void Transactions_AccountFilterOptions_AreBuiltFromTheProvidedAccounts()
+    {
+        Services.AddSingleton<ITransactionsPageProvider>(MakeProvider());
+
+        var cut = Render<Transactions>();
+
+        var options = cut.FindAll("#account-filter option").Select(o => o.TextContent).ToList();
+        Assert.Equal(["-- all accounts --", "Wells Fargo Checking", "Amex"], options);
+    }
+
+    [Fact]
+    public void FilteringBySource_PassesItToTheProvider()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+        cut.Find("#source-filter").Change(nameof(TransactionSource.Amazon));
+
+        Assert.Equal(TransactionSource.Amazon, provider.LastSourceFilter);
+    }
+
+    [Fact]
+    public void FilteringByAccount_PassesItToTheProvider()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+        cut.Find("#account-filter").Change("2");
+
+        Assert.Equal(2, provider.LastAccountFilter);
     }
 
     [Fact]

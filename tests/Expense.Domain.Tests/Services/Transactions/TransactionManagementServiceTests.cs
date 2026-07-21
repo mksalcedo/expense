@@ -54,6 +54,77 @@ public class TransactionManagementServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task GetTransactionsAsync_PopulatesAccountName_ForBankRowsOnly()
+    {
+        var amex = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+
+        Context.BankTransactions.Add(new BankTransaction { AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 1), Description = "CVS PHARMACY", Amount = -25m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow });
+        Context.AmazonOrderItems.Add(new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Qunol Ultra CoQ10", Price = 30m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null);
+
+        var bankRow = result.Items.Single(r => r.Source == TransactionSource.Bank);
+        var amazonRow = result.Items.Single(r => r.Source == TransactionSource.Amazon);
+        Assert.Equal("Amex", bankRow.AccountName);
+        Assert.Null(amazonRow.AccountName);
+    }
+
+    [Fact]
+    public async Task GetTransactionsAsync_FilteredBySourceBank_ExcludesAmazonRows()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+
+        Context.BankTransactions.Add(new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 1), Description = "PUBLIX", Amount = -40m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow });
+        Context.AmazonOrderItems.Add(new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Qunol Ultra CoQ10", Price = 30m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null, sourceFilter: TransactionSource.Bank);
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal("PUBLIX", row.Description);
+    }
+
+    [Fact]
+    public async Task GetTransactionsAsync_FilteredBySourceAmazon_ExcludesBankRows()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+
+        Context.BankTransactions.Add(new BankTransaction { AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 1), Description = "PUBLIX", Amount = -40m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow });
+        Context.AmazonOrderItems.Add(new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 2), ItemTitle = "Qunol Ultra CoQ10", Price = 30m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null, sourceFilter: TransactionSource.Amazon);
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal("Qunol Ultra CoQ10", row.Description);
+    }
+
+    [Fact]
+    public async Task GetTransactionsAsync_FilteredByAccount_ReturnsOnlyThatAccountsBankRows_AndExcludesAmazon()
+    {
+        var amex = await CreateAccountAsync();
+        var discover = new Account { Name = "Discover", Type = AccountType.Debt };
+        Context.Accounts.Add(discover);
+        await Context.SaveChangesAsync();
+
+        Context.BankTransactions.AddRange(
+            new BankTransaction { AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 1), Description = "CVS PHARMACY", Amount = -25m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow },
+            new BankTransaction { AccountId = discover.Id, TransactionDate = new DateOnly(2026, 7, 2), Description = "PUBLIX", Amount = -40m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow });
+        Context.AmazonOrderItems.Add(new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 3), ItemTitle = "Qunol Ultra CoQ10", Price = 30m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetTransactionsAsync(Context, searchText: null, categoryFilter: null, accountFilter: amex.Id);
+
+        var row = Assert.Single(result.Items);
+        Assert.Equal("CVS PHARMACY", row.Description);
+        Assert.Equal("Amex", row.AccountName);
+    }
+
+    [Fact]
     public async Task GetTransactionsAsync_WithSearchText_FiltersByDescription_AcrossBothSources()
     {
         var account = await CreateAccountAsync();

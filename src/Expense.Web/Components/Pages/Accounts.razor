@@ -50,71 +50,72 @@ else
             else
             {
                 <h2>@(_mode == DetailMode.Creating ? "New account" : "Edit account")</h2>
-                <div>
-                    <label>Name <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" /></label>
-                </div>
-                @if (_mode == DetailMode.Creating)
-                {
-                    <div>
-                        <label>Type
+                <div style="display: grid; grid-template-columns: max-content max-content; gap: 10px 12px; align-items: center;">
+                    <div style="display: contents">
+                        <label for="detail-name">Name</label>
+                        <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" />
+                    </div>
+                    @if (_mode == DetailMode.Creating)
+                    {
+                        <div style="display: contents">
+                            <label for="detail-type">Type</label>
                             <select id="detail-type" @onchange="e => _formType = Enum.Parse<AccountType>((string)e.Value!)">
                                 @foreach (var type in Enum.GetValues<AccountType>())
                                 {
                                     <option value="@type" selected="@(_formType == type)">@type</option>
                                 }
                             </select>
-                        </label>
-                    </div>
-                }
-                else
-                {
-                    <p>Type: @_formType</p>
-                }
-                @if (_formType == AccountType.Debt || _formType == AccountType.ActiveSpending)
-                {
-                    @if (_formType == AccountType.Debt)
-                    {
-                        <div>
-                            <label>Min payment
-                                <input id="detail-min-payment" type="number" step="0.01" value="@_formMinPayment"
-                                       @onchange="e => _formMinPayment = ParseNullableDecimal((string)e.Value!)" />
-                            </label>
                         </div>
-                    }
-                    <div>
-                        <label>Extra payment
-                            <input id="detail-extra-payment" type="number" step="0.01" value="@_formExtraPayment"
-                                   @onchange="e => _formExtraPayment = ParseNullableDecimal((string)e.Value!)" />
-                        </label>
-                    </div>
-                    <div>
-                        <label>Payment due day
-                            <input id="detail-payment-due-day" type="number" value="@_formPaymentDueDay"
-                                   @onchange="e => _formPaymentDueDay = ParseNullableInt((string)e.Value!)" />
-                        </label>
-                    </div>
-                    @if (_formType == AccountType.ActiveSpending)
-                    {
-                        <div>
-                            <label>Statement close day
-                                <input id="detail-statement-close-day" type="number" value="@_formStatementCloseDay"
-                                       @onchange="e => _formStatementCloseDay = ParseNullableInt((string)e.Value!)" />
-                            </label>
-                        </div>
-                    }
-                }
-                <button id="detail-save" @onclick="SaveAsync">Save</button>
-                @if (_mode == DetailMode.Editing)
-                {
-                    @if (_selectedIsActive)
-                    {
-                        <button id="detail-deactivate" @onclick="DeactivateAsync">Deactivate</button>
                     }
                     else
                     {
-                        <button id="detail-reactivate" @onclick="ReactivateAsync">Reactivate</button>
+                        <label>Type</label>
+                        <p style="margin: 0;">@_formType</p>
                     }
-                }
+                    @if (_formType == AccountType.Debt || _formType == AccountType.ActiveSpending)
+                    {
+                        @if (_formType == AccountType.Debt)
+                        {
+                            <div style="display: contents">
+                                <label for="detail-min-payment">Min payment</label>
+                                <input id="detail-min-payment" type="number" step="0.01" value="@_formMinPayment"
+                                       @onchange="e => _formMinPayment = ParseNullableDecimal((string)e.Value!)" />
+                            </div>
+                        }
+                        <div style="display: contents">
+                            <label for="detail-extra-payment">Extra payment</label>
+                            <input id="detail-extra-payment" type="number" step="0.01" value="@_formExtraPayment"
+                                   @onchange="e => _formExtraPayment = ParseNullableDecimal((string)e.Value!)" />
+                        </div>
+                        <div style="display: contents">
+                            <label for="detail-payment-due-day">Payment due day</label>
+                            <input id="detail-payment-due-day" type="number" value="@_formPaymentDueDay"
+                                   @onchange="e => _formPaymentDueDay = ParseNullableInt((string)e.Value!)" />
+                        </div>
+                        @if (_formType == AccountType.ActiveSpending)
+                        {
+                            <div style="display: contents">
+                                <label for="detail-statement-close-day">Statement close day</label>
+                                <input id="detail-statement-close-day" type="number" value="@_formStatementCloseDay"
+                                       @onchange="e => _formStatementCloseDay = ParseNullableInt((string)e.Value!)" />
+                            </div>
+                        }
+                    }
+                </div>
+                <div style="margin-top: 24px;">
+                    <button id="detail-save" @onclick="SaveAsync">Save</button>
+                    @if (_mode == DetailMode.Editing)
+                    {
+                        @if (_selectedIsActive)
+                        {
+                            <button id="detail-deactivate" @onclick="DeactivateAsync">Deactivate</button>
+                        }
+                        else
+                        {
+                            <button id="detail-reactivate" @onclick="ReactivateAsync">Reactivate</button>
+                        }
+                    }
+                </div>
             }
         </div>
     </div>

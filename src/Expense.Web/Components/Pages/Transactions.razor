@@ -26,6 +26,21 @@
             }
         }
     </select>
+    <select id="source-filter" @onchange="e => FilterBySourceAsync((string)e.Value!)">
+        <option value="">-- all sources --</option>
+        <option value="@TransactionSource.Bank">Bank</option>
+        <option value="@TransactionSource.Amazon">Amazon</option>
+    </select>
+    <select id="account-filter" @onchange="e => FilterByAccountAsync((string)e.Value!)">
+        <option value="-1">-- all accounts --</option>
+        @if (_data is not null)
+        {
+            @foreach (var account in _data.Accounts)
+            {
+                <option value="@account.Id">@account.Name</option>
+            }
+        }
+    </select>
     <label>
         <input type="checkbox" id="needs-review-filter" checked="@_needsReviewOnly" @onchange="e => FilterByNeedsReviewAsync((bool)e.Value!)" />
         Needs Review only
@@ -76,8 +91,10 @@ else
                 <th>Date</th>
                 <th>Description</th>
                 <th>Order ID</th>
-                <th>Amount</th>
+                <th class="text-right" style="min-width: 110px;">Amount</th>
+                <th class="text-right">Qty</th>
                 <th>Source</th>
+                <th>Account</th>
                 <th>Category</th>
             </tr>
         </thead>
@@ -110,21 +127,26 @@ else
                         }
                     </td>
                     <td>@row.OrderId</td>
-                    <td>
+                    <td class="text-right">
                         @if (row.Source == TransactionSource.Amazon)
                         {
-                            <input id="amazon-price-@row.Id" type="number" step="0.01" value="@row.Price"
+                            <input id="amazon-price-@row.Id" type="number" step="0.01" value="@row.Price" class="no-spinner amount-input" style="width: 80px; padding-right: 0px;"
                                    @onchange="e => UpdateAmazonItemDetailsAsync(row, title: null, price: (string?)e.Value, quantity: null)" />
-                            <text> x </text>
-                            <input id="amazon-quantity-@row.Id" type="number" value="@row.Quantity"
-                                   @onchange="e => UpdateAmazonItemDetailsAsync(row, title: null, price: null, quantity: (string?)e.Value)" />
                         }
                         else
                         {
                             @row.Amount.ToString("N2")
                         }
                     </td>
+                    <td class="text-right">
+                        @if (row.Source == TransactionSource.Amazon)
+                        {
+                            <input id="amazon-quantity-@row.Id" type="number" value="@row.Quantity" class="no-spinner amount-input" style="width: 40px; padding-right: 0px;"
+                                   @onchange="e => UpdateAmazonItemDetailsAsync(row, title: null, price: null, quantity: (string?)e.Value)" />
+                        }
+                    </td>
                     <td>@(row.Source == TransactionSource.Bank ? "Bank" : "Amazon")</td>
+                    <td>@row.AccountName</td>
                     <td>
                         <select id="category-@(row.Source == TransactionSource.Bank ? "bank" : "amazon")-@row.Id"
                                 @onchange="e => UpdateCategoryAsync(row, int.Parse((string)e.Value!))">
@@ -154,6 +176,8 @@ else
     private TransactionsPageData? _data;
     private string? _searchText;
     private int? _categoryFilter;
+    private TransactionSource? _sourceFilter;
+    private int? _accountFilter;
     private bool _needsReviewOnly;
     private int _pageSize = 20;
     private int _currentPage = 1;
@@ -190,7 +214,8 @@ else
 
     private async Task LoadDataAsync()
     {
-        _data = await TransactionsProvider.GetTransactionsAsync(_searchText, _categoryFilter, _needsReviewOnly, _currentPage, _pageSize);
+        _data = await TransactionsProvider.GetTransactionsAsync(
+            _searchText, _categoryFilter, _needsReviewOnly, _sourceFilter, _accountFilter, _currentPage, _pageSize);
     }
 
     private async Task GoToPageAsync(int page)
@@ -226,6 +251,21 @@ else
     private async Task FilterByNeedsReviewAsync(bool needsReviewOnly)
     {
         _needsReviewOnly = needsReviewOnly;
+        _currentPage = 1;
+        await LoadDataAsync();
+    }
+
+    private async Task FilterBySourceAsync(string value)
+    {
+        _sourceFilter = string.IsNullOrEmpty(value) ? null : Enum.Parse<TransactionSource>(value);
+        _currentPage = 1;
+        await LoadDataAsync();
+    }
+
+    private async Task FilterByAccountAsync(string value)
+    {
+        var parsed = int.Parse(value);
+        _accountFilter = parsed == -1 ? null : parsed;
         _currentPage = 1;
         await LoadDataAsync();
     }

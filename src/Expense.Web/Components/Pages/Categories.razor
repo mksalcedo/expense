@@ -85,101 +85,94 @@ else
             else
             {
                 <h2>@(_mode == DetailMode.Creating ? "New category" : "Edit category")</h2>
-                <div>
-                    <label>Name <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" /></label>
-                </div>
-                <div>
-                    <label>Funding strategy
+                <div style="display: grid; grid-template-columns: max-content max-content; gap: 10px 12px; align-items: center;">
+                    <div style="display: contents">
+                        <label for="detail-name">Name</label>
+                        <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" />
+                    </div>
+                    <div style="display: contents">
+                        <label for="detail-funding-strategy">Funding strategy</label>
                         <select id="detail-funding-strategy" @onchange="e => _formFundingStrategy = (string)e.Value!">
                             <option value="@FundingStrategies.None" selected="@(_formFundingStrategy == FundingStrategies.None)">None</option>
                             <option value="@FundingStrategies.PayInFullAmex" selected="@(_formFundingStrategy == FundingStrategies.PayInFullAmex)">Pay in full (Amex)</option>
                             <option value="@FundingStrategies.Direct" selected="@(_formFundingStrategy == FundingStrategies.Direct)">Direct (recurring income/bill)</option>
                             <option value="@FundingStrategies.AccountPayment" selected="@(_formFundingStrategy == FundingStrategies.AccountPayment)">Account payment (debt account)</option>
                         </select>
-                    </label>
-                </div>
-                @if (_formFundingStrategy == FundingStrategies.AccountPayment)
-                {
-                    @if (_formLinkedAccountType is { } linkedType)
+                    </div>
+                    @if (_formFundingStrategy == FundingStrategies.AccountPayment)
                     {
-                        @if (linkedType == AccountType.Debt)
+                        @if (_formLinkedAccountType is { } linkedType)
                         {
-                            <div>
-                                <label>Min payment
+                            @if (linkedType == AccountType.Debt)
+                            {
+                                <div style="display: contents">
+                                    <label for="detail-min-payment">Min payment</label>
                                     <input id="detail-min-payment" type="number" step="0.01" value="@_formMinPayment"
                                            @onchange="e => _formMinPayment = ParseNullableDecimal((string)e.Value!)" />
-                                </label>
-                            </div>
-                        }
-                        <div>
-                            <label>Extra payment
+                                </div>
+                            }
+                            <div style="display: contents">
+                                <label for="detail-extra-payment">Extra payment</label>
                                 <input id="detail-extra-payment" type="number" step="0.01" value="@_formExtraPayment"
                                        @onchange="e => _formExtraPayment = ParseNullableDecimal((string)e.Value!)" />
-                            </label>
-                        </div>
-                        <div>
-                            <label>Payment due day
+                            </div>
+                            <div style="display: contents">
+                                <label for="detail-payment-due-day">Payment due day</label>
                                 <input id="detail-payment-due-day" type="number" value="@_formPaymentDueDay"
                                        @onchange="e => _formPaymentDueDay = ParseNullableInt((string)e.Value!)" />
-                            </label>
-                        </div>
-                        @if (linkedType == AccountType.ActiveSpending)
-                        {
-                            <div>
-                                <label>Statement close day
+                            </div>
+                            @if (linkedType == AccountType.ActiveSpending)
+                            {
+                                <div style="display: contents">
+                                    <label for="detail-statement-close-day">Statement close day</label>
                                     <input id="detail-statement-close-day" type="number" value="@_formStatementCloseDay"
                                            @onchange="e => _formStatementCloseDay = ParseNullableInt((string)e.Value!)" />
-                                </label>
-                            </div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <p style="grid-column: 1 / -1;"><em>This category has no linked account yet - account payment categories are normally created automatically from the Accounts page.</em></p>
                         }
                     }
-                    else
+                    @if (_formFundingStrategy == FundingStrategies.Direct)
                     {
-                        <p><em>This category has no linked account yet - account payment categories are normally created automatically from the Accounts page.</em></p>
-                    }
-                }
-                @if (_formFundingStrategy == FundingStrategies.Direct)
-                {
-                    <div>
-                        <label>Direction
+                        <div style="display: contents">
+                            <label for="detail-direction">Direction</label>
                             <select id="detail-direction" @onchange="e => _formDirection = Enum.Parse<Direction>((string)e.Value!)">
                                 @foreach (var direction in Enum.GetValues<Direction>())
                                 {
                                     <option value="@direction" selected="@(_formDirection == direction)">@direction</option>
                                 }
                             </select>
-                        </label>
-                    </div>
-                }
-                @if (_formFundingStrategy == FundingStrategies.Direct || _formFundingStrategy == FundingStrategies.PayInFullAmex)
-                {
-                    <div>
-                        <label>Amount
+                        </div>
+                    }
+                    @if (_formFundingStrategy == FundingStrategies.Direct || _formFundingStrategy == FundingStrategies.PayInFullAmex)
+                    {
+                        <div style="display: contents">
+                            <label for="detail-amount">Amount</label>
                             <input id="detail-amount" type="number" step="0.01" value="@_formAmount"
                                    @onchange="e => _formAmount = decimal.Parse((string)e.Value!)" />
-                        </label>
-                    </div>
-                    <div>
-                        <label>Frequency
+                        </div>
+                        <div style="display: contents">
+                            <label for="detail-frequency">Frequency</label>
                             <select id="detail-frequency" @onchange="e => _formFrequency = Enum.Parse<Frequency>((string)e.Value!)">
                                 @foreach (var frequency in Enum.GetValues<Frequency>())
                                 {
                                     <option value="@frequency" selected="@(_formFrequency == frequency)">@frequency</option>
                                 }
                             </select>
-                        </label>
-                    </div>
-                }
-                @if (_formFundingStrategy == FundingStrategies.Direct)
-                {
-                    <div>
-                        <label>Anchor date
+                        </div>
+                    }
+                    @if (_formFundingStrategy == FundingStrategies.Direct)
+                    {
+                        <div style="display: contents">
+                            <label for="detail-anchor">Anchor date</label>
                             <input id="detail-anchor" type="date" value="@_formAnchor.ToString("yyyy-MM-dd")"
                                    @onchange="e => _formAnchor = DateOnly.Parse((string)e.Value!)" />
-                        </label>
-                    </div>
-                    <div>
-                        <label>Account
+                        </div>
+                        <div style="display: contents">
+                            <label for="detail-account">Account</label>
                             <select id="detail-account" @onchange="e => _formAccountId = int.Parse((string)e.Value!)">
                                 <option value="">Select an account...</option>
                                 @foreach (var account in _data!.Accounts)
@@ -187,21 +180,23 @@ else
                                     <option value="@account.Id" selected="@(_formAccountId == account.Id)">@account.Name</option>
                                 }
                             </select>
-                        </label>
-                    </div>
-                }
-                <button id="detail-save" @onclick="SaveAsync">Save</button>
-                @if (_mode == DetailMode.Editing)
-                {
-                    @if (_selectedIsActive)
-                    {
-                        <button id="detail-deactivate" @onclick="DeactivateAsync">Deactivate</button>
+                        </div>
                     }
-                    else
+                </div>
+                <div style="margin-top: 24px;">
+                    <button id="detail-save" @onclick="SaveAsync">Save</button>
+                    @if (_mode == DetailMode.Editing)
                     {
-                        <button id="detail-reactivate" @onclick="ReactivateAsync">Reactivate</button>
+                        @if (_selectedIsActive)
+                        {
+                            <button id="detail-deactivate" @onclick="DeactivateAsync">Deactivate</button>
+                        }
+                        else
+                        {
+                            <button id="detail-reactivate" @onclick="ReactivateAsync">Reactivate</button>
+                        }
                     }
-                }
+                </div>
             }
         </div>
     </div>
