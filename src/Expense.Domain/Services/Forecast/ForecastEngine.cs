@@ -1,6 +1,7 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Budgets;
+using Expense.Domain.Services.Ingestion.ManualCharges;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Forecast;
@@ -161,6 +162,33 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     lines.Add(line);
                 }
             }
+
+            // Charges the user has personally seen pending (via a screenshot) but that
+            // haven't posted for real yet - kept as a separate, clearly-labeled line rather
+            // than blended into the real cycle's total above, mirroring how Amex's own site
+            // separates "Pending" from "Posted" rather than showing one blended figure. Never
+            // changes the real cycle calculation; only ever additive, and only for charges
+            // still genuinely unposted (PostedDate null).
+            var pendingSelfReportedTotal = await context.BankTransactions
+                .Where(t => t.AccountId == account.Id && t.PostedDate == null
+                            && t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource && t.Amount < 0)
+                .SumAsync(t => -t.Amount, cancellationToken);
+
+            if (pendingSelfReportedTotal > 0m)
+            {
+                var attachToCycle = cycles.FirstOrDefault(c => !c.IsFuture) ?? cycles.FirstOrDefault();
+                if (attachToCycle is not null)
+                {
+                    lines.Add(new LedgerLine
+                    {
+                        Date = attachToCycle.DueDate,
+                        Description = $"{account.Name} Payment (pending, self-reported)",
+                        Amount = -pendingSelfReportedTotal,
+                        AccountId = account.Id,
+                        ExcludeFromManualMatching = true
+                    });
+                }
+            }
         }
 
         // Manually confirmed/overridden occurrences stay in the ledger rather than being
@@ -194,7 +222,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         var rows = new List<ForecastLedgerRow>();
         foreach (var line in lines)
         {
-            if (line.SourceOneTimeEventId is { } sourceEventId && partialPaymentOwnEventIds.Contains(sourceEventId))
+            if (line.ExcludeFromManualMatching
+                || (line.SourceOneTimeEventId is { } sourceEventId && partialPaymentOwnEventIds.Contains(sourceEventId)))
             {
                 rows.Add(new ForecastLedgerRow
                 {

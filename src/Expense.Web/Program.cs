@@ -9,6 +9,7 @@ using Expense.Domain.Services.Forecast;
 using Expense.Domain.Services.HistoricalAnalysis;
 using Expense.Domain.Services.Ingestion;
 using Expense.Domain.Services.Ingestion.Amazon;
+using Expense.Domain.Services.Ingestion.ManualCharges;
 using Expense.Domain.Services.Ingestion.SimpleFin;
 using Expense.Domain.Services.OneTimeEvents;
 using Expense.Domain.Services.SpendingTracker;
@@ -67,7 +68,10 @@ builder.Services.AddScoped<ForecastExcelExporter>();
 builder.Services.AddSingleton<ExportFileNamer>();
 
 builder.Services.AddScoped<DedupService>();
+builder.Services.AddScoped<ManualChargeMatchingService>();
 builder.Services.AddHttpClient<SimpleFinSyncService>();
+builder.Services.AddHttpClient<IManualChargesPageProvider, ManualChargesPageProvider>();
+builder.Services.AddScoped<IPendingChargesPageProvider, PendingChargesPageProvider>();
 
 builder.Services.AddScoped<AmazonOrderEmailParser>();
 builder.Services.AddScoped<AmazonRefundEmailParser>();

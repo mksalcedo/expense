@@ -3,6 +3,7 @@ using Expense.Domain.Data;
 using Expense.Domain.Seed;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Ingestion;
+using Expense.Domain.Services.Ingestion.ManualCharges;
 using Expense.Domain.Services.Ingestion.SimpleFin;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -38,7 +39,7 @@ if (!File.Exists(accountMapPath))
 var accountMap = JsonSerializer.Deserialize<Dictionary<string, int>>(await File.ReadAllTextAsync(accountMapPath))
     ?? throw new InvalidOperationException($"Could not parse {accountMapPath}");
 
-var syncService = new SimpleFinSyncService(new HttpClient(), new DedupService(), new CategorizationService());
+var syncService = new SimpleFinSyncService(new HttpClient(), new DedupService(), new CategorizationService(), new ManualChargeMatchingService());
 var run = await syncService.RunAsync(context, accessUrl, accountMap, DateTimeOffset.UtcNow.AddDays(-45));
 
 if (run.Success)

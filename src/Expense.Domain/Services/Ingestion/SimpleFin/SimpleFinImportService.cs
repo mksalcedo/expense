@@ -116,6 +116,7 @@ public class SimpleFinImportService(SimpleFinClient client, DedupService dedup, 
 
             context.BankTransactions.Add(bankTransaction);
             summary.TransactionsAdded++;
+            summary.NewTransactions.Add(bankTransaction);
         }
     }
 }

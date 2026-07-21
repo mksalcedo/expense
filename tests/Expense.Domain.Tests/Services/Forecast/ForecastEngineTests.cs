@@ -409,6 +409,132 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task AmexCycle_GetsASeparatePendingSelfReportedLine_ForOpenManuallyEnteredCharges()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 20));
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+                Description = "TRADER JOE S", Amount = -1250m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            // Seen pending on Amex's site, entered by hand - not posted yet.
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 3, 18), PostedDate = null,
+                Description = "MORGAN COMPOUDING", Amount = -131.65m, ImportSource = "ManualScreenshot", CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 20), new DateOnly(2026, 3, 31));
+
+        var realCycleRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment");
+        Assert.Equal(-1250m, realCycleRow.Amount); // unaffected by the pending charge
+
+        var pendingRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment (pending, self-reported)");
+        Assert.Equal(-131.65m, pendingRow.Amount);
+        Assert.Equal(new DateOnly(2026, 3, 15), pendingRow.Date); // same due date as the real cycle line
+    }
+
+    [Fact]
+    public async Task NoPendingSelfReportedLine_WhenThereAreNoOpenManuallyEnteredCharges()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 20));
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+            Description = "TRADER JOE S", Amount = -1250m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 20), new DateOnly(2026, 3, 31));
+
+        Assert.DoesNotContain(result.Rows, r => r.Description.Contains("pending, self-reported"));
+    }
+
+    [Fact]
+    public async Task PendingSelfReportedLine_IsNotAffectedByDeferringTheRealCycleLine()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 20));
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+                Description = "TRADER JOE S", Amount = -1250m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 3, 18), PostedDate = null,
+                Description = "MORGAN COMPOUDING", Amount = -131.65m, ImportSource = "ManualScreenshot", CreatedAt = DateTimeOffset.UtcNow
+            });
+        // Defers the real cycle's due date (3/15) to 3/20 - must not touch the pending line,
+        // even though both lines share the same AccountId and, before deferral, the same date.
+        Context.PaymentDeferrals.Add(new PaymentDeferral
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 3, 15), DeferredToDate = new DateOnly(2026, 3, 20), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 20), new DateOnly(2026, 3, 31));
+
+        var realCycleRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment");
+        Assert.True(realCycleRow.IsDeferred);
+        Assert.Equal(new DateOnly(2026, 3, 20), realCycleRow.Date);
+
+        var pendingRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment (pending, self-reported)");
+        Assert.False(pendingRow.IsDeferred);
+        Assert.Equal(new DateOnly(2026, 3, 15), pendingRow.Date);
+    }
+
+    [Fact]
     public async Task DeferredPayment_MovesToTheNewDateAndIsFlagged()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));

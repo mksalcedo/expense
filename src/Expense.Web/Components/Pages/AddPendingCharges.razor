@@ -1,0 +1,155 @@
+@page "/add-pending-charges"
+@using Expense.Domain.Services.Categories
+@using Expense.Domain.Services.Ingestion.ManualCharges
+@using Microsoft.AspNetCore.Components.Forms
+@inject IManualChargesPageProvider ChargesProvider
+
+<PageTitle>Add Pending Charges</PageTitle>
+
+<h1>Add Pending Charges</h1>
+<p>
+    Occasionally screenshot your card's recent activity - including charges still pending, not yet posted - and add
+    them here. They'll count toward your forecast right away as their own line, and get cleaned up automatically once
+    the real transaction posts and syncs normally.
+</p>
+
+@if (_accounts is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div>
+        <label>Account
+            <select id="account-select" @onchange="e => _selectedAccountId = ParseNullableInt((string)e.Value!)">
+                <option value="">Select an account...</option>
+                @foreach (var account in _accounts)
+                {
+                    <option value="@account.Id" selected="@(_selectedAccountId == account.Id)">@account.Name</option>
+                }
+            </select>
+        </label>
+    </div>
+    <div>
+        <InputFile id="screenshot-file" OnChange="OnFileSelected" accept="image/*" />
+        <button id="parse-btn" disabled="@(_selectedAccountId is null || _selectedFile is null || _parsing)" @onclick="ParseAsync">
+            @(_parsing ? "Reading..." : "Parse Screenshot")
+        </button>
+    </div>
+
+    @if (_reviewRows is not null)
+    {
+        <table id="review-table" style="border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="@CellStyle()"></th>
+                    <th style="@CellStyle()">Date</th>
+                    <th style="@CellStyle()">Description</th>
+                    <th class="text-right" style="@CellStyle(rightAlign: true)">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var (row, index) in _reviewRows.Select((r, i) => (r, i)))
+                {
+                    <tr id="review-row-@index" style="@(row.IsDuplicate ? "text-decoration: line-through; color: #888;" : "")">
+                        <td style="@CellStyle()">
+                            <input type="checkbox" id="include-@index" checked="@_included[index]"
+                                   @onchange="e => _included[index] = (bool)e.Value!" />
+                        </td>
+                        <td style="@CellStyle()">
+                            <input id="date-@index" type="date" value="@row.Date.ToString("yyyy-MM-dd")"
+                                   @onchange="e => row.Date = DateOnly.Parse((string)e.Value!)" />
+                        </td>
+                        <td style="@CellStyle()">
+                            <input id="description-@index" value="@row.Description" style="width: 320px;"
+                                   @onchange="e => row.Description = (string)e.Value!" />
+                            @if (row.IsDuplicate)
+                            {
+                                <br />
+                                <span style="color: #666; text-decoration: none;">@row.DuplicateReason</span>
+                            }
+                        </td>
+                        <td class="text-right" style="@CellStyle(rightAlign: true)">
+                            <input id="amount-@index" type="number" step="0.01" class="no-spinner amount-input" style="width: 90px;"
+                                   value="@row.Amount" @onchange="e => row.Amount = decimal.Parse((string)e.Value!)" />
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p><button id="add-all-btn" disabled="@_adding" @onclick="AddAllAsync">Add All</button></p>
+    }
+
+    @if (_lastAddedCount is { } addedCount)
+    {
+        <p id="add-result">Added @addedCount charge(s).</p>
+    }
+}
+
+@code {
+    private List<AccountOption>? _accounts;
+    private int? _selectedAccountId;
+    private IBrowserFile? _selectedFile;
+    private bool _parsing;
+    private bool _adding;
+    private List<ManualChargeReviewRow>? _reviewRows;
+    private List<bool> _included = [];
+    private int? _lastAddedCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _accounts = await ChargesProvider.GetActiveSpendingAccountsAsync();
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _selectedFile = e.File;
+        _reviewRows = null;
+        _lastAddedCount = null;
+    }
+
+    private async Task ParseAsync()
+    {
+        if (_selectedAccountId is not { } accountId || _selectedFile is null) return;
+
+        _parsing = true;
+        try
+        {
+            await using var stream = _selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+
+            _reviewRows = await ChargesProvider.ReviewScreenshotAsync(accountId, memoryStream.ToArray(), _selectedFile.ContentType);
+            _included = _reviewRows.Select(r => !r.IsDuplicate).ToList();
+            _lastAddedCount = null;
+        }
+        finally
+        {
+            _parsing = false;
+        }
+    }
+
+    private async Task AddAllAsync()
+    {
+        if (_selectedAccountId is not { } accountId || _reviewRows is null) return;
+
+        _adding = true;
+        try
+        {
+            var acceptedRows = _reviewRows.Where((_, index) => _included[index]).ToList();
+            _lastAddedCount = await ChargesProvider.AddChargesAsync(accountId, acceptedRows);
+            _reviewRows = null;
+            _included = [];
+            _selectedFile = null;
+        }
+        finally
+        {
+            _adding = false;
+        }
+    }
+
+    private static int? ParseNullableInt(string value) => string.IsNullOrEmpty(value) ? null : int.Parse(value);
+
+    private static string CellStyle(bool rightAlign = false) =>
+        $"border: 1px solid #ccc; padding: 6px 12px;{(rightAlign ? " text-align: right;" : "")}";
+}

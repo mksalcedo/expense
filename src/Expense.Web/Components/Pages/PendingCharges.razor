@@ -1,0 +1,75 @@
+@page "/pending-charges"
+@using Expense.Domain.Services.Ingestion.ManualCharges
+@inject IPendingChargesPageProvider PendingChargesProvider
+
+<PageTitle>Manually Entered Pending Charges</PageTitle>
+
+<h1>Manually Entered Pending Charges</h1>
+<p>
+    Charges added from an Amex screenshot that haven't yet been matched to a real posted
+    transaction - each one is currently counted in the Amex forecast as its own line. They're
+    removed automatically once the real transaction posts and syncs normally. If one never
+    actually posts (say, a voided authorization), delete it here - it won't expire on its own.
+</p>
+
+@if (_rows is null)
+{
+    <p>Loading...</p>
+}
+else if (_rows.Count == 0)
+{
+    <p>None right now.</p>
+}
+else
+{
+    <table id="pending-charges-table" style="border-collapse: collapse">
+        <thead>
+            <tr>
+                <th style="@CellStyle()">Date</th>
+                <th style="@CellStyle()">Account</th>
+                <th style="@CellStyle()">Description</th>
+                <th class="text-right" style="@CellStyle(rightAlign: true)">Amount</th>
+                <th style="@CellStyle()">Entered on</th>
+                <th style="@CellStyle()"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in _rows)
+            {
+                <tr @key="row.Id">
+                    <td style="@CellStyle()">@row.Date.ToString("MM/dd/yyyy")</td>
+                    <td style="@CellStyle()">@row.AccountName</td>
+                    <td style="@CellStyle()">@row.Description</td>
+                    <td class="text-right" style="@CellStyle(rightAlign: true)">@row.Amount.ToString("N2")</td>
+                    <td style="@CellStyle()">@row.EnteredAt.ToLocalTime().ToString("MM/dd/yyyy")</td>
+                    <td style="@CellStyle()">
+                        <button id="delete-btn-@row.Id" @onclick="() => DeleteAsync(row)">Delete</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<PendingChargeRow>? _rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private async Task DeleteAsync(PendingChargeRow row)
+    {
+        await PendingChargesProvider.DeleteChargeAsync(row.Id);
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _rows = await PendingChargesProvider.GetOpenChargesAsync();
+    }
+
+    private static string CellStyle(bool rightAlign = false) =>
+        $"border: 1px solid #ccc; padding: 6px 16px;{(rightAlign ? " text-align: right;" : "")}";
+}

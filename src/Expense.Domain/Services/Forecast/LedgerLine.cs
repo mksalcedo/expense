@@ -26,4 +26,13 @@ public class LedgerLine
     /// (AccountId, Date) with, so a partial payment's own auto-created event never gets
     /// mistaken for the bill it was paid against (see the PartialPayment doc comment).</summary>
     public int? SourceOneTimeEventId { get; set; }
+
+    /// <summary>
+    /// True for a synthetic aggregate line that deliberately shares its (AccountId, Date)
+    /// with another real line - e.g. the "pending, self-reported" Amex line lands on the same
+    /// due date as the real cycle line. Without this, a Defer/Confirm/Override/PartialPayment
+    /// aimed at the real line would also - wrongly - match this one, since matching is keyed
+    /// purely on (AccountId, Date). See docs/amex-pending-charges-plan.md.
+    /// </summary>
+    public bool ExcludeFromManualMatching { get; set; }
 }

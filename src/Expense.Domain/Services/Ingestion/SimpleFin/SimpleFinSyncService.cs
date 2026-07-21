@@ -2,6 +2,7 @@ using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Ingestion;
+using Expense.Domain.Services.Ingestion.ManualCharges;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Ingestion.SimpleFin;
@@ -11,7 +12,8 @@ namespace Expense.Domain.Services.Ingestion.SimpleFin;
 /// "Sync Now" button share the exact same logic, and every attempt - success or
 /// failure - gets recorded as an ImportRun for the Dashboard to display.
 /// </summary>
-public class SimpleFinSyncService(HttpClient httpClient, DedupService dedup, CategorizationService categorization)
+public class SimpleFinSyncService(
+    HttpClient httpClient, DedupService dedup, CategorizationService categorization, ManualChargeMatchingService manualChargeMatching)
 {
     public async Task<ImportRun> RunAsync(
         ExpenseDbContext context,
@@ -33,10 +35,15 @@ public class SimpleFinSyncService(HttpClient httpClient, DedupService dedup, Cat
             // left stuck (see the Truist whitespace-matching bug for a real example).
             var reapplied = await categorization.ReapplyRulesToPendingAsync(context);
 
+            // A newly-posted real transaction may supersede a manually-entered pending charge
+            // (see docs/amex-pending-charges-plan.md) - never silently, always reported below.
+            var placeholdersRemoved = await manualChargeMatching.ReconcilePlaceholdersAsync(context, summary.NewTransactions);
+
             run.Success = true;
             run.Summary = $"Transactions added: {summary.TransactionsAdded}, duplicates skipped: {summary.DuplicatesSkipped}, balance snapshots added: {summary.BalanceSnapshotsAdded}"
                 + (summary.UnmappedAccounts.Count > 0 ? $"; unmapped accounts: {string.Join(", ", summary.UnmappedAccounts)}" : "")
-                + (reapplied.TransactionsUpdated > 0 ? $"; re-categorized {reapplied.TransactionsUpdated} previously pending transaction(s)" : "");
+                + (reapplied.TransactionsUpdated > 0 ? $"; re-categorized {reapplied.TransactionsUpdated} previously pending transaction(s)" : "")
+                + (placeholdersRemoved > 0 ? $"; removed {placeholdersRemoved} manually-entered charge(s) now confirmed posted" : "");
         }
         catch (Exception ex)
         {
