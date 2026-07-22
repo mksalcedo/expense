@@ -218,6 +218,64 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task PendingSelfReportedCharge_CountsTowardActualSpend_UsingTransactionDate()
+    {
+        // Self-reported (screenshot-derived) charges have no PostedDate yet - must still
+        // count as real spending this week, using TransactionDate as the effective date,
+        // for consistency with how the Forecast page already treats these (see AmexCycleCalculator).
+        var groceries = await CreateGroceriesAsync(450m, Frequency.Weekly);
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 14), PostedDate = null,
+            Description = "INGLES", Amount = -120m, ImportSource = "ManualScreenshot", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(120m, summary.Actual);
+    }
+
+    [Fact]
+    public async Task UncategorizedPendingSelfReportedCharge_ShowsUpAsPending()
+    {
+        var groceries = await CreateGroceriesAsync();
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 14), PostedDate = null,
+            Description = "MORGAN COMPOUDING", Amount = -50m, ImportSource = "ManualScreenshot", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(0m, summary.Actual);
+        Assert.Equal(50m, result.PendingAmount);
+    }
+
+    [Fact]
+    public async Task PendingSelfReportedCharge_OutsideTheCurrentWeek_IsExcluded()
+    {
+        var groceries = await CreateGroceriesAsync();
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction // last week - Saturday July 11
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 11), PostedDate = null,
+            Description = "INGLES", Amount = -120m, ImportSource = "ManualScreenshot", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(0m, summary.Actual);
+    }
+
+    [Fact]
     public async Task DeactivatedCategory_IsExcluded()
     {
         var groceries = await CreateGroceriesAsync();

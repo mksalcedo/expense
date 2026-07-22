@@ -50,7 +50,19 @@ public class AnthropicVisionClient(HttpClient httpClient, string apiKey) : IAnth
         }
 
         using var doc = JsonDocument.Parse(responseJson);
-        return doc.RootElement.GetProperty("content")[0].GetProperty("text").GetString()
-            ?? throw new InvalidOperationException("Anthropic API response had no text content.");
+
+        // content[0] isn't reliably the text block - Claude can prepend other block types
+        // (e.g. thinking), which have no "text" property, so scan for the first real one
+        // instead of assuming position.
+        foreach (var block in doc.RootElement.GetProperty("content").EnumerateArray())
+        {
+            if (block.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "text"
+                && block.TryGetProperty("text", out var textProp))
+            {
+                return textProp.GetString() ?? throw new InvalidOperationException("Anthropic API response had an empty text block.");
+            }
+        }
+
+        throw new InvalidOperationException($"Anthropic API response had no text content block: {responseJson}");
     }
 }

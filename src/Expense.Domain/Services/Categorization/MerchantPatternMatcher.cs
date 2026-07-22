@@ -15,4 +15,13 @@ public static class MerchantPatternMatcher
 {
     public static bool Matches(string text, string pattern) =>
         Regex.Replace(text, @"\s+", " ").Contains(pattern.Trim('%'), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True if a new pattern is a single word, e.g. "PAYMENT" or "FEE" - a real risk (it'll
+    /// match that word appearing inside any unrelated transaction's description), unlike a
+    /// single-word but genuinely distinctive brand name (e.g. "CHIPOTLE"). Doesn't try to
+    /// tell those apart automatically - just flags every single-word pattern for a human to
+    /// confirm is actually specific, rather than silently accepting a dangerously generic one.
+    /// </summary>
+    public static bool IsSingleWord(string pattern) => !pattern.Trim('%').Trim().Contains(' ');
 }

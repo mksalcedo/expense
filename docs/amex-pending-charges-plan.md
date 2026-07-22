@@ -24,12 +24,13 @@ Instead:
 
 This only matters for **pay-in-full/ActiveSpending accounts** (currently just Amex) — debt accounts (Chase, Discover, etc.) use a fixed min+extra payment, not a charges-summed total, so there's nothing for a "pending charges you've seen" adjustment to plug into there. That's not a decision to make later; it falls out of how `AmexCycleCalculator` already works.
 
-## Forecast change: a separate, visible line — not a blended number
+## Forecast change: blended into the same cycle, not a separate additive line (superseded 2026-07-22)
 
-Mirrors Amex's own UI, which already separates "Pending Charges" from "Posted Charges" rather than blending them. Concretely:
-- The existing Amex cycle calculation (`MAX(posted actual charges, budget) + extra principal`) is **untouched**.
-- A **second ledger line** — "Amex Payment (pending, self-reported)" — sums manually-entered, still-unposted (`PostedDate IS NULL AND ImportSource = 'ManualScreenshot'`) charges for the account, landing on the same due date as the real cycle's payment line.
-- Both lines feed the running balance (so the real dollar impact the user cares about is there), but stay visually distinct — same "excluded/struck-through row with a reason" visual language already built for confirmed/overridden Forecast rows.
+**Original design** (below) kept a separate always-additive "Amex Payment (pending, self-reported)" line. **Revised** after real usage revealed two problems: (1) it was attached to whichever cycle was soonest-due (the already-closed one), not the currently-open cycle these charges actually belong to; (2) more fundamentally, the whole point of this feature is to catch a looming *budget overage* before charges post - a separate additive line risks double-counting against the flat monthly budget figure instead of correctly flagging only the amount by which real spending (posted + pending) exceeds it.
+
+**Current design:** `AmexCycleCalculator` treats a still-unposted, self-reported charge exactly like a posted one for the purpose of the existing `MAX(actual, budget) + extra principal` calculation - bucketed into whichever cycle's `[CycleStart, CycleEnd]` window contains it, using `PostedDate ?? TransactionDate` as its effective date. `AmexCycleResult.PendingSelfReportedAmount` reports how much of that cycle's `ActualAmount` came from still-pending charges, so `ForecastEngine` can annotate the single "Amex Payment" line's description (e.g. "Amex Payment (includes $131.65 pending, not yet posted)") without adding a second dollar-bearing row. This means an overage becomes visible in the forecast the moment enough pending charges are entered to exceed budget - not just once they post - while charges still under budget don't distort the total, only the description.
+
+~~Original: mirrors Amex's own UI, which separates "Pending Charges" from "Posted Charges" rather than blending them - a second ledger line landing on the same due date as the real cycle's payment line, both feeding the running balance but visually distinct.~~
 
 ## De-dup — both directions
 

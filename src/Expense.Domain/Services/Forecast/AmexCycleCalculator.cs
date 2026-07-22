@@ -9,7 +9,9 @@ namespace Expense.Domain.Services.Forecast;
 /// gets optimistic from underspending; real savings only show up later via the next
 /// actual checking-balance refresh. chargeTransactions should be every real charge on
 /// the account (not filtered by category) - the caller is responsible for excluding
-/// payments/credits before passing them in.
+/// payments/credits before passing them in - and may include still-unposted,
+/// self-reported (screenshot-derived) charges (PostedDate null) alongside real posted
+/// ones, so a looming overage is caught before it posts for real.
 /// </summary>
 public class AmexCycleCalculator
 {
@@ -41,22 +43,29 @@ public class AmexCycleCalculator
                 var isFuture = cycleStart > asOfDate;
                 decimal amount;
                 decimal actualAmount = 0m;
+                decimal pendingSelfReportedAmount = 0m;
                 if (isFuture)
                 {
                     amount = monthlyBudgetTotal + extraPrincipal;
                 }
                 else
                 {
-                    actualAmount = -chargeTransactions
-                        .Where(t => t.PostedDate is { } posted && posted >= cycleStart && posted <= closeDate)
-                        .Sum(t => t.Amount);
+                    // A still-unposted, self-reported charge (PostedDate null) counts using the
+                    // date it was seen/entered instead - so an overage is caught in this same
+                    // MAX(actual, budget) comparison before it ever posts for real, rather than
+                    // waiting and risking an already-blown budget going unnoticed until then.
+                    var chargesInCycle = chargeTransactions
+                        .Where(t => (t.PostedDate ?? t.TransactionDate) >= cycleStart && (t.PostedDate ?? t.TransactionDate) <= closeDate)
+                        .ToList();
+                    actualAmount = -chargesInCycle.Sum(t => t.Amount);
+                    pendingSelfReportedAmount = -chargesInCycle.Where(t => t.PostedDate is null).Sum(t => t.Amount);
                     amount = Math.Max(actualAmount, monthlyBudgetTotal) + extraPrincipal;
                 }
 
                 results.Add(new AmexCycleResult
                 {
                     CycleStart = cycleStart, CycleEnd = closeDate, DueDate = dueDate, Amount = amount,
-                    IsFuture = isFuture, ActualAmount = actualAmount
+                    IsFuture = isFuture, ActualAmount = actualAmount, PendingSelfReportedAmount = pendingSelfReportedAmount
                 });
             }
 

@@ -172,6 +172,24 @@ else
     </table>
 }
 
+@if (_confirmSingleWordModalOpen)
+{
+    <div id="confirm-single-word-modal" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center;">
+        <div style="background: var(--color-surface, white); width: 90%; max-width: 500px; padding: 20px; border-radius: 6px;">
+            <h2 style="margin-top: 0;">Use this single-word pattern?</h2>
+            <p>
+                "@_confirmSingleWordPattern" is a single word. That's fine for a truly distinctive name (e.g. a specific
+                brand), but a generic term like "payment" or "fee" would match unrelated transactions too. Make sure
+                this is specific to one merchant before continuing.
+            </p>
+            <p>
+                <button id="confirm-single-word-btn" @onclick="ConfirmSingleWordPatternAsync">Use It Anyway</button>
+                <button id="cancel-single-word-btn" @onclick="CancelSingleWordPattern">Cancel</button>
+            </p>
+        </div>
+    </div>
+}
+
 @code {
     private ReviewQueueData? _data;
     private readonly Dictionary<int, string?> _transactionPattern = [];
@@ -185,6 +203,10 @@ else
     private readonly HashSet<int> _selectedItemIndexes = [];
     private int? _lastClickedItemIndex;
     private int _selectedBulkItemCategoryId;
+
+    private bool _confirmSingleWordModalOpen;
+    private string? _confirmSingleWordPattern;
+    private Func<Task>? _pendingSingleWordAction;
 
     protected override async Task OnInitializedAsync()
     {
@@ -216,7 +238,22 @@ else
 
         var representativeId = group.TransactionIds[0];
         var pattern = _transactionPattern.TryGetValue(representativeId, out var edited) ? edited : group.SuggestedPattern;
-        await ReviewQueueProvider.CategorizeTransactionAsync(representativeId, categoryId, string.IsNullOrWhiteSpace(pattern) ? null : pattern);
+        var patternToCreate = string.IsNullOrWhiteSpace(pattern) ? null : pattern;
+
+        if (patternToCreate is not null && MerchantPatternMatcher.IsSingleWord(patternToCreate))
+        {
+            _confirmSingleWordPattern = patternToCreate;
+            _pendingSingleWordAction = () => CommitTransactionCategorizationAsync(representativeId, categoryId, patternToCreate);
+            _confirmSingleWordModalOpen = true;
+            return;
+        }
+
+        await CommitTransactionCategorizationAsync(representativeId, categoryId, patternToCreate);
+    }
+
+    private async Task CommitTransactionCategorizationAsync(int representativeId, int categoryId, string? pattern)
+    {
+        await ReviewQueueProvider.CategorizeTransactionAsync(representativeId, categoryId, pattern);
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
     }
 
@@ -226,8 +263,41 @@ else
 
         var representativeId = group.ItemIds[0];
         var pattern = _itemPattern.TryGetValue(representativeId, out var edited) ? edited : group.SuggestedPattern;
-        await ReviewQueueProvider.CategorizeAmazonItemAsync(representativeId, categoryId, string.IsNullOrWhiteSpace(pattern) ? null : pattern);
+        var patternToCreate = string.IsNullOrWhiteSpace(pattern) ? null : pattern;
+
+        if (patternToCreate is not null && MerchantPatternMatcher.IsSingleWord(patternToCreate))
+        {
+            _confirmSingleWordPattern = patternToCreate;
+            _pendingSingleWordAction = () => CommitAmazonItemCategorizationAsync(representativeId, categoryId, patternToCreate);
+            _confirmSingleWordModalOpen = true;
+            return;
+        }
+
+        await CommitAmazonItemCategorizationAsync(representativeId, categoryId, patternToCreate);
+    }
+
+    private async Task CommitAmazonItemCategorizationAsync(int representativeId, int categoryId, string? pattern)
+    {
+        await ReviewQueueProvider.CategorizeAmazonItemAsync(representativeId, categoryId, pattern);
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
+    private async Task ConfirmSingleWordPatternAsync()
+    {
+        _confirmSingleWordModalOpen = false;
+        _confirmSingleWordPattern = null;
+        if (_pendingSingleWordAction is { } action)
+        {
+            _pendingSingleWordAction = null;
+            await action();
+        }
+    }
+
+    private void CancelSingleWordPattern()
+    {
+        _confirmSingleWordModalOpen = false;
+        _confirmSingleWordPattern = null;
+        _pendingSingleWordAction = null;
     }
 
     // Gmail-style multi-select: a plain click toggles just that row; shift-click selects

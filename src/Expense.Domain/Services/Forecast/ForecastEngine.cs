@@ -21,6 +21,11 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
     // the unbounded, filterable history.
     private const int ExcludedPaymentVisibilityDays = 7;
 
+    // How many days a partial payment's recorded paid-date may differ from a real posted
+    // transaction's date and still count as the same real-world payment - a manually-entered
+    // date is only ever approximate, same reasoning as ManualChargeMatchingService.MatchWindowDays.
+    private const int PartialPaymentMatchWindowDays = 5;
+
     public async Task<ForecastResult> GenerateAsync(
         ExpenseDbContext context, DateOnly asOfDate, DateOnly windowEnd, CancellationToken cancellationToken = default)
     {
@@ -132,9 +137,12 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             // be invisible to "how much do I owe" just because it hasn't been categorized
             // yet. Amount < 0 excludes payments/credits (positive amounts) - those must
             // never offset real spending, or the forecast would understate what's owed by
-            // whatever's already been paid toward the card this cycle.
+            // whatever's already been paid toward the card this cycle. Still-unposted,
+            // self-reported (screenshot-derived) charges are included alongside real posted
+            // ones - see AmexCycleCalculator - so a looming overage is caught before it posts.
             var chargeTransactions = await context.BankTransactions
-                .Where(t => t.AccountId == account.Id && t.PostedDate != null && t.Amount < 0)
+                .Where(t => t.AccountId == account.Id && t.Amount < 0
+                            && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource))
                 .ToListAsync(cancellationToken);
 
             // Widened backward same as the debt-account/Direct path above, for the same
@@ -152,41 +160,17 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             var amexPaymentCategoryId = accountPaymentCategoryIds.GetValueOrDefault(account.Id);
             foreach (var cycle in cycles)
             {
+                var description = cycle.PendingSelfReportedAmount > 0m
+                    ? $"{account.Name} Payment (includes ${cycle.PendingSelfReportedAmount:N2} pending, not yet posted)"
+                    : $"{account.Name} Payment";
                 var line = new LedgerLine
                 {
-                    Date = cycle.DueDate, Description = $"{account.Name} Payment", Amount = -cycle.Amount, AccountId = account.Id,
+                    Date = cycle.DueDate, Description = description, Amount = -cycle.Amount, AccountId = account.Id,
                     CategoryId = amexPaymentCategoryId, MatchWindowDays = RecurrenceExpander.MatchWindowDaysFor(Frequency.Monthly)
                 };
                 if (!IsAlreadyReflectedInAnActualTransaction(line, reconciliationTransactions))
                 {
                     lines.Add(line);
-                }
-            }
-
-            // Charges the user has personally seen pending (via a screenshot) but that
-            // haven't posted for real yet - kept as a separate, clearly-labeled line rather
-            // than blended into the real cycle's total above, mirroring how Amex's own site
-            // separates "Pending" from "Posted" rather than showing one blended figure. Never
-            // changes the real cycle calculation; only ever additive, and only for charges
-            // still genuinely unposted (PostedDate null).
-            var pendingSelfReportedTotal = await context.BankTransactions
-                .Where(t => t.AccountId == account.Id && t.PostedDate == null
-                            && t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource && t.Amount < 0)
-                .SumAsync(t => -t.Amount, cancellationToken);
-
-            if (pendingSelfReportedTotal > 0m)
-            {
-                var attachToCycle = cycles.FirstOrDefault(c => !c.IsFuture) ?? cycles.FirstOrDefault();
-                if (attachToCycle is not null)
-                {
-                    lines.Add(new LedgerLine
-                    {
-                        Date = attachToCycle.DueDate,
-                        Description = $"{account.Name} Payment (pending, self-reported)",
-                        Amount = -pendingSelfReportedTotal,
-                        AccountId = account.Id,
-                        ExcludeFromManualMatching = true
-                    });
                 }
             }
         }
@@ -217,22 +201,47 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         // confirmation/other partial payment on the same account (e.g. paid on the bill's own
         // due date) - it must never be mistaken for that occurrence just because of that, so
         // it's excluded from all three matching lookups below and always shown as a plain row.
-        var partialPaymentOwnEventIds = partialPayments.Select(p => p.OneTimeEventId).ToHashSet();
+        var partialPaymentsByOwnEventId = partialPayments.ToDictionary(p => p.OneTimeEventId);
+
+        // Once the real cash movement a partial payment recorded actually posts and syncs
+        // normally, its synthetic OneTimeEvent line becomes redundant - the real transaction
+        // already reduces the checking balance for real, so keeping the recorded line around
+        // too would double-count it. Matched on account + exact amount + a several-day window
+        // against real posted transactions - deliberately not against other forecast lines
+        // (that's the unrelated-collision risk already guarded against above), so this can't
+        // be swept into anything else the way that original bug was.
+        var partialPaymentAccountIds = partialPayments.Select(p => p.AccountId).Distinct().ToList();
+        var realTransactionsForPartialPayments = partialPaymentAccountIds.Count == 0
+            ? []
+            : await context.BankTransactions
+                .Where(t => partialPaymentAccountIds.Contains(t.AccountId) && t.PostedDate != null)
+                .ToListAsync(cancellationToken);
+
+        BankTransaction? FindRealPostingFor(PartialPayment partialPayment) =>
+            realTransactionsForPartialPayments.FirstOrDefault(t =>
+                t.AccountId == partialPayment.AccountId && t.Amount == partialPayment.Amount
+                && t.PostedDate is { } posted
+                && posted >= partialPayment.PaidDate.AddDays(-PartialPaymentMatchWindowDays)
+                && posted <= partialPayment.PaidDate.AddDays(PartialPaymentMatchWindowDays));
 
         var rows = new List<ForecastLedgerRow>();
         foreach (var line in lines)
         {
-            if (line.ExcludeFromManualMatching
-                || (line.SourceOneTimeEventId is { } sourceEventId && partialPaymentOwnEventIds.Contains(sourceEventId)))
+            if (line.SourceOneTimeEventId is { } sourceEventId && partialPaymentsByOwnEventId.TryGetValue(sourceEventId, out var ownPartialPayment))
             {
+                var realPosting = FindRealPostingFor(ownPartialPayment);
                 rows.Add(new ForecastLedgerRow
                 {
                     Date = line.Date,
-                    Description = line.Description,
+                    Description = realPosting is { PostedDate: { } posted }
+                        ? $"{line.Description} - matched a real posted payment on {posted:MM/dd/yyyy}"
+                        : line.Description,
                     Amount = line.Amount,
                     RunningBalance = 0m,
                     AccountId = line.AccountId,
-                    OriginalDate = line.Date
+                    OriginalDate = line.Date,
+                    IsExcluded = realPosting is not null,
+                    ExclusionReason = realPosting is not null ? ConfirmationReason.AutoReconciled : null
                 });
                 continue;
             }

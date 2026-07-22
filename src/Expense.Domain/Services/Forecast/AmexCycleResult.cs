@@ -13,4 +13,11 @@ public class AmexCycleResult
 
     /// <summary>The actual qualifying-charges total for this cycle; 0 for a future cycle, since none has been computed.</summary>
     public required decimal ActualAmount { get; set; }
+
+    /// <summary>
+    /// The portion of ActualAmount that's still-unposted, self-reported (screenshot-derived)
+    /// charges rather than real posted transactions - included in ActualAmount so an overage
+    /// is caught before it posts, but reported separately so the forecast can explain why.
+    /// </summary>
+    public required decimal PendingSelfReportedAmount { get; set; }
 }

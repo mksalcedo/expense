@@ -64,11 +64,11 @@ else
                     <td style="@CellStyle(rightAlign: true)">@row.Amount.ToString("N2")</td>
                     <td style="@CellStyle(rightAlign: true)">@row.RunningBalance.ToString("N2")</td>
                     <td style="@CellStyle()">
-                        @if (row.IsExcluded)
+                        @if (row.IsExcluded && row.ConfirmationId is not null)
                         {
                             <button id="undo-confirmation-btn-@row.ConfirmationId" @onclick="() => RemoveConfirmationAsync(row)">Undo</button>
                         }
-                        else
+                        else if (!row.IsExcluded)
                         {
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 @if (row.IsDeferred)

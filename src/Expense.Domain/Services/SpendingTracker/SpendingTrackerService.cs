@@ -1,6 +1,7 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Budgets;
+using Expense.Domain.Services.Ingestion.ManualCharges;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.SpendingTracker;
@@ -50,9 +51,13 @@ public class SpendingTrackerService(BudgetProrationService proration)
             .Where(p => p.EffectiveThrough == null && qualifyingCategoryIds.Contains(p.CategoryId))
             .ToDictionaryAsync(p => p.CategoryId, cancellationToken);
 
+        // Still-unposted, self-reported (screenshot-derived) charges count using the date
+        // they were seen/entered instead of a real PostedDate - consistent with how the
+        // Forecast page's Amex cycle calculation already treats these (see AmexCycleCalculator).
         var bankTotalsByCategory = await context.BankTransactions
             .Where(t => !t.IsAmazonMerchant && t.CategoryId != null && qualifyingCategoryIds.Contains(t.CategoryId.Value)
-                        && t.PostedDate != null && t.PostedDate >= periodStart && t.PostedDate <= periodEnd)
+                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource))
+            .Where(t => (t.PostedDate ?? t.TransactionDate) >= periodStart && (t.PostedDate ?? t.TransactionDate) <= periodEnd)
             .GroupBy(t => t.CategoryId!.Value)
             .Select(g => new { CategoryId = g.Key, Total = g.Sum(t => t.Amount) })
             .ToDictionaryAsync(g => g.CategoryId, g => g.Total, cancellationToken);
@@ -84,7 +89,8 @@ public class SpendingTrackerService(BudgetProrationService proration)
 
         var pendingBank = await context.BankTransactions
             .Where(t => !t.IsAmazonMerchant && t.CategoryId == null && t.Amount < 0
-                        && t.PostedDate != null && t.PostedDate >= periodStart && t.PostedDate <= periodEnd)
+                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource))
+            .Where(t => (t.PostedDate ?? t.TransactionDate) >= periodStart && (t.PostedDate ?? t.TransactionDate) <= periodEnd)
             .SumAsync(t => (decimal?)t.Amount, cancellationToken) ?? 0m;
 
         var pendingAmazon = await context.AmazonOrderItems

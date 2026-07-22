@@ -146,17 +146,39 @@ public class ReviewQueueTests : BunitContext
     }
 
     [Fact]
-    public void SelectingCategoryOnTransactionGroup_ImmediatelyCategorizesUsingTheDefaultPattern_NoExtraClick()
+    public void SelectingCategoryOnTransactionGroup_WithASingleWordPattern_AsksForConfirmationFirst()
     {
+        // PUBLIX (the fixture's default pattern for this group) is a single word - must be
+        // confirmed before it's actually saved as a new merchant rule.
         var provider = MakeProvider();
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
         cut.Find("#txn-category-10").Change("1");
 
+        Assert.Null(provider.LastTransactionId); // not yet committed
+        Assert.Contains("PUBLIX", cut.Find("#confirm-single-word-modal").TextContent);
+
+        cut.Find("#confirm-single-word-btn").Click();
+
         Assert.Equal(10, provider.LastTransactionId); // the group's first (representative) transaction id
         Assert.Equal(1, provider.LastCategoryId);
         Assert.Equal("PUBLIX", provider.LastPattern);
+        Assert.Empty(cut.FindAll("#confirm-single-word-modal"));
+    }
+
+    [Fact]
+    public void CancelingTheSingleWordConfirmation_DoesNotCategorize()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-category-10").Change("1");
+        cut.Find("#cancel-single-word-btn").Click();
+
+        Assert.Null(provider.LastTransactionId);
+        Assert.Empty(cut.FindAll("#confirm-single-word-modal"));
     }
 
     [Fact]
@@ -184,6 +206,25 @@ public class ReviewQueueTests : BunitContext
         Assert.Equal(20, provider.LastAmazonItemId); // the group's first (representative) item id
         Assert.Equal(1, provider.LastCategoryId);
         Assert.Equal("Qunol Ultra CoQ10", provider.LastPattern);
+    }
+
+    [Fact]
+    public void SelectingCategoryOnAmazonItemGroup_WithASingleWordPattern_AlsoAsksForConfirmation()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-pattern-20").Change("Turmeric");
+        cut.Find("#item-category-20").Change("1");
+
+        Assert.Null(provider.LastAmazonItemId);
+        Assert.Contains("Turmeric", cut.Find("#confirm-single-word-modal").TextContent);
+
+        cut.Find("#confirm-single-word-btn").Click();
+
+        Assert.Equal(20, provider.LastAmazonItemId);
+        Assert.Equal("Turmeric", provider.LastPattern);
     }
 
     [Fact]

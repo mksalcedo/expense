@@ -31,4 +31,22 @@ public class MerchantPatternMatcherTests
     {
         Assert.False(MerchantPatternMatcher.Matches("SHELL GAS STATION", "%PUBLIX%"));
     }
+
+    [Fact]
+    public void IsSingleWord_TrueForAPlainSingleWord()
+    {
+        Assert.True(MerchantPatternMatcher.IsSingleWord("CHIPOTLE"));
+    }
+
+    [Fact]
+    public void IsSingleWord_TrueForAWildcardedSingleWord()
+    {
+        Assert.True(MerchantPatternMatcher.IsSingleWord("%SOFI%"));
+    }
+
+    [Fact]
+    public void IsSingleWord_FalseWhenTheresMoreThanOneWord()
+    {
+        Assert.False(MerchantPatternMatcher.IsSingleWord("PUBLIX NORCROSS GA"));
+    }
 }

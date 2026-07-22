@@ -18,6 +18,17 @@ public class AmexCycleCalculatorTests
         CreatedAt = DateTimeOffset.UtcNow
     };
 
+    private static BankTransaction PendingCharge(DateOnly transactionDate, decimal amount) => new()
+    {
+        AccountId = 2,
+        TransactionDate = transactionDate,
+        PostedDate = null,
+        Description = "pending charge",
+        Amount = amount,
+        ImportSource = "ManualScreenshot",
+        CreatedAt = DateTimeOffset.UtcNow
+    };
+
     [Fact]
     public void CycleBoundaryMath_CloseBeforeDue_DueDateLandsInSameMonth()
     {
@@ -97,6 +108,44 @@ public class AmexCycleCalculatorTests
         Assert.Equal(2350m, result.Amount); // MAX(1250, 900) + 1100
         Assert.False(result.IsFuture);
         Assert.Equal(1250m, result.ActualAmount);
+        Assert.Equal(0m, result.PendingSelfReportedAmount);
+    }
+
+    [Fact]
+    public void InProgressCycle_PendingChargeExceedsBudget_CountsTowardActualBeforeItPosts()
+    {
+        // cycle runs Jan 26 - Feb 25; $200 posted plus $1,000 seen pending (not yet posted) -
+        // together they exceed the $900 budget, and must be caught now, not once it posts.
+        var charges = new List<BankTransaction>
+        {
+            Charge(new DateOnly(2026, 2, 1), -200m),
+            PendingCharge(new DateOnly(2026, 2, 10), -1000m)
+        };
+
+        var results = _sut.CalculateDuePayments(
+            statementCloseDay: 25, paymentDueDay: 15, extraPrincipal: 0m, monthlyBudgetTotal: 900m,
+            chargeTransactions: charges, asOfDate: new DateOnly(2026, 2, 10),
+            windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 3, 31));
+
+        var result = Assert.Single(results);
+        Assert.Equal(1200m, result.Amount); // MAX(1200, 900) - the overage is visible before posting
+        Assert.Equal(1200m, result.ActualAmount);
+        Assert.Equal(1000m, result.PendingSelfReportedAmount);
+    }
+
+    [Fact]
+    public void InProgressCycle_PendingChargeUnderBudget_StaysAtBudgetFloor_ButIsStillReported()
+    {
+        var charges = new List<BankTransaction> { PendingCharge(new DateOnly(2026, 2, 10), -131.65m) };
+
+        var results = _sut.CalculateDuePayments(
+            statementCloseDay: 25, paymentDueDay: 15, extraPrincipal: 0m, monthlyBudgetTotal: 900m,
+            chargeTransactions: charges, asOfDate: new DateOnly(2026, 2, 10),
+            windowStart: new DateOnly(2026, 3, 1), windowEnd: new DateOnly(2026, 3, 31));
+
+        var result = Assert.Single(results);
+        Assert.Equal(900m, result.Amount); // budget floor still wins
+        Assert.Equal(131.65m, result.PendingSelfReportedAmount); // but the pending amount is still surfaced
     }
 
     [Fact]
