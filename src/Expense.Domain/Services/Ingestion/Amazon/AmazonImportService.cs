@@ -31,8 +31,18 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
 
         foreach (var item in items)
         {
-            var exists = await context.AmazonOrderItems
-                .AnyAsync(i => i.OrderId == item.OrderId && i.ItemTitle == item.ItemTitle, cancellationToken);
+            // A placeholder item (NeedsReview - see AmazonOrderEmailParser.BuildPlaceholderOrder)
+            // is always the sole representative of its whole order, and its title is expected
+            // to be replaced by hand once the user checks the real order page. Deduping it by
+            // (OrderId, ItemTitle) like a normal item would break the moment that edit happens -
+            // a later re-scan of the same email always regenerates the original placeholder
+            // text, which no longer matches the user's corrected title, so it looked like a
+            // brand new item and got inserted as a duplicate (a real bug found in production).
+            // OrderId alone is a safe, stable key here specifically because there's structurally
+            // only ever one such row per order.
+            var exists = item.NeedsReview
+                ? await context.AmazonOrderItems.AnyAsync(i => i.OrderId == item.OrderId, cancellationToken)
+                : await context.AmazonOrderItems.AnyAsync(i => i.OrderId == item.OrderId && i.ItemTitle == item.ItemTitle, cancellationToken);
             if (exists)
             {
                 summary.DuplicatesSkipped++;

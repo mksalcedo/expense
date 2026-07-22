@@ -148,6 +148,34 @@ public class AmazonImportServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ImportOrder_PlaceholderItem_StillDedupesAfterTheUserEditsItsTitle()
+    {
+        // Real bug: a placeholder ("(Item details unavailable...)") item is meant to be
+        // corrected by hand once the user checks the real order page - but the old dedup key
+        // was (OrderId, ItemTitle), so editing the title made a later re-scan of the same
+        // email fail to recognize it and insert a second, duplicate placeholder row.
+        await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 7, 14));
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        item.ItemTitle = "Real Product Name I Looked Up";
+        item.CategoryId = supplements.Id;
+        item.NeedsReview = false;
+        await Context.SaveChangesAsync();
+
+        var summary = await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 7, 14));
+
+        Assert.Equal(0, summary.ItemsAdded);
+        Assert.Equal(1, summary.DuplicatesSkipped);
+        var itemsForOrder = await Context.AmazonOrderItems.Where(i => i.OrderId == "113-1132648-3403446").ToListAsync();
+        var onlyItem = Assert.Single(itemsForOrder); // still just one row, not two
+        Assert.Equal("Real Product Name I Looked Up", onlyItem.ItemTitle); // the user's fix wasn't touched
+        Assert.Equal(supplements.Id, onlyItem.CategoryId);
+    }
+
+    [Fact]
     public async Task ImportRefund_ProductMatch_CreatesItsOwnNegativeCategorizedEntry()
     {
         var officeSupplies = new Category { Name = "Office Supplies" };
