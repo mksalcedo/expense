@@ -1,5 +1,9 @@
 @using Microsoft.AspNetCore.Components.Routing
+@using Expense.Domain.Services.Categorization
 @inject IJSRuntime JS
+@inject IReviewQueueProvider ReviewQueueProvider
+@inject NavigationManager Navigation
+@implements IDisposable
 
 <nav class="nav-menu">
     <div class="nav-brand">Expense</div>
@@ -9,9 +13,10 @@
     <NavLink href="add-pending-charges" class="nav-link">Add Pending Charges</NavLink>
     <NavLink href="pending-charges" class="nav-link">Manually Entered Pending Charges</NavLink>
     <NavLink href="spending-tracker" class="nav-link">Spending Tracker</NavLink>
-    <NavLink href="review-queue" class="nav-link">Review Queue</NavLink>
+    <NavLink href="review-queue" id="nav-review-queue-link" class="nav-link">Review Queue@_pendingReviewCountSuffix</NavLink>
     <NavLink href="transactions" class="nav-link">Transactions</NavLink>
     <NavLink href="historical-analysis" class="nav-link">Historical Analysis</NavLink>
+    <NavLink href="sync-now" id="nav-sync-now-link" class="nav-link">Sync Now</NavLink>
     <div class="nav-divider"></div>
     <NavLink href="categories" class="nav-link">Categories</NavLink>
     <NavLink href="budgets" class="nav-link">Budgets</NavLink>
@@ -22,6 +27,37 @@
 </nav>
 
 @code {
+    private int _pendingReviewCount;
+
+    private string _pendingReviewCountSuffix => _pendingReviewCount switch
+    {
+        0 => "",
+        1 => " (1 item needs review)",
+        _ => $" ({_pendingReviewCount} items need review)"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshPendingReviewCountAsync();
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    // The nav bar is part of the persistent layout, not a routable page, so it's only ever
+    // initialized once per circuit - without re-checking on each internal navigation, the
+    // review count would go stale the moment the user resolves items and clicks elsewhere,
+    // long before the count would naturally refresh on its own.
+    private async void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        await RefreshPendingReviewCountAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshPendingReviewCountAsync()
+    {
+        var data = await ReviewQueueProvider.GetReviewQueueAsync();
+        _pendingReviewCount = data.TransactionGroups.Count + data.AmazonItemGroups.Count;
+    }
+
     // The app runs in a chromeless Chrome window (see scripts/start-expense.sh) with no
     // browser reload button, so this stands in for one - a real full-page reload rather
     // than just re-fetching the current page's own data, matching what a normal browser
@@ -29,5 +65,10 @@
     private async Task RefreshAsync()
     {
         await JS.InvokeVoidAsync("location.reload");
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
     }
 }

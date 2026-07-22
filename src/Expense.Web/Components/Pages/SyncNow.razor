@@ -1,0 +1,221 @@
+@page "/sync-now"
+@using Expense.Domain.Entities
+@using Expense.Domain.Services.Dashboard
+@using Expense.Domain.Services.Ingestion.Amazon
+@inject ISyncStatusProvider SyncStatusProvider
+
+<PageTitle>Sync Now</PageTitle>
+
+<h1>Sync Now</h1>
+
+<div>
+    <button id="sync-simplefin-btn" @onclick="RunSimpleFinSyncAsync" disabled="@_simpleFinRunning">
+        @(_simpleFinRunning ? "Syncing..." : "Sync Bank Accounts (SimpleFin)")
+    </button>
+    <p id="sync-simplefin-status">@FormatRunStatus(_lastSimpleFinRun)</p>
+    @if (_lastSimpleFinRun?.Summary is { } simpleFinSummary)
+    {
+        <p id="sync-simplefin-summary">@simpleFinSummary</p>
+    }
+</div>
+<div>
+    <button id="sync-amazon-btn" @onclick="RunAmazonGmailSyncAsync" disabled="@_amazonRunning">
+        @(_amazonRunning ? "Syncing..." : "Sync Amazon Orders (via Gmail)")
+    </button>
+    <p><em>Scans Gmail for Amazon order/refund emails - this is how Amazon purchases get into Expense.</em></p>
+    <p id="sync-amazon-status">@FormatRunStatus(_lastAmazonRun)</p>
+    @if (_lastAmazonRun?.Summary is { } amazonSummary)
+    {
+        <p id="sync-amazon-summary">@amazonSummary</p>
+    }
+</div>
+
+@if (_syncIssues.Count > 0)
+{
+    <div id="sync-issues-section">
+        <h3>Sync issues need review (@_syncIssues.Count)</h3>
+        @foreach (var issue in _syncIssues)
+        {
+            var form = GetResolveForm(issue.Id);
+            <div id="sync-issue-@issue.Id" style="border: 1px solid var(--color-border, #ccc); padding: 10px; margin-bottom: 10px;">
+                <p><strong>@issue.Subject</strong> &mdash; @issue.Reason</p>
+                <p>Received: @issue.ReceivedDate.ToString("MM/dd/yyyy")</p>
+                @if (issue.Body is { } body)
+                {
+                    <pre style="max-height: 150px; overflow-y: auto; background: var(--color-surface, #f5f5f5); padding: 6px;">@body</pre>
+                }
+                <div>
+                    <input id="resolve-order-id-@issue.Id" placeholder="Order ID" @onchange="e => form.OrderId = (string)e.Value!" />
+                    <input id="resolve-item-title-@issue.Id" placeholder="Item title" @onchange="e => form.ItemTitle = (string)e.Value!" />
+                    <input id="resolve-price-@issue.Id" type="number" step="0.01" placeholder="Price" @onchange="e => form.Price = (string)e.Value!" />
+                    <input id="resolve-quantity-@issue.Id" type="number" value="@form.Quantity" @onchange="e => form.Quantity = int.Parse((string)e.Value!)" />
+                    <button id="resolve-btn-@issue.Id" @onclick="() => ResolveSyncIssueAsync(issue.Id)">Resolve</button>
+                    <button id="ignore-not-order-btn-@issue.Id" @onclick="() => IgnoreSyncIssueAsync(issue.Id)">Not a real order</button>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@if (_amazonSyncModalOpen)
+{
+    <div id="amazon-sync-modal" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center;">
+        <div style="background: var(--color-surface, white); width: 90%; max-width: 800px; max-height: 85vh; display: flex; flex-direction: column; padding: 20px; border-radius: 6px;">
+            <h2 style="margin-top: 0;">Syncing Amazon Orders</h2>
+            <div style="flex: 1; overflow-y: auto; font-family: monospace; font-size: 0.85em;">
+                @foreach (var line in _amazonSyncProgressLines)
+                {
+                    var parsed = TrySplitMessageLine(line.Text);
+                    @if (parsed is { } p)
+                    {
+                        <div class="@("sync-progress-card" + (line.IsError ? " sync-progress-error" : ""))"
+                             style="border: 1px solid var(--color-border, #ccc); @(line.IsError ? "border-left: 4px solid #b00020;" : "border-left: 4px solid var(--color-border, #ccc);") border-radius: 6px; padding: 10px 12px; margin-bottom: 16px; background: rgba(127,127,127,0.06);">
+                            <div style="font-weight: bold; margin-bottom: 6px; @(line.IsError ? "color: #b00020;" : "")">@p.Header</div>
+                            <pre style="white-space: pre-wrap; max-height: 220px; overflow-y: auto; background: rgba(127,127,127,0.08); padding: 6px; border-radius: 4px; margin: 0 0 8px 0;">@p.Body</pre>
+                            <div style="display: inline-block; font-weight: bold; font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; color: white; background: @(line.IsError ? "#b00020" : "#2b6cb0"); padding: 2px 8px; border-radius: 4px; margin-bottom: 6px;">
+                                Result
+                            </div>
+                            <div>
+                                @foreach (var item in p.Result.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    <div style="padding: 4px 0; border-bottom: 1px dashed var(--color-border, #ddd);">@item</div>
+                                }
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <pre class="@(line.IsError ? "sync-progress-error" : "")"
+                             style="white-space: pre-wrap; margin: 0 0 12px 0; padding-bottom: 12px; border-bottom: 1px solid var(--color-border, #ddd); @(line.IsError ? "color: #b00020;" : "")">@line.Text</pre>
+                    }
+                }
+                @if (_amazonRunning)
+                {
+                    <p><em>Working...</em></p>
+                }
+            </div>
+            @if (!_amazonRunning)
+            {
+                <p><button id="close-amazon-sync-modal-btn" @onclick="() => _amazonSyncModalOpen = false">Close</button></p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private ImportRun? _lastSimpleFinRun;
+    private ImportRun? _lastAmazonRun;
+    private bool _simpleFinRunning;
+    private bool _amazonRunning;
+    private bool _amazonSyncModalOpen;
+    private List<SyncProgressLine> _amazonSyncProgressLines = [];
+    private List<SyncIssue> _syncIssues = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _lastSimpleFinRun = await SyncStatusProvider.GetLastSimpleFinRunAsync();
+        _lastAmazonRun = await SyncStatusProvider.GetLastAmazonGmailRunAsync();
+        _syncIssues = await SyncStatusProvider.GetActiveSyncIssuesAsync();
+    }
+
+    private async Task RunSimpleFinSyncAsync()
+    {
+        _simpleFinRunning = true;
+        try
+        {
+            _lastSimpleFinRun = await SyncStatusProvider.RunSimpleFinSyncAsync();
+        }
+        finally
+        {
+            _simpleFinRunning = false;
+        }
+    }
+
+    private async Task RunAmazonGmailSyncAsync()
+    {
+        _amazonRunning = true;
+        _amazonSyncModalOpen = true;
+        _amazonSyncProgressLines.Clear();
+        try
+        {
+            _lastAmazonRun = await SyncStatusProvider.RunAmazonGmailSyncAsync(line =>
+            {
+                _amazonSyncProgressLines.Add(line);
+                StateHasChanged();
+            });
+            _syncIssues = await SyncStatusProvider.GetActiveSyncIssuesAsync();
+        }
+        finally
+        {
+            _amazonRunning = false;
+        }
+    }
+
+    // Pulls the header/body/result apart from a message-level SyncProgressLine's Text so
+    // each can get its own styling (see AmazonGmailSyncService.FormatMessageProgress for the
+    // exact "--- Email body ---"/"--- Result ---" markers this depends on). Lines that aren't
+    // per-message (window info, found-counts, the final summary) never contain these markers
+    // and render as plain text instead.
+    private static (string Header, string Body, string Result)? TrySplitMessageLine(string text)
+    {
+        const string bodyMarker = "\n--- Email body ---\n";
+        const string resultMarker = "\n--- Result ---\n";
+
+        var bodyIndex = text.IndexOf(bodyMarker, StringComparison.Ordinal);
+        if (bodyIndex < 0)
+        {
+            return null;
+        }
+
+        var resultIndex = text.IndexOf(resultMarker, bodyIndex, StringComparison.Ordinal);
+        if (resultIndex < 0)
+        {
+            return null;
+        }
+
+        var header = text[..bodyIndex];
+        var body = text[(bodyIndex + bodyMarker.Length)..resultIndex];
+        var result = text[(resultIndex + resultMarker.Length)..];
+        return (header, body, result);
+    }
+
+    private class ResolveFormState
+    {
+        public string OrderId { get; set; } = "";
+        public string ItemTitle { get; set; } = "";
+        public string Price { get; set; } = "";
+        public int Quantity { get; set; } = 1;
+    }
+
+    private readonly Dictionary<int, ResolveFormState> _resolveForms = [];
+
+    private ResolveFormState GetResolveForm(int issueId) =>
+        _resolveForms.TryGetValue(issueId, out var form) ? form : _resolveForms[issueId] = new ResolveFormState();
+
+    private async Task ResolveSyncIssueAsync(int syncIssueId)
+    {
+        var form = GetResolveForm(syncIssueId);
+        if (string.IsNullOrWhiteSpace(form.OrderId) || string.IsNullOrWhiteSpace(form.ItemTitle) || !decimal.TryParse(form.Price, out var price))
+        {
+            return;
+        }
+
+        await SyncStatusProvider.ResolveSyncIssueAsync(syncIssueId, form.OrderId, form.ItemTitle, price, form.Quantity);
+        _resolveForms.Remove(syncIssueId);
+        _syncIssues = await SyncStatusProvider.GetActiveSyncIssuesAsync();
+    }
+
+    private async Task IgnoreSyncIssueAsync(int syncIssueId)
+    {
+        await SyncStatusProvider.IgnoreSyncIssueAsync(syncIssueId);
+        _resolveForms.Remove(syncIssueId);
+        _syncIssues = await SyncStatusProvider.GetActiveSyncIssuesAsync();
+    }
+
+    private static string FormatRunStatus(ImportRun? run)
+    {
+        if (run is null) return "Last synced: never";
+        var when = run.RanAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt");
+        return run.Success ? $"Last synced: {when}" : $"Last synced: {when} - FAILED: {run.ErrorMessage}";
+    }
+}
