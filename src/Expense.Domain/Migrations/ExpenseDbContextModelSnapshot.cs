@@ -104,9 +104,19 @@ namespace Expense.Domain.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("needs_review");
 
+                    b.Property<string>("NeedsReviewReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("needs_review_reason");
+
                     b.Property<DateOnly>("OrderDate")
                         .HasColumnType("date")
                         .HasColumnName("order_date");
+
+                    b.Property<string>("OrderDetailsUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("order_details_url");
 
                     b.Property<string>("OrderId")
                         .IsRequired()
@@ -126,9 +136,18 @@ namespace Expense.Domain.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("quantity");
 
+                    b.Property<string>("RawEmailBody")
+                        .HasColumnType("text")
+                        .HasColumnName("raw_email_body");
+
                     b.Property<decimal?>("RefundAmount")
                         .HasColumnType("numeric(12,2)")
                         .HasColumnName("refund_amount");
+
+                    b.Property<string>("SourceMessageId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("source_message_id");
 
                     b.Property<decimal>("TaxAllocated")
                         .HasColumnType("numeric(12,2)")
@@ -380,6 +399,89 @@ namespace Expense.Domain.Migrations
                     b.ToTable("debt_balance_snapshots", (string)null);
                 });
 
+            modelBuilder.Entity("Expense.Domain.Entities.ForecastSnapshot", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateOnly>("AsOfDate")
+                        .HasColumnType("date")
+                        .HasColumnName("as_of_date");
+
+                    b.Property<DateTimeOffset>("CapturedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("captured_at");
+
+                    b.Property<decimal>("LowestProjectedBalance")
+                        .HasColumnType("numeric")
+                        .HasColumnName("lowest_projected_balance");
+
+                    b.Property<DateOnly?>("LowestProjectedBalanceDate")
+                        .HasColumnType("date")
+                        .HasColumnName("lowest_projected_balance_date");
+
+                    b.Property<decimal>("StartingBalance")
+                        .HasColumnType("numeric")
+                        .HasColumnName("starting_balance");
+
+                    b.HasKey("Id")
+                        .HasName("pk_forecast_snapshots");
+
+                    b.HasIndex("AsOfDate")
+                        .IsUnique()
+                        .HasDatabaseName("ix_forecast_snapshots_as_of_date");
+
+                    b.ToTable("forecast_snapshots", (string)null);
+                });
+
+            modelBuilder.Entity("Expense.Domain.Entities.ForecastSnapshotLine", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("AccountId")
+                        .HasColumnType("integer")
+                        .HasColumnName("account_id");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("numeric")
+                        .HasColumnName("amount");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date")
+                        .HasColumnName("date");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("description");
+
+                    b.Property<int>("ForecastSnapshotId")
+                        .HasColumnType("integer")
+                        .HasColumnName("forecast_snapshot_id");
+
+                    b.Property<decimal>("RunningBalance")
+                        .HasColumnType("numeric")
+                        .HasColumnName("running_balance");
+
+                    b.HasKey("Id")
+                        .HasName("pk_forecast_snapshot_lines");
+
+                    b.HasIndex("ForecastSnapshotId")
+                        .HasDatabaseName("ix_forecast_snapshot_lines_forecast_snapshot_id");
+
+                    b.ToTable("forecast_snapshot_lines", (string)null);
+                });
+
             modelBuilder.Entity("Expense.Domain.Entities.FundingRule", b =>
                 {
                     b.Property<int>("Id")
@@ -456,6 +558,41 @@ namespace Expense.Domain.Migrations
                         .HasDatabaseName("ix_import_runs_source_ran_at");
 
                     b.ToTable("import_runs", (string)null);
+                });
+
+            modelBuilder.Entity("Expense.Domain.Entities.ImportRunProgressLine", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("ImportRunId")
+                        .HasColumnType("integer")
+                        .HasColumnName("import_run_id");
+
+                    b.Property<bool>("IsError")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_error");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer")
+                        .HasColumnName("sequence");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("text");
+
+                    b.HasKey("Id")
+                        .HasName("pk_import_run_progress_lines");
+
+                    b.HasIndex("ImportRunId", "Sequence")
+                        .HasDatabaseName("ix_import_run_progress_lines_import_run_id_sequence");
+
+                    b.ToTable("import_run_progress_lines", (string)null);
                 });
 
             modelBuilder.Entity("Expense.Domain.Entities.MerchantRule", b =>
@@ -820,6 +957,18 @@ namespace Expense.Domain.Migrations
                     b.Navigation("Account");
                 });
 
+            modelBuilder.Entity("Expense.Domain.Entities.ForecastSnapshotLine", b =>
+                {
+                    b.HasOne("Expense.Domain.Entities.ForecastSnapshot", "ForecastSnapshot")
+                        .WithMany("Lines")
+                        .HasForeignKey("ForecastSnapshotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_forecast_snapshot_lines_forecast_snapshots_forecast_snapsho");
+
+                    b.Navigation("ForecastSnapshot");
+                });
+
             modelBuilder.Entity("Expense.Domain.Entities.FundingRule", b =>
                 {
                     b.HasOne("Expense.Domain.Entities.Account", "Account")
@@ -837,6 +986,18 @@ namespace Expense.Domain.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Category");
+                });
+
+            modelBuilder.Entity("Expense.Domain.Entities.ImportRunProgressLine", b =>
+                {
+                    b.HasOne("Expense.Domain.Entities.ImportRun", "ImportRun")
+                        .WithMany("ProgressLines")
+                        .HasForeignKey("ImportRunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_import_run_progress_lines_import_runs_import_run_id");
+
+                    b.Navigation("ImportRun");
                 });
 
             modelBuilder.Entity("Expense.Domain.Entities.MerchantRule", b =>
@@ -928,6 +1089,16 @@ namespace Expense.Domain.Migrations
                         .HasConstraintName("fk_sync_issues_amazon_order_items_resolved_amazon_order_item_id");
 
                     b.Navigation("ResolvedAmazonOrderItem");
+                });
+
+            modelBuilder.Entity("Expense.Domain.Entities.ForecastSnapshot", b =>
+                {
+                    b.Navigation("Lines");
+                });
+
+            modelBuilder.Entity("Expense.Domain.Entities.ImportRun", b =>
+                {
+                    b.Navigation("ProgressLines");
                 });
 #pragma warning restore 612, 618
         }

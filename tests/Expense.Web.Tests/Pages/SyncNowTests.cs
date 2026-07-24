@@ -43,6 +43,23 @@ public class SyncNowTests : BunitContext
             return NextAmazonGmailRunResult;
         }
 
+        public Dictionary<ImportSource, List<ImportRun>> RecentRuns { get; set; } = new()
+        {
+            [ImportSource.SimpleFin] = [],
+            [ImportSource.AmazonGmail] = []
+        };
+        public Dictionary<int, List<SyncProgressLine>> ProgressLogsByRunId { get; set; } = [];
+
+        public Task<RecentRunsPage> GetRecentRunsAsync(ImportSource source, int page, int pageSize, CancellationToken cancellationToken = default)
+        {
+            var all = RecentRuns.TryGetValue(source, out var runs) ? runs : [];
+            var pageOfRuns = all.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+            return Task.FromResult(new RecentRunsPage { Runs = pageOfRuns, TotalCount = all.Count });
+        }
+
+        public Task<List<SyncProgressLine>> GetRunProgressLogAsync(int importRunId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(ProgressLogsByRunId.TryGetValue(importRunId, out var lines) ? lines : []);
+
         public Task<List<SyncIssue>> GetActiveSyncIssuesAsync(CancellationToken cancellationToken = default) => Task.FromResult(ActiveSyncIssues);
 
         public string? LastResolvedOrderId { get; private set; }
@@ -332,6 +349,136 @@ public class SyncNowTests : BunitContext
         cut.Find("#ignore-not-order-btn-1").Click();
 
         Assert.Empty(cut.FindAll("#sync-issues-section"));
+    }
+
+    [Fact]
+    public void RecentRunsSection_ListsPastRunsForEachSource_NewestFirst()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.SimpleFin] =
+        [
+            new ImportRun { Id = 2, Source = ImportSource.SimpleFin, RanAt = new DateTimeOffset(2026, 7, 22, 15, 0, 0, TimeSpan.Zero), Success = true, Summary = "3pm run" },
+            new ImportRun { Id = 1, Source = ImportSource.SimpleFin, RanAt = new DateTimeOffset(2026, 7, 22, 6, 0, 0, TimeSpan.Zero), Success = true, Summary = "6am run" }
+        ];
+
+        var cut = Render<SyncNow>();
+
+        var section = cut.Find("#simplefin-recent-runs");
+        var rows = section.QuerySelectorAll("tbody tr");
+        Assert.Equal(2, rows.Length);
+        Assert.Contains("3pm run", rows[0].TextContent);
+        Assert.Contains("6am run", rows[1].TextContent);
+    }
+
+    [Fact]
+    public void RecentRunsSection_ShowsSuccessAndFailureStatusPerRun()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.AmazonGmail] =
+        [
+            new ImportRun { Id = 3, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = false, ErrorMessage = "Gmail OAuth token expired" }
+        ];
+
+        var cut = Render<SyncNow>();
+
+        var section = cut.Find("#amazon-recent-runs");
+        Assert.Contains("FAILED", section.TextContent);
+        Assert.Contains("Gmail OAuth token expired", section.TextContent);
+    }
+
+    [Fact]
+    public void ClickingViewDetails_OpensTheDetailModal_WithThatRunsPersistedProgressLog()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.AmazonGmail] =
+        [
+            new ImportRun { Id = 5, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" }
+        ];
+        fake.ProgressLogsByRunId[5] =
+        [
+            new SyncProgressLine("Found 1 order confirmation email(s) to check."),
+            new SyncProgressLine("[2026-07-22] \"Your order\"\n--- Email body ---\nOrder #\n113-TEST\n--- Result ---\nAdded: Widget - $9.99 x1")
+        ];
+        var cut = Render<SyncNow>();
+
+        cut.Find("#view-run-details-5").Click();
+
+        var modal = cut.Find("#run-detail-modal");
+        Assert.Contains("Found 1 order confirmation email(s)", modal.TextContent);
+        Assert.Contains("113-TEST", modal.TextContent);
+        Assert.Contains("Added: Widget", modal.TextContent);
+    }
+
+    [Fact]
+    public void RecentRunsSection_ShowsOnlyAPageWorthOfRuns_SoALongHistoryDoesNotLengthenThePage()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.SimpleFin] =
+            Enumerable.Range(1, 12).Select(i => new ImportRun { Id = i, Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = $"run {i}" }).ToList();
+
+        var cut = Render<SyncNow>();
+
+        var section = cut.Find("#simplefin-recent-runs");
+        Assert.Equal(5, section.QuerySelectorAll("tbody tr").Length);
+        Assert.Contains("Page 1 of 3", cut.Find("#simplefin-recent-runs-page-indicator").TextContent);
+    }
+
+    [Fact]
+    public void RecentRunsSection_PrevPageButton_IsDisabledOnTheFirstPage()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.SimpleFin] =
+            Enumerable.Range(1, 12).Select(i => new ImportRun { Id = i, Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = $"run {i}" }).ToList();
+
+        var cut = Render<SyncNow>();
+
+        Assert.True(cut.Find("#simplefin-recent-runs-prev-page-btn").HasAttribute("disabled"));
+        Assert.False(cut.Find("#simplefin-recent-runs-next-page-btn").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void ClickingNextPage_LoadsTheNextPageOfRuns_AndDisablesNextOnTheLastPage()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.AmazonGmail] =
+            Enumerable.Range(1, 7).Select(i => new ImportRun { Id = i, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = $"run {i}" }).ToList();
+        var cut = Render<SyncNow>();
+
+        cut.Find("#amazon-recent-runs-next-page-btn").Click();
+
+        Assert.Contains("Page 2 of 2", cut.Find("#amazon-recent-runs-page-indicator").TextContent);
+        Assert.Equal(2, cut.Find("#amazon-recent-runs").QuerySelectorAll("tbody tr").Length);
+        Assert.True(cut.Find("#amazon-recent-runs-next-page-btn").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void ClickingPreviousPage_GoesBackToTheEarlierPage()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.AmazonGmail] =
+            Enumerable.Range(1, 7).Select(i => new ImportRun { Id = i, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = $"run {i}" }).ToList();
+        var cut = Render<SyncNow>();
+        cut.Find("#amazon-recent-runs-next-page-btn").Click();
+
+        cut.Find("#amazon-recent-runs-prev-page-btn").Click();
+
+        Assert.Contains("Page 1 of 2", cut.Find("#amazon-recent-runs-page-indicator").TextContent);
+    }
+
+    [Fact]
+    public void ClosingTheHistoryDetailModal_HidesIt()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.AmazonGmail] =
+        [
+            new ImportRun { Id = 5, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" }
+        ];
+        var cut = Render<SyncNow>();
+        cut.Find("#view-run-details-5").Click();
+
+        cut.Find("#close-run-detail-modal-btn").Click();
+
+        Assert.Empty(cut.FindAll("#run-detail-modal"));
     }
 
     [Fact]

@@ -1,68 +1,26 @@
 #!/usr/bin/env bash
-# Starts the Expense server (if not already running), opens it in a chromeless Chrome
-# app window at its last known position/size, and shuts the server down automatically
-# once the window is closed - so closing the window is the only shutdown step needed.
+# Opens Expense in a chromeless Chrome app window at its last known position/size. The
+# server itself now runs continuously as a systemd user service (expense.service),
+# proxied through nginx at https://salcedo.expense - this script no longer starts or
+# stops it, so closing the window just closes the window.
 set -uo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-URL="http://127.0.0.1:5266"
+URL="https://salcedo.expense"
 PROFILE_DIR="$HOME/.local/share/expense-chrome-profile"
 GEOMETRY_FILE="$HOME/.local/share/expense-chrome-window.geometry"
-PUBLISH_DIR="$PROJECT_DIR/publish"
-PUBLISHED_DLL="$PUBLISH_DIR/Expense.Web.dll"
 
-SERVER_PID=""
 MONITOR_PID=""
 
 cleanup() {
     if [ -n "$MONITOR_PID" ]; then
         kill "$MONITOR_PID" 2>/dev/null
     fi
-    if [ -n "$SERVER_PID" ]; then
-        echo "Shutting down Expense server (pid $SERVER_PID)..."
-        kill "$SERVER_PID" 2>/dev/null
-        wait "$SERVER_PID" 2>/dev/null
-    fi
 }
 trap cleanup EXIT INT TERM
 
-if curl -s -o /dev/null "$URL"; then
-    echo "Expense server already running at $URL - reusing it."
-else
-    # Runs the published build directly instead of `dotnet run`, which always pays for an
-    # up-to-date build check on every launch even when nothing changed. A stale/missing
-    # publish/ dir just gets published fresh here, first-launch-friendly - but this means
-    # code changes made in a dev session need a `dotnet publish` before they show up via
-    # the shortcut, they won't appear automatically the way `dotnet run` would have shown
-    # them. ASPNETCORE_ENVIRONMENT is forced to Development to match `dotnet run`'s default
-    # (detailed error pages, informational-level logging) - the published DLL would
-    # otherwise silently default to Production and lose both.
-    if [ ! -f "$PUBLISHED_DLL" ]; then
-        echo "No published build found - publishing once now..."
-        (cd "$PROJECT_DIR" && dotnet publish src/Expense.Web -c Release -o publish)
-    fi
-
-    echo "Starting Expense server..."
-    # --contentroot must point at publish/ explicitly - ASP.NET Core otherwise defaults
-    # the content root to the current working directory, not the DLL's own folder, which
-    # silently broke every static asset (CSS/JS) when launched from the repo root instead:
-    # requests still matched a route and returned 200, just with an empty body, since the
-    # underlying wwwroot files couldn't be found from the wrong content root.
-    ASPNETCORE_ENVIRONMENT=Development dotnet "$PUBLISHED_DLL" --urls "$URL" --contentroot "$PUBLISH_DIR" &
-    SERVER_PID=$!
-
-    echo "Waiting for the server to come up..."
-    for _ in $(seq 1 60); do
-        if curl -s -o /dev/null "$URL"; then
-            break
-        fi
-        sleep 1
-    done
-
-    if ! curl -s -o /dev/null "$URL"; then
-        echo "Server did not come up in time - check the output above for errors." >&2
-        exit 1
-    fi
+if ! curl -s -o /dev/null "$URL"; then
+    echo "Expense isn't responding at $URL - check 'systemctl --user status expense' and 'systemctl status nginx'." >&2
+    exit 1
 fi
 
 mkdir -p "$PROFILE_DIR"

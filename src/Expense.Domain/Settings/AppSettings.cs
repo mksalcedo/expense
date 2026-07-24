@@ -4,4 +4,5 @@ namespace Expense.Domain.Settings;
 public class AppSettings
 {
     public int ForecastHorizonMonths { get; set; } = 12;
+    public List<string> ScheduledSyncTimesLocal { get; set; } = ["06:00", "15:00"];
 }

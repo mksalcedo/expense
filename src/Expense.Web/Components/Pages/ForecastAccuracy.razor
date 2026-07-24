@@ -1,0 +1,86 @@
+@page "/forecast-accuracy"
+@using Expense.Domain.Services.Forecast
+@inject IForecastAccuracyPageProvider AccuracyProvider
+
+<PageTitle>Forecast Accuracy</PageTitle>
+
+<h1>Forecast Accuracy</h1>
+<p><em>Compares what each recurring bill, debt payment, or Amex cycle was assumed to cost against what actually posted over the last 90 days - sorted by the largest surprises first.</em></p>
+
+@if (_results is null)
+{
+    <p>Loading...</p>
+}
+else if (_results.Count == 0)
+{
+    <p>Nothing to show yet - no recurring obligations have posted within the lookback window.</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Scheduled Date</th>
+                <th class="text-right">Scheduled Amount</th>
+                <th>Actual Date</th>
+                <th class="text-right">Actual Amount</th>
+                <th class="text-right">Delta</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var comparison in _results)
+            {
+                <tr style="@RowStyle(comparison)">
+                    <td>@comparison.Name</td>
+                    <td>@comparison.ScheduledDate.ToString("MM/dd/yyyy")</td>
+                    <td class="text-right">@comparison.ScheduledAmount.ToString("N2")</td>
+                    <td>@(comparison.ActualDate?.ToString("MM/dd/yyyy") ?? "-")</td>
+                    <td class="text-right">
+                        @if (comparison.WasMatched)
+                        {
+                            @comparison.ActualAmount!.Value.ToString("N2")
+                        }
+                        else
+                        {
+                            <span>Never posted</span>
+                        }
+                    </td>
+                    <td class="text-right">
+                        @if (comparison.Delta is { } delta)
+                        {
+                            @delta.ToString("N2")
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<AccuracyComparison>? _results;
+
+    // Large enough to matter, not so small that routine rounding differences get flagged -
+    // matches the plan's own "$100 or 10%" framing.
+    private const decimal DeltaDollarThreshold = 100m;
+    private const decimal DeltaPercentThreshold = 10m;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _results = await AccuracyProvider.GetRecentAccuracyAsync();
+    }
+
+    private static string RowStyle(AccuracyComparison comparison)
+    {
+        if (!comparison.WasMatched)
+        {
+            return "background-color: orange";
+        }
+
+        var delta = comparison.Delta ?? 0m;
+        var isMaterial = Math.Abs(delta) >= DeltaDollarThreshold
+            || (comparison.DeltaPercent is { } pct && Math.Abs(pct) >= DeltaPercentThreshold);
+        return isMaterial ? "background-color: yellow" : "";
+    }
+}

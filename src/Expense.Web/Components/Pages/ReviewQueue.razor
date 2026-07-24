@@ -135,6 +135,7 @@ else
                 <th>Total</th>
                 <th>Pattern (edit if needed)</th>
                 <th>Category</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -148,10 +149,39 @@ else
                                @onclick="e => ToggleItemSelection(index, e.ShiftKey)" />
                     </td>
                     <td>@group.ItemIds.Count</td>
-                    <td>@group.ItemTitle</td>
-                    <td>@group.OrderId</td>
+                    <td>
+                        @if (group.NeedsReview)
+                        {
+                            <input id="item-title-@representativeId" value="@group.ItemTitle"
+                                   @onchange="e => UpdateAmazonItemDetailsAsync(representativeId, title: (string?)e.Value, price: null)" />
+                        }
+                        else
+                        {
+                            @group.ItemTitle
+                        }
+                    </td>
+                    <td>
+                        @group.OrderId
+                        @if (group.NeedsReview)
+                        {
+                            <br />
+                            <a id="item-view-on-amazon-@representativeId" href="@(group.OrderDetailsUrl ?? "https://www.amazon.com/gp/css/order-history")" target="_blank" rel="noopener">
+                                View on Amazon
+                            </a>
+                        }
+                    </td>
                     <td>@group.SampleDate.ToString("MM/dd/yyyy")</td>
-                    <td>@group.TotalPrice.ToString("N2")</td>
+                    <td>
+                        @if (group.NeedsReview)
+                        {
+                            <input id="item-price-@representativeId" type="number" step="0.01" value="@group.TotalPrice.ToString("N2")"
+                                   @onchange="e => UpdateAmazonItemDetailsAsync(representativeId, title: null, price: (string?)e.Value)" />
+                        }
+                        else
+                        {
+                            @group.TotalPrice.ToString("N2")
+                        }
+                    </td>
                     <td>
                         <input id="item-pattern-@representativeId" value="@group.SuggestedPattern"
                                @onchange="e => _itemPattern[representativeId] = (string?)e.Value" />
@@ -166,7 +196,53 @@ else
                             }
                         </select>
                     </td>
+                    <td>
+                        @if (group.NeedsReview)
+                        {
+                            <button id="item-why-flagged-@representativeId" @onclick="() => ToggleReviewContext(representativeId)">
+                                Why is this flagged?
+                            </button>
+                        }
+                        @if (group.OrderId is not null)
+                        {
+                            <button id="item-add-another-@representativeId" @onclick="() => ToggleAddAnotherItem(representativeId)">
+                                + Add another item
+                            </button>
+                        }
+                    </td>
                 </tr>
+                @if (group.NeedsReview && _expandedReviewContext.Contains(representativeId))
+                {
+                    <tr>
+                        <td colspan="9">
+                            <div id="item-review-context-@representativeId" style="background: var(--color-surface, #f5f5f5); padding: 10px;">
+                                <p>@group.NeedsReviewReason</p>
+                                @if (group.RawEmailBody is { } body)
+                                {
+                                    <pre style="max-height: 200px; overflow-y: auto; white-space: pre-wrap;">@body</pre>
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+                @if (group.OrderId is not null && _addingAnotherItemFor.Contains(representativeId))
+                {
+                    var newItem = GetNewItemForm(representativeId);
+                    <tr>
+                        <td colspan="9">
+                            <div style="background: var(--color-surface, #f5f5f5); padding: 10px;">
+                                <p>Add another real item found on this order (e.g. from its Amazon order page):</p>
+                                <input id="item-new-title-@representativeId" placeholder="Item title" value="@newItem.Title"
+                                       @onchange="e => newItem.Title = (string)e.Value!" />
+                                <input id="item-new-price-@representativeId" type="number" step="0.01" placeholder="Price" value="@newItem.Price"
+                                       @onchange="e => newItem.Price = (string)e.Value!" />
+                                <input id="item-new-quantity-@representativeId" type="number" value="@newItem.Quantity"
+                                       @onchange="e => newItem.Quantity = int.Parse((string)e.Value!)" />
+                                <button id="item-add-submit-@representativeId" @onclick="() => AddAnotherItemAsync(group, representativeId)">Add Item</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
             }
         </tbody>
     </table>
@@ -407,6 +483,72 @@ else
 
         _selectedItemIndexes.Clear();
         _lastClickedItemIndex = null;
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
+    // A NeedsReview placeholder is always a singleton row with Quantity=1 (see
+    // AmazonOrderEmailParser.BuildPlaceholderOrder) - PendingAmazonItemGroup has no
+    // Quantity field to merge against, but there's nothing to preserve here since it can
+    // only ever be 1.
+    private async Task UpdateAmazonItemDetailsAsync(int itemId, string? title, string? price)
+    {
+        var group = _data!.AmazonItemGroups.Single(g => g.ItemIds.Contains(itemId));
+        var newTitle = title ?? group.ItemTitle;
+        var newPrice = price is not null ? decimal.Parse(price) : group.TotalPrice;
+
+        await ReviewQueueProvider.UpdateAmazonItemDetailsAsync(itemId, newTitle, newPrice, quantity: 1);
+
+        group.ItemTitle = newTitle;
+        group.TotalPrice = newPrice;
+    }
+
+    private readonly HashSet<int> _expandedReviewContext = [];
+
+    private void ToggleReviewContext(int representativeId)
+    {
+        if (!_expandedReviewContext.Add(representativeId))
+        {
+            _expandedReviewContext.Remove(representativeId);
+        }
+    }
+
+    // Stopgap ahead of the fuller screenshot/vision-based import (see
+    // docs/amazon-needs-review-plan.md) - lets a NeedsReview order that turns out to have
+    // more than one real item get the rest added by hand, one at a time, alongside
+    // correcting the existing placeholder row to be the first item.
+    private class NewItemFormState
+    {
+        public string Title { get; set; } = "";
+        public string Price { get; set; } = "";
+        public int Quantity { get; set; } = 1;
+    }
+
+    private readonly HashSet<int> _addingAnotherItemFor = [];
+    private readonly Dictionary<int, NewItemFormState> _newItemForms = [];
+
+    private NewItemFormState GetNewItemForm(int representativeId) =>
+        _newItemForms.TryGetValue(representativeId, out var form) ? form : _newItemForms[representativeId] = new NewItemFormState();
+
+    private void ToggleAddAnotherItem(int representativeId)
+    {
+        if (!_addingAnotherItemFor.Add(representativeId))
+        {
+            _addingAnotherItemFor.Remove(representativeId);
+        }
+    }
+
+    private async Task AddAnotherItemAsync(PendingAmazonItemGroup group, int representativeId)
+    {
+        var form = GetNewItemForm(representativeId);
+        if (string.IsNullOrWhiteSpace(form.Title) || !decimal.TryParse(form.Price, out var price) || group.OrderId is null)
+        {
+            return;
+        }
+
+        await ReviewQueueProvider.AddManualAmazonItemAsync(group.OrderId, group.SampleDate, form.Title, price, form.Quantity);
+
+        _newItemForms.Remove(representativeId);
+        _addingAnotherItemFor.Remove(representativeId);
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
     }
 }

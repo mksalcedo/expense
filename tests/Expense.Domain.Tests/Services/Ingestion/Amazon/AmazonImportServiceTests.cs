@@ -88,6 +88,16 @@ public class AmazonImportServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ImportOrder_PlaceholderItem_CapturesTheSourceMessageId()
+    {
+        await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 3, 1), messageId: "19f75d8208c9a454");
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Equal("19f75d8208c9a454", item.SourceMessageId);
+        Assert.Equal(SimplifiedNoItemDetailEmail, item.RawEmailBody);
+    }
+
+    [Fact]
     public async Task ImportOrder_AlreadyImported_SkipsAsDuplicate()
     {
         await _sut.ImportOrderAsync(Context, SingleItemEmail, new DateOnly(2026, 7, 14));

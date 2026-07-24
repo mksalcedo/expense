@@ -54,6 +54,34 @@ public class BudgetManagementServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task SetBudgetAsync_RevisedRepeatedlyBeforeItsEffectiveDateEverArrived_ReplacesTheDraftInsteadOfOrphaningIt()
+    {
+        // Real workflow this guards: experimenting with a few different amounts for the
+        // same future/current effective date (e.g. "starting today") in one sitting. The
+        // naive close-out-and-version logic would set each earlier draft's EffectiveThrough
+        // to the day before its own EffectiveFrom - an impossible range that can never
+        // match any real date, permanently orphaning it as dead clutter.
+        var category = await CreateCategoryAsync();
+        await _sut.SetBudgetAsync(Context, category.Id, 1000m, Frequency.Monthly, new DateOnly(2026, 1, 1));
+
+        await _sut.SetBudgetAsync(Context, category.Id, 750m, Frequency.Monthly, new DateOnly(2026, 7, 22));
+        await _sut.SetBudgetAsync(Context, category.Id, 850m, Frequency.Monthly, new DateOnly(2026, 7, 22));
+        await _sut.SetBudgetAsync(Context, category.Id, 900m, Frequency.Monthly, new DateOnly(2026, 7, 22));
+
+        var periods = await Context.BudgetPeriods.Where(p => p.CategoryId == category.Id).OrderBy(p => p.EffectiveFrom).ToListAsync();
+        Assert.Equal(2, periods.Count); // only the original real period plus the final draft - no orphaned 750/850 rows
+
+        var original = periods[0];
+        Assert.Equal(1000m, original.Amount);
+        Assert.Equal(new DateOnly(2026, 7, 21), original.EffectiveThrough);
+
+        var current = periods[1];
+        Assert.Equal(900m, current.Amount);
+        Assert.Equal(new DateOnly(2026, 7, 22), current.EffectiveFrom);
+        Assert.Null(current.EffectiveThrough);
+    }
+
+    [Fact]
     public async Task SetBudgetAsync_CanChangeFrequencyNotJustAmount()
     {
         var category = await CreateCategoryAsync();

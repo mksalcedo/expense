@@ -13,4 +13,10 @@ public class PendingAmazonItemGroup
 
     /// <summary>Only set for a singleton group (one real order) - a multi-item group spans more than one real order, so no single id applies.</summary>
     public string? OrderId { get; set; }
+
+    // Only ever set for a NeedsReview group - null for a real multi-item group, mirroring
+    // AmazonOrderItem's own fields (see docs/amazon-needs-review-plan.md).
+    public string? NeedsReviewReason { get; set; }
+    public string? RawEmailBody { get; set; }
+    public string? OrderDetailsUrl { get; set; }
 }

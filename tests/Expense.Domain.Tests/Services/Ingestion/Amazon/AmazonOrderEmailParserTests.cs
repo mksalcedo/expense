@@ -338,4 +338,174 @@ public class AmazonOrderEmailParserTests
         Assert.Equal(56.17m, item.Price);
         Assert.True(item.NeedsReview);
     }
+
+    // Real auto-confirm@amazon.com body: a "digest" notification bundling 3 separate
+    // orders in one message, none with item detail - pulled directly from the user's
+    // Gmail (2026-07-21). Before this fix, AmazonOrderEmailParser only ever extracted the
+    // *first* Order#/Grand Total pair in a body (both OrderIdPattern and GrandTotalPattern
+    // used Regex.Match, not .Matches) - the other two orders here were silently dropped
+    // with no placeholder and no error at all.
+    private const string BundledDigestEmail = """
+        Your Orders
+
+        https://www.amazon.com/gp/css/order-history?ref_=d_yo_default
+
+            Thanks for your order!
+        Ordered
+
+        Shipped
+
+        Out for delivery
+
+        Delivered
+
+        Arriving tomorrow 10 AM – 3 PM
+
+        Mark - NORCROSS, GA
+
+        Order #
+        113-6641743-8180261
+
+        View or edit order
+        https://www.amazon.com/your-orders/order-details?orderID=113-6641743-8180261&ref_=p_btn_fed_veo
+
+        Grand Total:
+        16.08 USD
+
+        Arriving tomorrow 10 AM – 3 PM
+
+        Mark - NORCROSS, GA
+
+        Order #
+        113-5634569-7569032
+
+        View or edit order
+        https://www.amazon.com/your-orders/order-details?orderID=113-5634569-7569032&ref_=p_btn_fed_veo
+
+        Grand Total:
+        0.0 USD
+
+        Arriving Thursday
+
+        Mark - NORCROSS, GA
+
+        Order #
+        113-6275981-3164251
+
+        View or edit order
+        https://www.amazon.com/your-orders/order-details?orderID=113-6275981-3164251&ref_=p_btn_fed_veo
+
+        Grand Total:
+        0.0 USD
+
+        Amazon.com
+        """;
+
+    [Fact]
+    public void Parse_BundledDigestEmail_ProducesAPlaceholderForEveryOrderInIt_NotJustTheFirst()
+    {
+        var items = _sut.Parse(BundledDigestEmail, new DateOnly(2026, 7, 21));
+
+        Assert.Equal(3, items.Count);
+        Assert.All(items, i => Assert.True(i.NeedsReview));
+
+        var first = items.Single(i => i.OrderId == "113-6641743-8180261");
+        Assert.Equal(16.08m, first.Price);
+
+        var second = items.Single(i => i.OrderId == "113-5634569-7569032");
+        Assert.Equal(0.0m, second.Price);
+
+        var third = items.Single(i => i.OrderId == "113-6275981-3164251");
+        Assert.Equal(0.0m, third.Price);
+    }
+
+    [Fact]
+    public void Parse_SingleNoDetailOrder_StillProducesExactlyOnePlaceholder_RegressionCheck()
+    {
+        // Same shape as SummaryOnlyMultiItemEmail above - confirms the multi-order fix
+        // didn't change behavior for the (far more common) single-order case.
+        var items = _sut.Parse(SummaryOnlyMultiItemEmail, new DateOnly(2026, 7, 18));
+
+        var item = Assert.Single(items);
+        Assert.Equal("113-3763507-4662613", item.OrderId);
+        Assert.Equal(56.17m, item.Price);
+    }
+
+    [Fact]
+    public void Parse_SingleNoDetailOrder_CapturesMessageIdRawBodyReasonAndOrderDetailsUrl()
+    {
+        var items = _sut.Parse(SummaryOnlyMultiItemEmail, new DateOnly(2026, 7, 18), messageId: "19f75d8208c9a454");
+
+        var item = Assert.Single(items);
+        Assert.Equal("19f75d8208c9a454", item.SourceMessageId);
+        Assert.Equal(SummaryOnlyMultiItemEmail, item.RawEmailBody);
+        Assert.Equal("No item detail in confirmation email", item.NeedsReviewReason);
+        Assert.Equal("https://www.amazon.com/your-orders/order-details?orderID=113-3763507-4662613&ref_=p_btn_fed_veo", item.OrderDetailsUrl);
+    }
+
+    [Fact]
+    public void Parse_BundledDigestEmail_CapturesItsOwnLinkAndADigestReason_PerOrder()
+    {
+        var items = _sut.Parse(BundledDigestEmail, new DateOnly(2026, 7, 21), messageId: "19f86da9dadc3252");
+
+        var first = items.Single(i => i.OrderId == "113-6641743-8180261");
+        Assert.Equal("19f86da9dadc3252", first.SourceMessageId);
+        Assert.Equal("Bundled with 2 other order(s) in one digest email", first.NeedsReviewReason);
+        Assert.Equal("https://www.amazon.com/your-orders/order-details?orderID=113-6641743-8180261&ref_=p_btn_fed_veo", first.OrderDetailsUrl);
+
+        var third = items.Single(i => i.OrderId == "113-6275981-3164251");
+        Assert.Equal("https://www.amazon.com/your-orders/order-details?orderID=113-6275981-3164251&ref_=p_btn_fed_veo", third.OrderDetailsUrl);
+        Assert.All(items, i => Assert.Equal(BundledDigestEmail, i.RawEmailBody));
+    }
+
+    [Fact]
+    public void Parse_SimplifiedOrder_ExtractsItsRealEmbeddedLink()
+    {
+        var items = _sut.Parse(SimplifiedNoItemDetailEmail, new DateOnly(2026, 3, 1), messageId: "msg-1");
+
+        var item = Assert.Single(items);
+        Assert.Equal("https://www.amazon.com/gp/css/order-details?orderId=113-1132648-3403446&ref_=TE_simp_od", item.OrderDetailsUrl);
+    }
+
+    [Fact]
+    public void Parse_PlaceholderOrderWithNoExtractableLinkAnywhereInTheBody_FallsBackToAConstructedUrl()
+    {
+        const string noLinkBody = """
+            Order #
+            113-0000000-0000000
+
+            Grand Total:
+            10.00 USD
+            """;
+
+        var items = _sut.Parse(noLinkBody, new DateOnly(2026, 7, 14), messageId: "msg-4");
+
+        var item = Assert.Single(items);
+        Assert.Equal("https://www.amazon.com/gp/css/order-details?orderId=113-0000000-0000000", item.OrderDetailsUrl);
+    }
+
+    [Fact]
+    public void Parse_GiftCardEmail_LeavesReviewContextFieldsNull_SinceItsNotFlaggedForReview()
+    {
+        var items = _sut.Parse(GiftCardEmail, new DateOnly(2026, 3, 1), messageId: "msg-2");
+
+        var item = Assert.Single(items);
+        Assert.False(item.NeedsReview);
+        Assert.Null(item.SourceMessageId);
+        Assert.Null(item.RawEmailBody);
+        Assert.Null(item.NeedsReviewReason);
+        Assert.Null(item.OrderDetailsUrl);
+    }
+
+    [Fact]
+    public void Parse_NormalItemizedOrder_LeavesReviewContextFieldsNull()
+    {
+        var items = _sut.Parse(SingleItemEmail, new DateOnly(2026, 7, 14), messageId: "msg-3");
+
+        var item = Assert.Single(items);
+        Assert.Null(item.SourceMessageId);
+        Assert.Null(item.RawEmailBody);
+        Assert.Null(item.NeedsReviewReason);
+        Assert.Null(item.OrderDetailsUrl);
+    }
 }

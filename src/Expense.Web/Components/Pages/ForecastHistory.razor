@@ -1,0 +1,113 @@
+@page "/forecast-history"
+@using Expense.Domain.Services.Forecast
+@inject IForecastHistoryPageProvider HistoryProvider
+
+<PageTitle>Forecast History</PageTitle>
+
+<h1>Forecast History</h1>
+<p><em>Daily snapshots of the forecast, so a swing in the lowest projected balance can be traced to what actually changed - see the Forecast Accuracy page for why.</em></p>
+
+@if (_diff is null && _snapshots is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <h2>Changed since yesterday</h2>
+    @if (_diff is null)
+    {
+        <p>Not enough snapshots yet - check back after tomorrow's sync.</p>
+    }
+    else if (_diff.Changed.Count == 0 && _diff.Added.Count == 0 && _diff.Removed.Count == 0)
+    {
+        <p>Nothing changed since the last snapshot.</p>
+    }
+    else
+    {
+        @if (_diff.Changed.Count > 0)
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th>Description</th>
+                        <th>Old Date</th>
+                        <th>New Date</th>
+                        <th class="text-right">Old Amount</th>
+                        <th class="text-right">New Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var change in _diff.Changed)
+                    {
+                        <tr>
+                            <td>@change.Description</td>
+                            <td>@change.OldDate.ToString("MM/dd/yyyy")</td>
+                            <td>@change.NewDate.ToString("MM/dd/yyyy")</td>
+                            <td class="text-right">@change.OldAmount.ToString("N2")</td>
+                            <td class="text-right">@change.NewAmount.ToString("N2")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        @if (_diff.Added.Count > 0)
+        {
+            <h3>Added</h3>
+            <ul>
+                @foreach (var line in _diff.Added)
+                {
+                    <li>@line.Description - @line.Date.ToString("MM/dd/yyyy") - @line.Amount.ToString("N2")</li>
+                }
+            </ul>
+        }
+        @if (_diff.Removed.Count > 0)
+        {
+            <h3>Removed</h3>
+            <ul>
+                @foreach (var line in _diff.Removed)
+                {
+                    <li>@line.Description - @line.Date.ToString("MM/dd/yyyy") - @line.Amount.ToString("N2")</li>
+                }
+            </ul>
+        }
+    }
+
+    <h2>Trend</h2>
+    @if (_snapshots is null || _snapshots.Count == 0)
+    {
+        <p>No snapshots captured yet - check back after the next scheduled sync.</p>
+    }
+    else
+    {
+        <table>
+            <thead>
+                <tr>
+                    <th>As Of</th>
+                    <th class="text-right">Lowest Projected Balance</th>
+                    <th>On</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var snapshot in _snapshots)
+                {
+                    <tr>
+                        <td>@snapshot.AsOfDate.ToString("MM/dd/yyyy")</td>
+                        <td class="text-right">@snapshot.LowestProjectedBalance.ToString("N2")</td>
+                        <td>@(snapshot.LowestProjectedBalanceDate?.ToString("MM/dd/yyyy") ?? "-")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private List<Expense.Domain.Entities.ForecastSnapshot>? _snapshots;
+    private ForecastSnapshotDiff? _diff;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshots = await HistoryProvider.GetRecentSnapshotsAsync();
+        _diff = await HistoryProvider.GetLatestDiffAsync();
+    }
+}

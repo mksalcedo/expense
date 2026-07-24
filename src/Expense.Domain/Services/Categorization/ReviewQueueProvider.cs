@@ -1,10 +1,15 @@
 using Expense.Domain.Data;
+using Expense.Domain.Services.Ingestion.Amazon;
+using Expense.Domain.Services.Transactions;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Categorization;
 
 /// <summary>Thin DI-composition wiring (like ForecastResultProvider) - all real logic lives in CategorizationService.</summary>
-public class ReviewQueueProvider(IDbContextFactory<ExpenseDbContext> contextFactory, CategorizationService categorization) : IReviewQueueProvider
+public class ReviewQueueProvider(
+    IDbContextFactory<ExpenseDbContext> contextFactory, CategorizationService categorization, TransactionManagementService transactions,
+    AmazonImportService amazonImport)
+    : IReviewQueueProvider
 {
     public async Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default)
     {
@@ -59,5 +64,23 @@ public class ReviewQueueProvider(IDbContextFactory<ExpenseDbContext> contextFact
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await categorization.DismissAmazonItemsAsync(context, itemIds);
+    }
+
+    // Delegates to the same method the Transactions page already uses, so a NeedsReview
+    // item can be corrected right where it's flagged instead of requiring a trip there.
+    public async Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await transactions.UpdateAmazonItemDetailsAsync(context, itemId, itemTitle, price, quantity);
+    }
+
+    // Lets a NeedsReview order that turns out to be multiple real items get the rest of
+    // its items added by hand, one at a time, alongside correcting the existing placeholder
+    // row to be the first item - see docs/amazon-needs-review-plan.md for why this exists
+    // as a stopgap ahead of the fuller screenshot/vision-based import.
+    public async Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await amazonImport.AddManualItemAsync(context, orderId, orderDate, itemTitle, price, quantity, cancellationToken);
     }
 }

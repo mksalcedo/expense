@@ -9,4 +9,5 @@ public class ImportRun
     public bool Success { get; set; }
     public string? Summary { get; set; }
     public string? ErrorMessage { get; set; }
+    public List<ImportRunProgressLine> ProgressLines { get; set; } = [];
 }

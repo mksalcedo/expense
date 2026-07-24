@@ -88,6 +88,38 @@ public class ReviewQueueTests : BunitContext
             AmazonItemGroups = AmazonItemGroups.Where(g => !g.ItemIds.Any(itemIds.Contains)).ToList();
             return Task.CompletedTask;
         }
+
+        public int? LastUpdatedItemId { get; private set; }
+        public string? LastUpdatedTitle { get; private set; }
+        public decimal? LastUpdatedPrice { get; private set; }
+        public int? LastUpdatedQuantity { get; private set; }
+
+        public Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+        {
+            LastUpdatedItemId = itemId;
+            LastUpdatedTitle = itemTitle;
+            LastUpdatedPrice = price;
+            LastUpdatedQuantity = quantity;
+            return Task.CompletedTask;
+        }
+
+        public string? LastAddedOrderId { get; private set; }
+        public DateOnly? LastAddedOrderDate { get; private set; }
+        public string? LastAddedTitle { get; private set; }
+        public decimal? LastAddedPrice { get; private set; }
+        public int? LastAddedQuantity { get; private set; }
+        public int AddManualAmazonItemCallCount { get; private set; }
+
+        public Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+        {
+            AddManualAmazonItemCallCount++;
+            LastAddedOrderId = orderId;
+            LastAddedOrderDate = orderDate;
+            LastAddedTitle = itemTitle;
+            LastAddedPrice = price;
+            LastAddedQuantity = quantity;
+            return Task.CompletedTask;
+        }
     }
 
     private static FakeReviewQueueProvider MakeProvider() => new()
@@ -489,5 +521,204 @@ public class ReviewQueueTests : BunitContext
         Assert.Contains("25.78", cut.Markup);
         var rows = cut.FindAll("tbody tr");
         Assert.Contains(rows, r => (r.GetAttribute("style") ?? "").Contains("background-color: yellow"));
+    }
+
+    [Fact]
+    public void NeedsReviewItem_ViewOnAmazonLink_UsesTheCapturedOrderDetailsUrl()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [400], TotalPrice = 51.40m,
+                NeedsReview = true, OrderId = "113-4355508-6173055",
+                OrderDetailsUrl = "https://www.amazon.com/gp/css/order-details?orderId=113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        var link = cut.Find("#item-view-on-amazon-400");
+        Assert.Equal("https://www.amazon.com/gp/css/order-details?orderId=113-4355508-6173055", link.GetAttribute("href"));
+    }
+
+    [Fact]
+    public void NeedsReviewItem_ViewOnAmazonLink_FallsBackToTheGeneralOrdersPage_WhenNoUrlWasCaptured()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [401], TotalPrice = 10.00m,
+                NeedsReview = true, OrderId = "113-0000000-0000000", OrderDetailsUrl = null
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        var link = cut.Find("#item-view-on-amazon-401");
+        Assert.Equal("https://www.amazon.com/gp/css/order-history", link.GetAttribute("href"));
+    }
+
+    [Fact]
+    public void NeedsReviewItem_InlineEditingTitleAndPrice_CallsUpdateAmazonItemDetails()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [402], TotalPrice = 51.40m,
+                NeedsReview = true, OrderId = "113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+
+        cut.Find("#item-title-402").Change("Levoit Core 300-P Air Purifier Filter");
+        cut.Find("#item-price-402").Change("25.99");
+
+        Assert.Equal(402, provider.LastUpdatedItemId);
+        Assert.Equal("Levoit Core 300-P Air Purifier Filter", provider.LastUpdatedTitle);
+        Assert.Equal(25.99m, provider.LastUpdatedPrice);
+    }
+
+    [Fact]
+    public void NeedsReviewItem_WhyFlaggedToggle_ShowsTheReasonAndRawEmailBody_WhenExpanded()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [403], TotalPrice = 51.40m,
+                NeedsReview = true, OrderId = "113-4355508-6173055",
+                NeedsReviewReason = "No item detail in confirmation email",
+                RawEmailBody = "Order #\n113-4355508-6173055\n\nGrand Total:\n51.4 USD"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+
+        Assert.Empty(cut.FindAll("#item-review-context-403"));
+
+        cut.Find("#item-why-flagged-403").Click();
+
+        var context = cut.Find("#item-review-context-403");
+        Assert.Contains("No item detail in confirmation email", context.TextContent);
+        Assert.Contains("113-4355508-6173055", context.TextContent);
+    }
+
+    [Fact]
+    public void AlreadyCorrectedSingleItemGroup_StillShowsAddAnotherItem_ButNotWhyFlagged()
+    {
+        // Real scenario this guards: correcting a NeedsReview placeholder's title/price
+        // clears NeedsReview - "Add another item" must keep working afterward (e.g. after a
+        // page refresh), even though the row is no longer highlighted/flagged.
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "Levoit Core 300-P Air Purifier Filter", ItemTitle = "Levoit Core 300-P Air Purifier Filter",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [326], TotalPrice = 25.99m,
+                NeedsReview = false, OrderId = "113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        Assert.NotNull(cut.Find("#item-add-another-326"));
+        Assert.Empty(cut.FindAll("#item-why-flagged-326"));
+    }
+
+    [Fact]
+    public void NeedsReviewItem_AddAnotherItemForm_IsHiddenUntilToggled()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [404], TotalPrice = 51.40m,
+                NeedsReview = true, OrderId = "113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        Assert.NotNull(cut.Find("#item-add-another-404"));
+        Assert.Empty(cut.FindAll("#item-new-title-404"));
+    }
+
+    [Fact]
+    public void NeedsReviewItem_AddingAnotherItem_CallsAddManualAmazonItem_WithTheOrdersIdAndDate()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [405], TotalPrice = 51.40m,
+                NeedsReview = true, OrderId = "113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+
+        cut.Find("#item-add-another-405").Click();
+        cut.Find("#item-new-title-405").Change("Pure Encapsulations B12 Folate");
+        cut.Find("#item-new-price-405").Change("22.50");
+        cut.Find("#item-new-quantity-405").Change("1");
+        cut.Find("#item-add-submit-405").Click();
+
+        Assert.Equal(1, provider.AddManualAmazonItemCallCount);
+        Assert.Equal("113-4355508-6173055", provider.LastAddedOrderId);
+        Assert.Equal(new DateOnly(2026, 7, 22), provider.LastAddedOrderDate);
+        Assert.Equal("Pure Encapsulations B12 Folate", provider.LastAddedTitle);
+        Assert.Equal(22.50m, provider.LastAddedPrice);
+        Assert.Equal(1, provider.LastAddedQuantity);
+    }
+
+    [Fact]
+    public void NeedsReviewItem_AfterAddingAnotherItem_RefreshesTheQueueAndClosesTheForm()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [406], TotalPrice = 51.40m,
+                NeedsReview = true, OrderId = "113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-add-another-406").Click();
+        cut.Find("#item-new-title-406").Change("Pure Encapsulations B12 Folate");
+        cut.Find("#item-new-price-406").Change("22.50");
+
+        // Simulate the new item now showing up as its own separate group, same as the real
+        // backend/GetPendingAmazonItemGroupsAsync would do after the item is added.
+        provider.AmazonItemGroups =
+        [
+            .. provider.AmazonItemGroups,
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "Pure Encapsulations B12 Folate", ItemTitle = "Pure Encapsulations B12 Folate",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [407], TotalPrice = 22.50m
+            }
+        ];
+        cut.Find("#item-add-submit-406").Click();
+
+        Assert.Empty(cut.FindAll("#item-new-title-406")); // form closed after a successful add
+        Assert.Contains("Pure Encapsulations B12 Folate", cut.Markup);
     }
 }

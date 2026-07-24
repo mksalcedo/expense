@@ -21,7 +21,20 @@ public class BudgetManagementService
 
         if (currentPeriod is not null)
         {
-            currentPeriod.EffectiveThrough = effectiveFrom.AddDays(-1);
+            if (currentPeriod.EffectiveFrom >= effectiveFrom)
+            {
+                // The current period never had a single real day in effect before being
+                // superseded (e.g. trying a few amounts in one sitting, all "starting
+                // today") - closing it out would set its EffectiveThrough before its own
+                // EffectiveFrom, an impossible range that's really just a discarded draft,
+                // not real budget history. Replace it in place instead of leaving that
+                // permanently-orphaned row behind.
+                context.BudgetPeriods.Remove(currentPeriod);
+            }
+            else
+            {
+                currentPeriod.EffectiveThrough = effectiveFrom.AddDays(-1);
+            }
         }
 
         context.BudgetPeriods.Add(new BudgetPeriod

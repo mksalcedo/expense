@@ -238,7 +238,10 @@ public class CategorizationService
                 ItemIds = [i.Id],
                 TotalPrice = i.Price,
                 NeedsReview = true,
-                OrderId = i.OrderId
+                OrderId = i.OrderId,
+                NeedsReviewReason = i.NeedsReviewReason,
+                RawEmailBody = i.RawEmailBody,
+                OrderDetailsUrl = i.OrderDetailsUrl
             });
 
         var groupedItems = pending
@@ -250,7 +253,13 @@ public class CategorizationService
                 ItemTitle = g.Key,
                 SampleDate = g.First().OrderDate,
                 ItemIds = g.Select(i => i.Id).ToList(),
-                TotalPrice = g.Sum(i => i.Price)
+                TotalPrice = g.Sum(i => i.Price),
+                // A group of exactly one real item unambiguously belongs to one order - safe
+                // to expose here too (unlike a genuine multi-item group, which could span
+                // several orders and has no single id to report). This is what keeps "Add
+                // another item" on Review Queue working on a row even after its NeedsReview
+                // placeholder has just been corrected into a real single-item row.
+                OrderId = g.Count() == 1 ? g.Single().OrderId : null
             });
 
         return needsReviewGroups.Concat(groupedItems).OrderByDescending(g => g.ItemIds.Count).ToList();

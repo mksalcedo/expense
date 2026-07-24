@@ -86,6 +86,52 @@ public class AmazonOrderItemTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task NeedsReviewItem_SavedAndReloaded_RoundTripsItsContextFields()
+    {
+        var item = new AmazonOrderItem
+        {
+            OrderId = "113-4355508-6173055", OrderDate = new DateOnly(2026, 7, 22),
+            ItemTitle = "(Item details unavailable in email - check Amazon order page)", Price = 51.40m, Quantity = 1,
+            TaxAllocated = 0m, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow,
+            SourceMessageId = "19f8c33d6c1f4ca3",
+            RawEmailBody = "Order #\n113-4355508-6173055\n\nGrand Total:\n51.4 USD",
+            NeedsReviewReason = "No item detail in confirmation email",
+            OrderDetailsUrl = "https://www.amazon.com/gp/css/order-details?orderId=113-4355508-6173055"
+        };
+        Context.AmazonOrderItems.Add(item);
+        await Context.SaveChangesAsync();
+
+        await using var reloadContext = CreateContextInSameTransaction();
+        var reloaded = await reloadContext.AmazonOrderItems.SingleAsync(i => i.Id == item.Id);
+
+        Assert.Equal("19f8c33d6c1f4ca3", reloaded.SourceMessageId);
+        Assert.Equal("Order #\n113-4355508-6173055\n\nGrand Total:\n51.4 USD", reloaded.RawEmailBody);
+        Assert.Equal("No item detail in confirmation email", reloaded.NeedsReviewReason);
+        Assert.Equal("https://www.amazon.com/gp/css/order-details?orderId=113-4355508-6173055", reloaded.OrderDetailsUrl);
+    }
+
+    [Fact]
+    public async Task NormalItemizedItem_LeavesNewContextFieldsNull()
+    {
+        var item = new AmazonOrderItem
+        {
+            OrderId = "113-5254486-7378657", OrderDate = new DateOnly(2026, 7, 14),
+            ItemTitle = "Qunol Ultra CoQ10", Price = 29.97m, Quantity = 1,
+            TaxAllocated = 1.80m, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.Add(item);
+        await Context.SaveChangesAsync();
+
+        await using var reloadContext = CreateContextInSameTransaction();
+        var reloaded = await reloadContext.AmazonOrderItems.SingleAsync(i => i.Id == item.Id);
+
+        Assert.Null(reloaded.SourceMessageId);
+        Assert.Null(reloaded.RawEmailBody);
+        Assert.Null(reloaded.NeedsReviewReason);
+        Assert.Null(reloaded.OrderDetailsUrl);
+    }
+
+    [Fact]
     public async Task RefundedItem_TracksRefundAmountOnTheSameRow()
     {
         var item = new AmazonOrderItem

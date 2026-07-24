@@ -27,15 +27,25 @@ public class AmazonOrderItem
 
     /// <summary>
     /// True when the title/price came from a "simplified" order confirmation email with no
-    /// real item list (see AmazonOrderEmailParser.ParseSimplifiedOrder) - the data is a
-    /// placeholder, not a parsing guess about a real item, so it needs a human to look up
-    /// the real order and correct it. False for everything else (itemized orders and gift
-    /// cards are both reliable, since the parser fails loudly rather than guessing).
+    /// real item list (see AmazonOrderEmailParser.ParseSimplifiedOrders/BuildPlaceholderOrder) -
+    /// the data is a placeholder, not a parsing guess about a real item, so it needs a human
+    /// to look up the real order and correct it. False for everything else (itemized orders
+    /// and gift cards are both reliable, since the parser fails loudly rather than guessing).
     /// </summary>
     public bool NeedsReview { get; set; }
 
     /// <summary>Same meaning as BankTransaction.Dismissed - "review later", not "ignore forever".</summary>
     public bool Dismissed { get; set; }
+
+    // The four fields below are only ever populated by BuildPlaceholderOrder for a
+    // NeedsReview row - null for every normal itemized row, since there's nothing to
+    // investigate there. Captured so reviewing a NeedsReview item never requires leaving
+    // the app or re-finding the source email in Gmail, and so the reasons accumulate into
+    // real diagnostic data over time (see docs/amazon-needs-review-plan.md).
+    public string? SourceMessageId { get; set; }
+    public string? RawEmailBody { get; set; }
+    public string? NeedsReviewReason { get; set; }
+    public string? OrderDetailsUrl { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
 }

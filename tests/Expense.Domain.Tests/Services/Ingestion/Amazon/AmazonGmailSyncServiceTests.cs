@@ -314,6 +314,53 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task RunAsync_PersistsEveryEmittedProgressLine_InOrder()
+    {
+        var lines = new List<SyncProgressLine>();
+        var sut = CreateSut(orderMessages: [new GmailMessage("msg-1", "Your order", SingleItemOrderEmail, new DateOnly(2026, 7, 14))]);
+
+        var result = await sut.RunAsync(Context, onProgress: lines.Add);
+
+        await using var reloadContext = CreateContextInSameTransaction();
+        var reloaded = await reloadContext.ImportRuns
+            .Include(r => r.ProgressLines)
+            .SingleAsync(r => r.Id == result.Run.Id);
+        var persisted = reloaded.ProgressLines.OrderBy(l => l.Sequence).ToList();
+
+        Assert.Equal(lines.Count, persisted.Count);
+        for (var i = 0; i < lines.Count; i++)
+        {
+            Assert.Equal(lines[i].Text, persisted[i].Text);
+            Assert.Equal(lines[i].IsError, persisted[i].IsError);
+        }
+    }
+
+    private class ThrowingGmailMessageSource : IGmailMessageSource
+    {
+        public Task<IReadOnlyList<GmailMessage>> SearchAsync(string query, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("simulated Gmail API failure");
+    }
+
+    [Fact]
+    public async Task RunAsync_OnFailure_StillPersistsWhateverProgressLinesWereEmittedBeforeTheFailure()
+    {
+        var sut = new AmazonGmailSyncService(
+            new ThrowingGmailMessageSource(), new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser()), new CategorizationService());
+
+        var result = await sut.RunAsync(Context);
+
+        Assert.False(result.Run.Success);
+        await using var reloadContext = CreateContextInSameTransaction();
+        var reloaded = await reloadContext.ImportRuns
+            .Include(r => r.ProgressLines)
+            .SingleAsync(r => r.Id == result.Run.Id);
+
+        // The "no prior successful sync" window line is emitted before the throwing
+        // SearchAsync call - it should still have been persisted even though the run failed.
+        Assert.Contains(reloaded.ProgressLines, l => l.Text.Contains("400 days"));
+    }
+
+    [Fact]
     public async Task RunAsync_WhenNoPriorSuccessfulRunExists_SearchesTheFallback400DayWindow()
     {
         var (sut, fake) = CreateSutWithFake();

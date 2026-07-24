@@ -511,6 +511,29 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task GetPendingAmazonItemGroupsAsync_NeedsReviewGroup_CarriesItsReviewContext()
+    {
+        Context.AmazonOrderItems.Add(new AmazonOrderItem
+        {
+            OrderId = "113-4355508-6173055", OrderDate = new DateOnly(2026, 7, 22),
+            ItemTitle = "(Item details unavailable in email - check Amazon order page)", Price = 51.40m, Quantity = 1,
+            NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow,
+            SourceMessageId = "19f8c33d6c1f4ca3",
+            RawEmailBody = "Order #\n113-4355508-6173055\n\nGrand Total:\n51.4 USD",
+            NeedsReviewReason = "No item detail in confirmation email",
+            OrderDetailsUrl = "https://www.amazon.com/gp/css/order-details?orderId=113-4355508-6173055"
+        });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingAmazonItemGroupsAsync(Context);
+
+        var group = Assert.Single(groups);
+        Assert.Equal("No item detail in confirmation email", group.NeedsReviewReason);
+        Assert.Equal("Order #\n113-4355508-6173055\n\nGrand Total:\n51.4 USD", group.RawEmailBody);
+        Assert.Equal("https://www.amazon.com/gp/css/order-details?orderId=113-4355508-6173055", group.OrderDetailsUrl);
+    }
+
+    [Fact]
     public async Task GetPendingAmazonItemGroupsAsync_NonNeedsReviewItems_StillGroupByTitle()
     {
         Context.AmazonOrderItems.AddRange(
@@ -524,6 +547,29 @@ public class CategorizationServiceTests : DatabaseTestBase
         Assert.Equal(2, group.ItemIds.Count);
         Assert.False(group.NeedsReview);
         Assert.Null(group.OrderId); // more than one real order in the group - no single order id applies
+    }
+
+    [Fact]
+    public async Task GetPendingAmazonItemGroupsAsync_SingleNonNeedsReviewItem_StillExposesItsOrderId()
+    {
+        // Real scenario this guards: a NeedsReview placeholder gets corrected by hand (title
+        // fixed, NeedsReview flips to false) - "Add another item" on Review Queue must keep
+        // working afterward (e.g. after a page refresh), which needs a real OrderId to still
+        // be available even though the row is no longer flagged. Safe here specifically
+        // because it's the only item with this exact title - one real order, unambiguously.
+        Context.AmazonOrderItems.Add(new AmazonOrderItem
+        {
+            OrderId = "113-4355508-6173055", OrderDate = new DateOnly(2026, 7, 22),
+            ItemTitle = "Levoit Core 300-P Air Purifier Filter", Price = 25.99m, Quantity = 1,
+            NeedsReview = false, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingAmazonItemGroupsAsync(Context);
+
+        var group = Assert.Single(groups);
+        Assert.False(group.NeedsReview);
+        Assert.Equal("113-4355508-6173055", group.OrderId);
     }
 
     [Fact]

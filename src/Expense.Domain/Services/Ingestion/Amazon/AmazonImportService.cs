@@ -23,9 +23,9 @@ namespace Expense.Domain.Services.Ingestion.Amazon;
 public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefundEmailParser refundParser)
 {
     public async Task<AmazonImportSummary> ImportOrderAsync(
-        ExpenseDbContext context, string emailBody, DateOnly orderDate, CancellationToken cancellationToken = default)
+        ExpenseDbContext context, string emailBody, DateOnly orderDate, string? messageId = null, CancellationToken cancellationToken = default)
     {
-        var items = orderParser.Parse(emailBody, orderDate);
+        var items = orderParser.Parse(emailBody, orderDate, messageId);
         var summary = new AmazonImportSummary();
         var products = await context.Products.ToListAsync(cancellationToken);
 

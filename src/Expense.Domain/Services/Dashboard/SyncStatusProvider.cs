@@ -2,6 +2,7 @@ using System.Text.Json;
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Categorization;
+using Expense.Domain.Services.Forecast;
 using Expense.Domain.Services.Ingestion;
 using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Services.Ingestion.SimpleFin;
@@ -23,7 +24,9 @@ public class SyncStatusProvider(
     AmazonImportService amazonImportService,
     CategorizationService categorization,
     IConfiguration configuration,
-    SyncIssueService syncIssues) : ISyncStatusProvider
+    SyncIssueService syncIssues,
+    IForecastResultProvider forecastResultProvider,
+    ForecastSnapshotService forecastSnapshotService) : ISyncStatusProvider
 {
     public async Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default)
     {
@@ -55,7 +58,9 @@ public class SyncStatusProvider(
         var accountMap = JsonSerializer.Deserialize<Dictionary<string, int>>(await File.ReadAllTextAsync(accountMapPath, cancellationToken))
             ?? [];
 
-        return await simpleFinSync.RunAsync(context, accessUrl, accountMap, DateTimeOffset.UtcNow.AddDays(-45), cancellationToken);
+        var run = await simpleFinSync.RunAsync(context, accessUrl, accountMap, DateTimeOffset.UtcNow.AddDays(-45), cancellationToken);
+        await CaptureForecastSnapshotAsync(cancellationToken);
+        return run;
     }
 
     public async Task<ImportRun> RunAmazonGmailSyncAsync(Action<SyncProgressLine>? onProgress = null, CancellationToken cancellationToken = default)
@@ -77,7 +82,31 @@ public class SyncStatusProvider(
 
         var syncService = new AmazonGmailSyncService(new GoogleGmailMessageSource(gmail), amazonImportService, categorization);
         var result = await syncService.RunAsync(context, onProgress, cancellationToken);
+        await CaptureForecastSnapshotAsync(cancellationToken);
         return result.Run;
+    }
+
+    public async Task<RecentRunsPage> GetRecentRunsAsync(ImportSource source, int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var query = context.ImportRuns.Where(r => r.Source == source);
+        var totalCount = await query.CountAsync(cancellationToken);
+        var runs = await query
+            .OrderByDescending(r => r.RanAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        return new RecentRunsPage { Runs = runs, TotalCount = totalCount };
+    }
+
+    public async Task<List<SyncProgressLine>> GetRunProgressLogAsync(int importRunId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await context.ImportRunProgressLines
+            .Where(p => p.ImportRunId == importRunId)
+            .OrderBy(p => p.Sequence)
+            .Select(p => new SyncProgressLine(p.Text, p.IsError))
+            .ToListAsync(cancellationToken);
     }
 
     public async Task<List<SyncIssue>> GetActiveSyncIssuesAsync(CancellationToken cancellationToken = default)
@@ -97,6 +126,17 @@ public class SyncStatusProvider(
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await syncIssues.IgnoreAsNotAnOrderAsync(context, syncIssueId, cancellationToken);
+    }
+
+    // Runs after every successful sync (scheduled or manual "Sync Now" click alike, since
+    // both paths funnel through this class) so a snapshot is always as fresh as the data
+    // that just landed, rather than only twice a day - see docs/forecast-accuracy-plan.md.
+    // CaptureAsync upserts by day, so multiple captures on the same day just refine it.
+    private async Task CaptureForecastSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var forecast = await forecastResultProvider.GetForecastAsync(cancellationToken);
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await forecastSnapshotService.CaptureAsync(context, forecast, DateOnly.FromDateTime(DateTime.Today), cancellationToken);
     }
 
     private static async Task<ImportRun> RecordConfigurationFailureAsync(

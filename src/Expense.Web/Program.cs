@@ -12,6 +12,7 @@ using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Services.Ingestion.ManualCharges;
 using Expense.Domain.Services.Ingestion.SimpleFin;
 using Expense.Domain.Services.OneTimeEvents;
+using Expense.Domain.Services.Scheduling;
 using Expense.Domain.Services.SpendingTracker;
 using Expense.Domain.Services.Transactions;
 using Expense.Domain.Settings;
@@ -41,6 +42,11 @@ builder.Services.AddScoped<PaymentDeferralService>();
 builder.Services.AddScoped<PaymentConfirmationService>();
 builder.Services.AddScoped<PartialPaymentService>();
 builder.Services.AddScoped<IForecastResultProvider, ForecastResultProvider>();
+
+builder.Services.AddScoped<ForecastAccuracyService>();
+builder.Services.AddScoped<IForecastAccuracyPageProvider, ForecastAccuracyPageProvider>();
+builder.Services.AddScoped<ForecastSnapshotService>();
+builder.Services.AddScoped<IForecastHistoryPageProvider, ForecastHistoryPageProvider>();
 builder.Services.AddScoped<IConfirmedPaymentsPageProvider, ConfirmedPaymentsPageProvider>();
 
 builder.Services.AddScoped<CategorizationService>();
@@ -79,6 +85,8 @@ builder.Services.AddScoped<AmazonImportService>();
 
 builder.Services.AddScoped<SyncIssueService>();
 builder.Services.AddScoped<ISyncStatusProvider, SyncStatusProvider>();
+
+builder.Services.AddHostedService<SyncScheduler>();
 
 builder.Services.AddScoped<TransactionManagementService>();
 builder.Services.AddScoped<ITransactionsPageProvider, TransactionsPageProvider>();

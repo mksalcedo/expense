@@ -1,9 +1,12 @@
 @page "/"
+@using Expense.Domain.Entities
+@using Expense.Domain.Services.Dashboard
 @using Expense.Domain.Services.Forecast
 @using Expense.Domain.Services.SpendingTracker
 @using Expense.Web.Components.Shared
 @inject IForecastResultProvider ForecastProvider
 @inject ISpendingTrackerPageProvider SpendingTrackerProvider
+@inject ISyncStatusProvider SyncStatusProvider
 
 <PageTitle>Dashboard</PageTitle>
 
@@ -15,6 +18,22 @@
 }
 else
 {
+    @if (_lastSimpleFinRun is { Success: false } || _lastAmazonRun is { Success: false })
+    {
+        <div id="sync-failure-banner" style="background:#fee2e2; color:#7f1d1d; border:1px solid #fca5a5; border-radius:6px; padding:0.75em 1em; margin-bottom:1em;">
+            <strong>Sync issue:</strong>
+            @if (_lastSimpleFinRun is { Success: false } failedSimpleFin)
+            {
+                <div>Bank sync failed: @failedSimpleFin.ErrorMessage</div>
+            }
+            @if (_lastAmazonRun is { Success: false } failedAmazon)
+            {
+                <div>Amazon sync failed: @failedAmazon.ErrorMessage</div>
+            }
+            <div><a href="/sync-now">Go to Sync Now</a></div>
+        </div>
+    }
+
     <div style="display:flex; gap:3rem; align-items:flex-start; flex-wrap:wrap;">
         <div>
             <h2>Cash Flow</h2>
@@ -79,6 +98,8 @@ else
     private ForecastResult? _forecast;
     private ForecastLedgerRow? _lowestForecastRow;
     private SpendingTrackerPageData? _spendingTracker;
+    private ImportRun? _lastSimpleFinRun;
+    private ImportRun? _lastAmazonRun;
 
     protected override async Task OnInitializedAsync()
     {
@@ -93,6 +114,8 @@ else
         _forecast = await ForecastProvider.GetForecastAsync();
         _lowestForecastRow = _forecast.Rows.FirstOrDefault(r => !r.IsExcluded && r.RunningBalance == _forecast.LowestProjectedBalance);
         _spendingTracker = await SpendingTrackerProvider.GetSpendingTrackerAsync();
+        _lastSimpleFinRun = await SyncStatusProvider.GetLastSimpleFinRunAsync();
+        _lastAmazonRun = await SyncStatusProvider.GetLastAmazonGmailRunAsync();
     }
 
     // Mirrors Forecast.razor's own row styling, so a deferred/excluded payment looks the
