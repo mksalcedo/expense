@@ -311,6 +311,70 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task CategorizeAmazonItemAsync_NeedsReviewItem_NeverCreatesAProductRule_EvenWhenPatternRequested()
+    {
+        // Real bug this guards: two NeedsReview placeholders from the same digest email
+        // (no item detail in the confirmation) share the exact same generic fallback
+        // title. Categorizing one created a Product rule keyed on that generic text, which
+        // then silently swept the OTHER (a completely different, unrelated real item) into
+        // the same category - a shared placeholder title isn't a shared real product the
+        // way a shared specific title is.
+        const string placeholder = "(Item details unavailable in email - check Amazon order page)";
+        var supplements = new Category { Name = "Supplements" };
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.AddRange(supplements, groceries);
+        await Context.SaveChangesAsync();
+
+        var item = new AmazonOrderItem
+        {
+            OrderId = "113-5634569-7569032", OrderDate = new DateOnly(2026, 7, 21), ItemTitle = placeholder,
+            Price = 0m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+        };
+        var otherPending = new AmazonOrderItem
+        {
+            OrderId = "113-6275981-3164251", OrderDate = new DateOnly(2026, 7, 21), ItemTitle = placeholder,
+            Price = 0m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.AddRange(item, otherPending);
+        await Context.SaveChangesAsync();
+
+        var retroactiveCount = await _sut.CategorizeAmazonItemAsync(Context, item.Id, supplements.Id, productPatternToCreate: placeholder);
+
+        Assert.Equal(supplements.Id, item.CategoryId);
+        Assert.Null(item.ProductId);
+        Assert.Null(otherPending.CategoryId);
+        Assert.Null(otherPending.ProductId);
+        Assert.Equal(0, retroactiveCount);
+        Assert.Empty(await Context.Products.ToListAsync());
+    }
+
+    [Fact]
+    public async Task CategorizeAmazonItemAsync_NormalItemsProductRule_NeverSweepsUpAStillNeedsReviewItem()
+    {
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+
+        var item = new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 1), ItemTitle = "Qunol Ultra CoQ10 100mg", Price = 30m, Quantity = 1, CreatedAt = DateTimeOffset.UtcNow };
+        // Contrived title just to prove the retroactive-apply loop itself excludes
+        // NeedsReview targets, regardless of whether their (placeholder) title happens to match.
+        var stillNeedsReview = new AmazonOrderItem
+        {
+            OrderId = "2", OrderDate = new DateOnly(2026, 7, 5), ItemTitle = "Qunol Ultra CoQ10 200mg",
+            Price = 45m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.AddRange(item, stillNeedsReview);
+        await Context.SaveChangesAsync();
+
+        var retroactiveCount = await _sut.CategorizeAmazonItemAsync(Context, item.Id, supplements.Id, productPatternToCreate: "%QUNOL%");
+
+        Assert.Equal(supplements.Id, item.CategoryId);
+        Assert.Null(stillNeedsReview.CategoryId);
+        Assert.Null(stillNeedsReview.ProductId);
+        Assert.Equal(0, retroactiveCount);
+    }
+
+    [Fact]
     public async Task ReapplyRulesToPendingAsync_CategorizesAPendingTransactionThatNowMatchesAnExistingRule()
     {
         // Simulates the real Truist bug: a rule already exists, but a pending transaction
@@ -358,6 +422,35 @@ public class CategorizationServiceTests : DatabaseTestBase
         Assert.Equal(1, result.ItemsUpdated);
         Assert.Equal(supplements.Id, stillPending.CategoryId);
         Assert.NotNull(stillPending.ProductId);
+    }
+
+    [Fact]
+    public async Task ReapplyRulesToPendingAsync_NeverMatchesAStillNeedsReviewItemAgainstAnExistingProduct()
+    {
+        // Same guard as CategorizeAmazonItemAsync, different entry point: this runs
+        // automatically on every SimpleFin/Amazon Gmail sync, so a stale Product rule
+        // whose pattern is just the NeedsReview generic fallback text (created before that
+        // fix existed) would otherwise keep silently re-matching any future NeedsReview
+        // item that happens to share the same placeholder title.
+        const string placeholder = "(Item details unavailable in email - check Amazon order page)";
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+        Context.Products.Add(new Product { ProductPattern = placeholder, CategoryId = supplements.Id });
+
+        var stillNeedsReview = new AmazonOrderItem
+        {
+            OrderId = "113-9999999-9999999", OrderDate = new DateOnly(2026, 8, 1), ItemTitle = placeholder,
+            Price = 0m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.Add(stillNeedsReview);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.ReapplyRulesToPendingAsync(Context);
+
+        Assert.Equal(0, result.ItemsUpdated);
+        Assert.Null(stillNeedsReview.CategoryId);
+        Assert.Null(stillNeedsReview.ProductId);
     }
 
     [Fact]

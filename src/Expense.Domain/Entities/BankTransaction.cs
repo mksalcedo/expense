@@ -47,5 +47,14 @@ public class BankTransaction
     /// </summary>
     public bool Dismissed { get; set; }
 
+    /// <summary>
+    /// Which forecasted occurrence this transaction satisfies (e.g. the 7/10/2026 SSA
+    /// deposit) - set once by TransactionReconciliationService, checked by ForecastEngine
+    /// as a direct lookup instead of a date-window search computed relative to "today".
+    /// Null until classified, or if this transaction's category has no determinable
+    /// recurring schedule (most spending categories).
+    /// </summary>
+    public DateOnly? ReconciledOccurrenceDate { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 }

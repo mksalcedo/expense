@@ -29,8 +29,13 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
     public async Task<ForecastResult> GenerateAsync(
         ExpenseDbContext context, DateOnly asOfDate, DateOnly windowEnd, CancellationToken cancellationToken = default)
     {
+        // Two different sources (e.g. SimpleFin and a Plaid backup import) can both write
+        // a snapshot for the same calendar day - AsOfDate alone can't break that tie, so
+        // Id is an explicit secondary sort (highest = most recently inserted wins),
+        // rather than relying on whatever order the database happens to return ties in.
         var startingBalance = await context.CheckingBalanceSnapshots
             .OrderByDescending(s => s.AsOfDate)
+            .ThenByDescending(s => s.Id)
             .Select(s => s.Balance)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -91,9 +96,12 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         var lines = recurrenceExpander.Expand(
             recurringRules, [], asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays), windowEnd);
 
+        // Which occurrence (if any) each categorized transaction satisfies is decided once,
+        // durably, by TransactionReconciliationService - not re-derived here via a date
+        // window relative to asOfDate (see docs/forecast-reconciliation-marker-plan.md for
+        // why that used to silently miss transactions posted more than ~28 days ago).
         var reconciliationTransactions = await context.BankTransactions
-            .Where(t => t.CategoryId != null && t.PostedDate != null
-                        && t.PostedDate >= asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays) && t.PostedDate <= asOfDate)
+            .Where(t => t.CategoryId != null && t.ReconciledOccurrenceDate != null)
             .ToListAsync(cancellationToken);
 
         lines = lines.Where(l => !IsAlreadyReflectedInAnActualTransaction(l, reconciliationTransactions)).ToList();
@@ -340,12 +348,10 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
     {
         if (line.CategoryId is null) return false;
 
-        var windowStart = line.Date.AddDays(-line.MatchWindowDays);
-        var windowEnd = line.Date.AddDays(line.MatchWindowDays);
         var expectedAmount = Math.Abs(line.Amount);
         var minimumAcceptedAmount = expectedAmount * (1m - ReconciliationAmountToleranceFraction);
 
-        return transactions.Any(t => t.CategoryId == line.CategoryId && t.PostedDate is { } posted && posted >= windowStart && posted <= windowEnd
+        return transactions.Any(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate == line.Date
             && Math.Abs(t.Amount) >= minimumAcceptedAmount);
     }
 }

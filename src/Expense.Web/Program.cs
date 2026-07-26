@@ -47,6 +47,7 @@ builder.Services.AddScoped<ForecastAccuracyService>();
 builder.Services.AddScoped<IForecastAccuracyPageProvider, ForecastAccuracyPageProvider>();
 builder.Services.AddScoped<ForecastSnapshotService>();
 builder.Services.AddScoped<IForecastHistoryPageProvider, ForecastHistoryPageProvider>();
+builder.Services.AddScoped<TransactionReconciliationService>();
 builder.Services.AddScoped<IConfirmedPaymentsPageProvider, ConfirmedPaymentsPageProvider>();
 
 builder.Services.AddScoped<CategorizationService>();

@@ -13,12 +13,20 @@ namespace Expense.Domain.Services.Forecast;
 /// </summary>
 public class ForecastResultProvider(
     IDbContextFactory<ExpenseDbContext> contextFactory, ForecastEngine engine, IOptions<AppSettings> options,
-    PaymentDeferralService deferrals, PaymentConfirmationService confirmations, PartialPaymentService partialPayments) : IForecastResultProvider
+    PaymentDeferralService deferrals, PaymentConfirmationService confirmations, PartialPaymentService partialPayments,
+    TransactionReconciliationService reconciliation) : IForecastResultProvider
 {
     public async Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var asOfDate = DateOnly.FromDateTime(DateTime.Today);
+
+        // Cheap and idempotent at this app's real data scale - keeps a manual
+        // recategorization (Review Queue, Transactions page) reflected on the very next
+        // forecast render instead of only at the next scheduled sync, same as before this
+        // marker existed (see docs/forecast-reconciliation-marker-plan.md).
+        await reconciliation.ReconcileAsync(context, asOfDate, cancellationToken: cancellationToken);
+
         var windowEnd = asOfDate.AddMonths(options.Value.ForecastHorizonMonths);
         return await engine.GenerateAsync(context, asOfDate, windowEnd, cancellationToken);
     }

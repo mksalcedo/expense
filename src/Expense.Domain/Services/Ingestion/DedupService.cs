@@ -37,4 +37,15 @@ public class DedupService
 
         return false;
     }
+
+    /// <summary>
+    /// Cross-source dedup, deliberately ignoring ExternalId/description: two aggregators
+    /// covering the same real account will eventually both report the same real
+    /// transaction under different IDs and different description text (raw bank text vs.
+    /// a cleaned-up merchant name) - account+posted date+amount is the only signal both
+    /// sources can be expected to agree on. Accepted, narrow risk: two genuinely different
+    /// real transactions same account/day/amount would collide here - rare in practice.
+    /// </summary>
+    public async Task<bool> ExistsForAccountDateAmountAsync(ExpenseDbContext context, int accountId, DateOnly postedDate, decimal amount) =>
+        await context.BankTransactions.AnyAsync(t => t.AccountId == accountId && t.PostedDate == postedDate && t.Amount == amount);
 }

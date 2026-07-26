@@ -44,6 +44,43 @@ public class BankTransactionTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ReconciledOccurrenceDate_RoundTrips_AndDefaultsToNull()
+    {
+        var checking = await CreateAccountAsync("Wells Fargo Checking", AccountType.Checking);
+
+        var unclassified = new BankTransaction
+        {
+            AccountId = checking.Id,
+            TransactionDate = new DateOnly(2026, 7, 8),
+            PostedDate = new DateOnly(2026, 7, 8),
+            Description = "SSA TREAS 310",
+            Amount = 652m,
+            ImportSource = "SimpleFin",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        var classified = new BankTransaction
+        {
+            AccountId = checking.Id,
+            TransactionDate = new DateOnly(2026, 7, 8),
+            PostedDate = new DateOnly(2026, 7, 8),
+            Description = "SSA TREAS 310",
+            Amount = 652m,
+            ImportSource = "SimpleFin",
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 10),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.AddRange(unclassified, classified);
+        await Context.SaveChangesAsync();
+
+        await using var reloadContext = CreateContextInSameTransaction();
+        var reloadedUnclassified = await reloadContext.BankTransactions.SingleAsync(t => t.Id == unclassified.Id);
+        var reloadedClassified = await reloadContext.BankTransactions.SingleAsync(t => t.Id == classified.Id);
+
+        Assert.Null(reloadedUnclassified.ReconciledOccurrenceDate);
+        Assert.Equal(new DateOnly(2026, 7, 10), reloadedClassified.ReconciledOccurrenceDate);
+    }
+
+    [Fact]
     public async Task PendingTransaction_HasNoPostedDate()
     {
         var amex = await CreateAccountAsync("Amex", AccountType.ActiveSpending);

@@ -89,6 +89,14 @@ public class CategorizationService
     /// Categorizes one Amazon order item. If productPatternToCreate is given, also
     /// creates that product and applies it to every other still-pending item that
     /// matches. Returns how many OTHER items were retroactively categorized.
+    ///
+    /// NeedsReview placeholders are never a source or target of that rule: their shared
+    /// title is a parser fallback ("item details unavailable..."), not a real product
+    /// name, so two NeedsReview items from unrelated orders can share it verbatim (e.g.
+    /// two placeholders from the same multi-order digest email) - creating a rule from
+    /// that text, or matching another still-unidentified item against it, would silently
+    /// conflate two different real products (see GetPendingAmazonItemGroupsAsync, which
+    /// already treats NeedsReview titles the same way for grouping).
     /// </summary>
     public async Task<int> CategorizeAmazonItemAsync(
         ExpenseDbContext context, int itemId, int categoryId, string? productPatternToCreate)
@@ -96,7 +104,7 @@ public class CategorizationService
         var item = await context.AmazonOrderItems.SingleAsync(i => i.Id == itemId);
         item.CategoryId = categoryId;
 
-        if (productPatternToCreate is null)
+        if (productPatternToCreate is null || item.NeedsReview)
         {
             await context.SaveChangesAsync();
             return 0;
@@ -111,7 +119,7 @@ public class CategorizationService
         var retroactiveCount = 0;
         foreach (var other in otherPending)
         {
-            if (other.Id != item.Id && MerchantPatternMatcher.Matches(other.ItemTitle, product.ProductPattern))
+            if (other.Id != item.Id && !other.NeedsReview && MerchantPatternMatcher.Matches(other.ItemTitle, product.ProductPattern))
             {
                 other.ProductId = product.Id;
                 other.CategoryId = categoryId;
@@ -178,7 +186,7 @@ public class CategorizationService
 
         var pendingItems = await GetPendingAmazonOrderItemsAsync(context);
         var products = await context.Products.ToListAsync();
-        foreach (var item in pendingItems)
+        foreach (var item in pendingItems.Where(i => !i.NeedsReview))
         {
             var match = products.FirstOrDefault(p => MerchantPatternMatcher.Matches(item.ItemTitle, p.ProductPattern));
             if (match is not null)

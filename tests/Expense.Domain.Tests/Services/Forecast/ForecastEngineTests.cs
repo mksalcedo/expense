@@ -27,6 +27,21 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task StartingBalance_MultipleSnapshotsOnTheSameDate_UsesTheMostRecentlyInsertedOne()
+    {
+        // Real bug this guards: two different sources (e.g. SimpleFin and a Plaid backup
+        // import) can both write a snapshot for the same calendar day - AsOfDate alone
+        // can't break the tie, so whichever was actually inserted most recently must win,
+        // not an arbitrary one.
+        await SeedCheckingBalanceAsync(4548.83m, new DateOnly(2026, 7, 24));
+        await SeedCheckingBalanceAsync(5092.71m, new DateOnly(2026, 7, 24)); // inserted later, more current
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 25), new DateOnly(2026, 8, 10));
+
+        Assert.Equal(5092.71m, result.StartingBalance);
+    }
+
+    [Fact]
     public async Task DirectCategory_AppearsAsALedgerLineAndUpdatesRunningBalance()
     {
         await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));
@@ -50,7 +65,8 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.BankTransactions.Add(new BankTransaction
         {
             AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 3), PostedDate = new DateOnly(2026, 7, 3),
-            Description = "EFX PAYROLL", Amount = 2000m, ImportSource = "Test", CategoryId = paycheck.Id, CreatedAt = DateTimeOffset.UtcNow
+            Description = "EFX PAYROLL", Amount = 2000m, ImportSource = "Test", CategoryId = paycheck.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 3), CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
@@ -61,6 +77,48 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal("Paycheck", row.Description);
         Assert.Equal(2000m, row.Amount);
         Assert.Equal(3000m, row.RunningBalance);
+    }
+
+    [Fact]
+    public async Task DirectFundedBill_PostedEarly_MoreThanMaxMatchWindowDaysBeforeAsOfDate_StillReconciles()
+    {
+        // Real bug this guards: exclusion used to depend on a date-window search relative
+        // to asOfDate, widened by only one MaxMatchWindowDays radius from today even though
+        // an included occurrence could itself be up to MaxMatchWindowDays old, and its own
+        // match window then reached a further MaxMatchWindowDays before that - a transaction
+        // posted in that gap (here: occurrence 7/10 is exactly asOfDate-14, and the real
+        // transaction posted 2 days earlier still, 7/8) was silently excluded from
+        // consideration, so the line reappeared - a real double-count against a checking
+        // balance that already reflected it. ReconciledOccurrenceDate is set once by
+        // TransactionReconciliationService using only the transaction's own PostedDate
+        // against the category's real schedule, never relative to asOfDate, so this can't
+        // recur regardless of how the widening math elsewhere ever changes.
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 24));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var ssa = new Category { Name = "SSA" };
+        Context.Categories.Add(ssa);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = ssa.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = ssa.Id, Amount = 652m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 7, 10), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 8), PostedDate = new DateOnly(2026, 7, 8),
+            Description = "SSA TREAS 310", Amount = 652m, ImportSource = "Test", CategoryId = ssa.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 10), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 24), new DateOnly(2026, 8, 10));
+
+        Assert.DoesNotContain(result.Rows, r => r.Description == "SSA" && r.Date == new DateOnly(2026, 7, 10));
     }
 
     [Fact]
@@ -359,7 +417,8 @@ public class ForecastEngineTests : DatabaseTestBase
             new BankTransaction
             {
                 AccountId = amex.Id, TransactionDate = new DateOnly(2026, 3, 14), PostedDate = new DateOnly(2026, 3, 14),
-                Description = "AMEX EPAYMENT ACH PMT", Amount = 1250m, ImportSource = "Test", CategoryId = amexPayment.Id, CreatedAt = DateTimeOffset.UtcNow
+                Description = "AMEX EPAYMENT ACH PMT", Amount = 1250m, ImportSource = "Test", CategoryId = amexPayment.Id,
+                ReconciledOccurrenceDate = new DateOnly(2026, 3, 15), CreatedAt = DateTimeOffset.UtcNow
             });
         await Context.SaveChangesAsync();
 
@@ -654,7 +713,8 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.BankTransactions.Add(new BankTransaction
         {
             AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
-            Description = "TRUIST MORTGAGE", Amount = -2681.22m, ImportSource = "Test", CategoryId = mortgage.Id, CreatedAt = DateTimeOffset.UtcNow
+            Description = "TRUIST MORTGAGE", Amount = -2681.22m, ImportSource = "Test", CategoryId = mortgage.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 15), CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
@@ -715,7 +775,8 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.BankTransactions.Add(new BankTransaction
         {
             AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 12), PostedDate = new DateOnly(2026, 7, 12),
-            Description = "TRUIST MORTGAGE", Amount = -2681.22m, ImportSource = "Test", CategoryId = mortgage.Id, CreatedAt = DateTimeOffset.UtcNow
+            Description = "TRUIST MORTGAGE", Amount = -2681.22m, ImportSource = "Test", CategoryId = mortgage.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 10), CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
@@ -772,7 +833,8 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.BankTransactions.Add(new BankTransaction
         {
             AccountId = discover.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
-            Description = "DISCOVER PAYMENT", Amount = -150m, ImportSource = "Test", CategoryId = discoverPayment.Id, CreatedAt = DateTimeOffset.UtcNow
+            Description = "DISCOVER PAYMENT", Amount = -150m, ImportSource = "Test", CategoryId = discoverPayment.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 15), CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
@@ -799,7 +861,8 @@ public class ForecastEngineTests : DatabaseTestBase
         {
             // Configured/expected is $150; real payment is $145 - a 3.3% shortfall, within tolerance.
             AccountId = discover.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
-            Description = "DISCOVER PAYMENT", Amount = -145m, ImportSource = "Test", CategoryId = discoverPayment.Id, CreatedAt = DateTimeOffset.UtcNow
+            Description = "DISCOVER PAYMENT", Amount = -145m, ImportSource = "Test", CategoryId = discoverPayment.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 15), CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
@@ -825,7 +888,8 @@ public class ForecastEngineTests : DatabaseTestBase
         {
             // Configured/expected is $150; real payment is $500 (way more than 5% over).
             AccountId = discover.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
-            Description = "DISCOVER PAYMENT", Amount = -500m, ImportSource = "Test", CategoryId = discoverPayment.Id, CreatedAt = DateTimeOffset.UtcNow
+            Description = "DISCOVER PAYMENT", Amount = -500m, ImportSource = "Test", CategoryId = discoverPayment.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 15), CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
