@@ -1005,11 +1005,22 @@ public class ForecastEngineTests : DatabaseTestBase
     public async Task PartialPayment_IsExcluded_OnceARealMatchingTransactionPosts()
     {
         // Same real cash movement the partial payment recorded has now posted and synced
-        // normally - the recorded line must stop double-counting it.
+        // normally - the recorded line must stop double-counting it. Real shape confirmed
+        // this session: the actual payment posts against the CHECKING account (never the
+        // debt/Amex account's own id), tagged with that account's payment category, and
+        // is stored as a negative amount (this app's expense convention) - not the debt
+        // account's own AccountId with a positive amount, which was this test's old,
+        // unrealistic assumption before the underlying bug was found and fixed.
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 21));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
         var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
-        Context.Accounts.Add(amex);
+        Context.Accounts.AddRange(checking, amex);
         await Context.SaveChangesAsync();
+
+        var amexPayment = new Category { Name = "Amex Payment" };
+        Context.Categories.Add(amexPayment);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = amexPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = amex.Id });
 
         var oneTimeEvent = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 1000m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 20), AccountId = amex.Id };
         Context.OneTimeEvents.Add(oneTimeEvent);
@@ -1022,8 +1033,8 @@ public class ForecastEngineTests : DatabaseTestBase
         });
         Context.BankTransactions.Add(new BankTransaction
         {
-            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 20), PostedDate = new DateOnly(2026, 7, 20),
-            Description = "ONLINE PAYMENT - THANK YOU", Amount = 1000m, ImportSource = "SimpleFin", CategoryId = null, CreatedAt = DateTimeOffset.UtcNow
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 20), PostedDate = new DateOnly(2026, 7, 20),
+            Description = "ONLINE PAYMENT - THANK YOU", Amount = -1000m, ImportSource = "SimpleFin", CategoryId = amexPayment.Id, CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
@@ -1039,9 +1050,15 @@ public class ForecastEngineTests : DatabaseTestBase
     public async Task PartialPayment_ReconciliationMatch_RequiresTheExactAmount()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 21));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
         var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 2000m, PaymentDueDay = 20 };
-        Context.Accounts.Add(amex);
+        Context.Accounts.AddRange(checking, amex);
         await Context.SaveChangesAsync();
+
+        var amexPayment = new Category { Name = "Amex Payment" };
+        Context.Categories.Add(amexPayment);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = amexPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = amex.Id });
 
         var oneTimeEvent = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 1000m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 20), AccountId = amex.Id };
         Context.OneTimeEvents.Add(oneTimeEvent);
@@ -1055,8 +1072,8 @@ public class ForecastEngineTests : DatabaseTestBase
         // A real transaction close in date but for a different amount - must not match.
         Context.BankTransactions.Add(new BankTransaction
         {
-            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 20), PostedDate = new DateOnly(2026, 7, 20),
-            Description = "ONLINE PAYMENT - THANK YOU", Amount = 850m, ImportSource = "SimpleFin", CategoryId = null, CreatedAt = DateTimeOffset.UtcNow
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 20), PostedDate = new DateOnly(2026, 7, 20),
+            Description = "ONLINE PAYMENT - THANK YOU", Amount = -850m, ImportSource = "SimpleFin", CategoryId = amexPayment.Id, CreatedAt = DateTimeOffset.UtcNow
         });
         await Context.SaveChangesAsync();
 
@@ -1064,6 +1081,51 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var paidRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment (partial)");
         Assert.False(paidRow.IsExcluded);
+    }
+
+    [Fact]
+    public async Task PartialPayment_AgainstADirectFundedBill_StillMatches_ViaAccountIdFallback()
+    {
+        // Unlike a debt/Amex-payment partial payment, a Direct-funded bill's own AccountId
+        // IS the checking/funding account the real transaction actually posts against (no
+        // separate debt/Amex account in between) - so AccountId-based matching is already
+        // correct here and must keep working via the fallback path.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 21));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var mortgage = new Category { Name = "Truist" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = mortgage.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = mortgage.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 20), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+
+        var oneTimeEvent = new OneTimeEvent { Name = "Truist Payment (partial)", Amount = 1000m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 18), AccountId = checking.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = checking.Id, OriginalDate = new DateOnly(2026, 7, 20), Amount = 1000m, PaidDate = new DateOnly(2026, 7, 18),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 18), PostedDate = new DateOnly(2026, 7, 18),
+            Description = "PARTIAL MORTGAGE PAYMENT", Amount = -1000m, ImportSource = "SimpleFin", CategoryId = null, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 21), new DateOnly(2026, 7, 31));
+
+        var paidRow = Assert.Single(result.Rows, r => r.Description.StartsWith("Truist Payment (partial)"));
+        Assert.True(paidRow.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, paidRow.ExclusionReason);
     }
 
     [Fact]

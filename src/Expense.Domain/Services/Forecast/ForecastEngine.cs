@@ -214,23 +214,47 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         // Once the real cash movement a partial payment recorded actually posts and syncs
         // normally, its synthetic OneTimeEvent line becomes redundant - the real transaction
         // already reduces the checking balance for real, so keeping the recorded line around
-        // too would double-count it. Matched on account + exact amount + a several-day window
-        // against real posted transactions - deliberately not against other forecast lines
-        // (that's the unrelated-collision risk already guarded against above), so this can't
-        // be swept into anything else the way that original bug was.
+        // too would double-count it. Matched on a several-day window around the paid date,
+        // plus:
+        //  - CategoryId, for a debt/Amex-payment partial payment - its own AccountId is the
+        //    debt/Amex account itself, but the real payment always posts against the
+        //    checking account instead, tagged with that account's own payment category
+        //    (same reasoning as IsAlreadyReflectedInAnActualTransaction above - a real bug
+        //    found and fixed this session, confirmed against real data: the real posting
+        //    never shares an AccountId with the debt/Amex account it pays down).
+        //  - AccountId, as a fallback - a Direct-funded bill's partial payment already uses
+        //    the checking/funding account as its own AccountId (no separate debt/Amex
+        //    account in between), so account-based matching is already correct there.
+        // Amount is compared via Math.Abs - a real expense transaction is stored negative
+        // (this app's convention), while PartialPayment.Amount is always a positive
+        // magnitude - deliberately not matched against other forecast lines (that's the
+        // unrelated-collision risk already guarded against above), so this can't be swept
+        // into anything else the way that original bug was.
         var partialPaymentAccountIds = partialPayments.Select(p => p.AccountId).Distinct().ToList();
-        var realTransactionsForPartialPayments = partialPaymentAccountIds.Count == 0
+        var partialPaymentCategoryIds = partialPaymentAccountIds
+            .Select(id => accountPaymentCategoryIds.GetValueOrDefault(id))
+            .Where(id => id is not null)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToList();
+        var realTransactionsForPartialPayments = (partialPaymentAccountIds.Count == 0 && partialPaymentCategoryIds.Count == 0)
             ? []
             : await context.BankTransactions
-                .Where(t => partialPaymentAccountIds.Contains(t.AccountId) && t.PostedDate != null)
+                .Where(t => t.PostedDate != null
+                            && (partialPaymentAccountIds.Contains(t.AccountId)
+                                || (t.CategoryId != null && partialPaymentCategoryIds.Contains(t.CategoryId.Value))))
                 .ToListAsync(cancellationToken);
 
-        BankTransaction? FindRealPostingFor(PartialPayment partialPayment) =>
-            realTransactionsForPartialPayments.FirstOrDefault(t =>
-                t.AccountId == partialPayment.AccountId && t.Amount == partialPayment.Amount
+        BankTransaction? FindRealPostingFor(PartialPayment partialPayment)
+        {
+            var paymentCategoryId = accountPaymentCategoryIds.GetValueOrDefault(partialPayment.AccountId);
+            return realTransactionsForPartialPayments.FirstOrDefault(t =>
+                (paymentCategoryId is not null ? t.CategoryId == paymentCategoryId : t.AccountId == partialPayment.AccountId)
+                && Math.Abs(t.Amount) == partialPayment.Amount
                 && t.PostedDate is { } posted
                 && posted >= partialPayment.PaidDate.AddDays(-PartialPaymentMatchWindowDays)
                 && posted <= partialPayment.PaidDate.AddDays(PartialPaymentMatchWindowDays));
+        }
 
         var rows = new List<ForecastLedgerRow>();
         foreach (var line in lines)

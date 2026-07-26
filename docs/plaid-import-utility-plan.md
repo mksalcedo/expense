@@ -1,6 +1,12 @@
 # Plaid Transaction Import Utility (small, first slice)
 
-Status: **planned, starting now**. Written so an interrupted session can resume. See conversation history for the full backstory: SimpleFin's connection to Wells Fargo Checking silently lagged 3+ days behind real posted transactions; the real Wells Fargo site confirmed the gap; a direct Plaid pull (via `~/bin/plaid-cli`, Plaid's official CLI) proved current and complete for the same account. This is a deliberately small first step: a utility that imports and dedupes a manually-produced Plaid JSON export, nothing more yet (no scheduled sync, no Sync Now UI button, no `ImportRun` tracking) - those are explicit follow-ups once this core piece is proven.
+Status: **built and in use**. `PlaidTransactionImportService` (core logic, TDD) plus a real runnable console tool, `src/Expense.Importers.Plaid`, mirroring the existing `Expense.Importers.SimpleFin` project pattern. Run it with:
+```
+~/bin/plaid-cli transactions list --start-date <X> --end-date <Y> --json | dotnet run --project src/Expense.Importers.Plaid
+```
+Account mapping lives in `src/Expense.Importers.Plaid/plaid-account-map.json` (gitignored, real account IDs - copy from the committed `.example.json` template, same convention as SimpleFin's). Also writes a `CheckingBalanceSnapshot` from the same file's `available` balance (see below) - this was added as a second pass once it was discovered SimpleFin's balance figure was *also* stale by the exact amount of the missing transactions.
+
+See conversation history for the full backstory: SimpleFin's connection to Wells Fargo Checking silently lagged 3+ days behind real posted transactions; the real Wells Fargo site confirmed the gap; a direct Plaid pull (via `~/bin/plaid-cli`, Plaid's official CLI) proved current and complete for the same account.
 
 ## How the data gets here (already working, no code needed)
 

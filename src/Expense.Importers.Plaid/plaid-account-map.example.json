@@ -1,0 +1,4 @@
+{
+  "_comment": "Maps Plaid 'account_id' values (from the 'accounts' array in `plaid-cli transactions list --json` output) to local accounts.id primary keys. Copy to plaid-account-map.json (gitignored) and fill in with real values.",
+  "replace-with-real-plaid-account-id": 1
+}

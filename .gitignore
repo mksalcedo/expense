@@ -15,6 +15,7 @@ appsettings.*.local.json
 
 # Real account-id mapping reveals actual bank/institution relationships - local only
 src/Expense.Importers.SimpleFin/simplefin-account-map.json
+src/Expense.Importers.Plaid/plaid-account-map.json
 
 # Editors
 .idea/
