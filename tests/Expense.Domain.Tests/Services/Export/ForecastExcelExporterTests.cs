@@ -14,7 +14,12 @@ public class ForecastExcelExporterTests : DatabaseTestBase
 
     private async Task SeedCheckingBalanceAsync(decimal balance, DateOnly asOfDate)
     {
-        Context.CheckingBalanceSnapshots.Add(new CheckingBalanceSnapshot { AsOfDate = asOfDate, Balance = balance });
+        Context.CheckingBalanceSnapshots.Add(new CheckingBalanceSnapshot
+        {
+            AsOfDate = asOfDate,
+            AsOfTimestamp = asOfDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+            Balance = balance
+        });
         await Context.SaveChangesAsync();
     }
 

@@ -17,7 +17,7 @@ namespace Expense.Domain.Services.Ingestion.Plaid;
 public class PlaidTransactionImportService(DedupService dedup, CategorizationService categorization)
 {
     public async Task<ImportSummary> ImportAsync(
-        ExpenseDbContext context, string rawCliOutput, IReadOnlyDictionary<string, int> accountMap, DateOnly asOfDate,
+        ExpenseDbContext context, string rawCliOutput, IReadOnlyDictionary<string, int> accountMap, DateTimeOffset asOfTimestamp,
         CancellationToken cancellationToken = default)
     {
         var summary = new ImportSummary();
@@ -39,7 +39,12 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
                 continue;
             }
 
-            context.CheckingBalanceSnapshots.Add(new CheckingBalanceSnapshot { AsOfDate = asOfDate, Balance = accountInfo.Balances.Available.Value });
+            context.CheckingBalanceSnapshots.Add(new CheckingBalanceSnapshot
+            {
+                AsOfDate = DateOnly.FromDateTime(asOfTimestamp.UtcDateTime),
+                AsOfTimestamp = asOfTimestamp,
+                Balance = accountInfo.Balances.Available.Value
+            });
             summary.BalanceSnapshotsAdded++;
         }
 

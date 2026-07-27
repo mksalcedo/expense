@@ -124,6 +124,7 @@ public class SimpleFinImportServiceTests : DatabaseTestBase
 
         var snapshot = await Context.CheckingBalanceSnapshots.SingleAsync();
         Assert.Equal(6463.02m, snapshot.Balance);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1783980195), snapshot.AsOfTimestamp);
     }
 
     [Fact]

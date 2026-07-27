@@ -49,7 +49,8 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
         var nextAssumptionsRow = 2;
 
         var startingBalance = await context.CheckingBalanceSnapshots
-            .OrderByDescending(s => s.AsOfDate)
+            .OrderByDescending(s => s.AsOfTimestamp)
+            .ThenByDescending(s => s.Id)
             .Select(s => s.Balance)
             .FirstOrDefaultAsync(cancellationToken);
 

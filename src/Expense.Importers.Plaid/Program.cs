@@ -51,9 +51,8 @@ var options = new DbContextOptionsBuilder<ExpenseDbContext>()
 
 await using var context = new ExpenseDbContext(options);
 
-var asOfDate = DateOnly.FromDateTime(DateTime.Today);
 var service = new PlaidTransactionImportService(new DedupService(), new CategorizationService());
-var summary = await service.ImportAsync(context, rawCliOutput, accountMap, asOfDate);
+var summary = await service.ImportAsync(context, rawCliOutput, accountMap, DateTimeOffset.UtcNow);
 
 Console.WriteLine($"Transactions added: {summary.TransactionsAdded}");
 Console.WriteLine($"Duplicates skipped: {summary.DuplicatesSkipped}");

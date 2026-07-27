@@ -12,5 +12,6 @@ public class CheckingBalanceSnapshotConfiguration : IEntityTypeConfiguration<Che
         builder.HasKey(s => s.Id);
         builder.Property(s => s.Balance).HasColumnType("numeric(12,2)");
         builder.HasIndex(s => s.AsOfDate);
+        builder.HasIndex(s => s.AsOfTimestamp);
     }
 }

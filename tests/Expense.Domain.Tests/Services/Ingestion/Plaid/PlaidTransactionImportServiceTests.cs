@@ -33,7 +33,7 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
     {
         var account = await CreateCheckingAccountAsync();
 
-        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateOnly(2026, 7, 25));
+        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         Assert.Equal(2, summary.TransactionsAdded);
     }
@@ -43,7 +43,7 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
     {
         var account = await CreateCheckingAccountAsync();
 
-        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateOnly(2026, 7, 25));
+        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         var chipotle = await Context.BankTransactions.SingleAsync(t => t.Description == "Chipotle Mexican Grill");
         Assert.Equal(-33.87m, chipotle.Amount);
@@ -57,7 +57,7 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
     {
         var account = await CreateCheckingAccountAsync();
 
-        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateOnly(2026, 7, 25));
+        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         var chipotle = await Context.BankTransactions.SingleAsync(t => t.Description == "Chipotle Mexican Grill");
         Assert.Null(chipotle.PostedDate);
@@ -69,7 +69,7 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
     {
         var account = await CreateCheckingAccountAsync();
 
-        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateOnly(2026, 7, 25));
+        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         var payroll = await Context.BankTransactions.SingleAsync(t => t.Description.Contains("PAYROLL"));
         Assert.Equal(new DateOnly(2026, 7, 24), payroll.PostedDate);
@@ -80,7 +80,7 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
     {
         var account = await CreateCheckingAccountAsync();
 
-        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateOnly(2026, 7, 25));
+        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         var chipotle = await Context.BankTransactions.SingleAsync(t => t.Description == "Chipotle Mexican Grill");
         Assert.Equal("Plaid", chipotle.ImportSource);
@@ -97,8 +97,8 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         var accountMap = BuildAccountMap(account);
         var sut = CreateSut();
 
-        await sut.ImportAsync(Context, SampleCliOutput, accountMap, new DateOnly(2026, 7, 25));
-        var summary = await sut.ImportAsync(Context, SampleCliOutput, accountMap, new DateOnly(2026, 7, 25));
+        await sut.ImportAsync(Context, SampleCliOutput, accountMap, new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
+        var summary = await sut.ImportAsync(Context, SampleCliOutput, accountMap, new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         Assert.Equal(0, summary.TransactionsAdded);
         Assert.Equal(2, summary.DuplicatesSkipped);
@@ -120,7 +120,7 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         });
         await Context.SaveChangesAsync();
 
-        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateOnly(2026, 7, 25));
+        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         Assert.Equal(1, summary.TransactionsAdded); // only Chipotle is genuinely new
         Assert.Equal(1, summary.DuplicatesSkipped); // the payroll deposit is recognized as already present
@@ -130,7 +130,7 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
     [Fact]
     public async Task ImportAsync_UnmappedAccount_IsSkippedAndReported_NotACrash()
     {
-        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, new Dictionary<string, int>(), new DateOnly(2026, 7, 25));
+        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, new Dictionary<string, int>(), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         Assert.Equal(0, summary.TransactionsAdded);
         Assert.Contains("plaid-checking-1", summary.UnmappedAccounts);
@@ -146,7 +146,7 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "%CHIPOTLE%", CategoryId = restaurants.Id });
         await Context.SaveChangesAsync();
 
-        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateOnly(2026, 7, 25));
+        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         var chipotle = await Context.BankTransactions.SingleAsync(t => t.Description == "Chipotle Mexican Grill");
         Assert.Equal(restaurants.Id, chipotle.CategoryId);
@@ -159,10 +159,11 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         // what SimpleFin calls "balance" for this same account - not "current".
         var account = await CreateCheckingAccountAsync();
 
-        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateOnly(2026, 7, 25));
+        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         var snapshot = await Context.CheckingBalanceSnapshots.SingleAsync();
         Assert.Equal(new DateOnly(2026, 7, 25), snapshot.AsOfDate);
+        Assert.Equal(new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero), snapshot.AsOfTimestamp);
         Assert.Equal(5092.71m, snapshot.Balance);
         Assert.Equal(1, summary.BalanceSnapshotsAdded);
     }
@@ -174,7 +175,7 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         Context.Accounts.Add(account);
         await Context.SaveChangesAsync();
 
-        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateOnly(2026, 7, 25));
+        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
 
         Assert.Empty(await Context.CheckingBalanceSnapshots.ToListAsync());
         Assert.Equal(0, summary.BalanceSnapshotsAdded);

@@ -9,9 +9,14 @@ public class ForecastEngineTests : DatabaseTestBase
 {
     private readonly ForecastEngine _sut = new(new BudgetProrationService(), new RecurrenceExpander(), new AmexCycleCalculator());
 
-    private async Task SeedCheckingBalanceAsync(decimal balance, DateOnly asOfDate)
+    private async Task SeedCheckingBalanceAsync(decimal balance, DateOnly asOfDate, DateTimeOffset? asOfTimestamp = null)
     {
-        Context.CheckingBalanceSnapshots.Add(new CheckingBalanceSnapshot { AsOfDate = asOfDate, Balance = balance });
+        Context.CheckingBalanceSnapshots.Add(new CheckingBalanceSnapshot
+        {
+            AsOfDate = asOfDate,
+            AsOfTimestamp = asOfTimestamp ?? asOfDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+            Balance = balance
+        });
         await Context.SaveChangesAsync();
     }
 
@@ -27,14 +32,28 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task StartingBalance_MultipleSnapshotsOnTheSameDate_UsesTheMostRecentlyInsertedOne()
+    public async Task StartingBalance_MultipleSnapshotsOnTheSameDate_UsesTheOneWithTheLaterRealTimestamp()
     {
-        // Real bug this guards: two different sources (e.g. SimpleFin and a Plaid backup
-        // import) can both write a snapshot for the same calendar day - AsOfDate alone
-        // can't break the tie, so whichever was actually inserted most recently must win,
-        // not an arbitrary one.
-        await SeedCheckingBalanceAsync(4548.83m, new DateOnly(2026, 7, 24));
-        await SeedCheckingBalanceAsync(5092.71m, new DateOnly(2026, 7, 24)); // inserted later, more current
+        // Real bug this guards: two different sources (e.g. a stale SimpleFin sync and a
+        // more current Plaid backup import) can both write a snapshot for the same
+        // calendar day - AsOfDate alone can't break the tie. It must be decided by which
+        // one is genuinely more current (AsOfTimestamp), not by insertion order - e.g. a
+        // stale SimpleFin sync that happens to run *after* a fresh Plaid pull must not win
+        // just because it was inserted later.
+        await SeedCheckingBalanceAsync(5136.49m, new DateOnly(2026, 7, 25), new DateTimeOffset(2026, 7, 25, 20, 57, 0, TimeSpan.Zero)); // Plaid, fresher
+        await SeedCheckingBalanceAsync(4548.83m, new DateOnly(2026, 7, 25), new DateTimeOffset(2026, 7, 25, 6, 0, 0, TimeSpan.Zero)); // SimpleFin, stale, inserted later
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 26), new DateOnly(2026, 8, 10));
+
+        Assert.Equal(5136.49m, result.StartingBalance);
+    }
+
+    [Fact]
+    public async Task StartingBalance_TrueTie_SameDateAndSameTimestamp_UsesTheMostRecentlyInsertedOne()
+    {
+        var tiedTimestamp = new DateTimeOffset(2026, 7, 24, 12, 0, 0, TimeSpan.Zero);
+        await SeedCheckingBalanceAsync(4548.83m, new DateOnly(2026, 7, 24), tiedTimestamp);
+        await SeedCheckingBalanceAsync(5092.71m, new DateOnly(2026, 7, 24), tiedTimestamp); // inserted later
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 25), new DateOnly(2026, 8, 10));
 

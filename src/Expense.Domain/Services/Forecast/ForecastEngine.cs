@@ -30,11 +30,12 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         ExpenseDbContext context, DateOnly asOfDate, DateOnly windowEnd, CancellationToken cancellationToken = default)
     {
         // Two different sources (e.g. SimpleFin and a Plaid backup import) can both write
-        // a snapshot for the same calendar day - AsOfDate alone can't break that tie, so
-        // Id is an explicit secondary sort (highest = most recently inserted wins),
-        // rather than relying on whatever order the database happens to return ties in.
+        // a snapshot for the same calendar day - sort by the real AsOfTimestamp (not just
+        // AsOfDate) so the genuinely freshest data wins, e.g. a stale SimpleFin sync never
+        // beats a more current Plaid pull just because it happened to run later. Id stays
+        // as a final fallback only for a true same-instant tie.
         var startingBalance = await context.CheckingBalanceSnapshots
-            .OrderByDescending(s => s.AsOfDate)
+            .OrderByDescending(s => s.AsOfTimestamp)
             .ThenByDescending(s => s.Id)
             .Select(s => s.Balance)
             .FirstOrDefaultAsync(cancellationToken);

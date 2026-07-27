@@ -32,7 +32,8 @@ public class SimpleFinImportService(SimpleFinClient client, DedupService dedup, 
             }
 
             var localAccount = await context.Accounts.SingleAsync(a => a.Id == localAccountId, cancellationToken);
-            var balanceDate = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(simpleFinAccount.BalanceDateUnix).UtcDateTime);
+            var balanceTimestamp = DateTimeOffset.FromUnixTimeSeconds(simpleFinAccount.BalanceDateUnix);
+            var balanceDate = DateOnly.FromDateTime(balanceTimestamp.UtcDateTime);
 
             if (localAccount.Type == AccountType.Debt)
             {
@@ -51,6 +52,7 @@ public class SimpleFinImportService(SimpleFinClient client, DedupService dedup, 
                 context.CheckingBalanceSnapshots.Add(new CheckingBalanceSnapshot
                 {
                     AsOfDate = balanceDate,
+                    AsOfTimestamp = balanceTimestamp,
                     Balance = simpleFinAccount.Balance
                 });
                 summary.BalanceSnapshotsAdded++;
