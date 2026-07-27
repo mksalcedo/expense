@@ -144,6 +144,35 @@ public class SimpleFinImportServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task Import_ATransactionAlreadyImportedFromPlaid_IsSkipped_EvenWithADifferentExternalIdAndDescription()
+    {
+        // Real bug this guards: only the Plaid importer checked for a cross-source
+        // duplicate against SimpleFin - SimpleFin's own path never checked the reverse,
+        // so a transaction Plaid already added (e.g. while backfilling a stale SimpleFin
+        // connection) got re-added a second time once SimpleFin's regular sync caught up
+        // and reported the same real transaction under its own id/description. Confirmed
+        // against real production data (5 real duplicate transactions from 2026-07-24).
+        var (amex, discover) = await CreateAccountsAsync();
+        var postedDate = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(1783857600).UtcDateTime);
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = postedDate, PostedDate = postedDate,
+            Description = "Trader Joe's", Amount = -18.83m,
+            ImportSource = "Plaid", ExternalId = "plaid-own-id-999", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var sut = CreateSut(TwoAccountResponse);
+        var map = BuildAccountMap(amex, discover);
+
+        var summary = await sut.ImportAsync(Context, map, DateTimeOffset.UtcNow.AddDays(-45));
+
+        Assert.Equal(1, summary.TransactionsAdded); // only the Amazon one is genuinely new
+        Assert.Equal(1, summary.DuplicatesSkipped); // Trader Joe's recognized as already present
+        Assert.Equal(2, await Context.BankTransactions.CountAsync(t => t.AccountId == amex.Id)); // Trader Joe's (pre-seeded) + Amazon, not 3
+    }
+
+    [Fact]
     public async Task Import_UnmappedSimpleFinAccount_IsReportedByIdNotErrored()
     {
         var (amex, _) = await CreateAccountsAsync();

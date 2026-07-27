@@ -9,6 +9,10 @@
          Dashboard's "Sync Now" button reads the exact same account mapping. -->
     <None Include="..\Expense.Importers.SimpleFin\simplefin-account-map.json" Link="simplefin-account-map.json"
           CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\Expense.Importers.SimpleFin\simplefin-account-map.json')" />
+    <!-- Same source file the Plaid console importer uses, so the manual Plaid sync button
+         reads the exact same account mapping - see docs/plaid-import-utility-plan.md. -->
+    <None Include="..\Expense.Importers.Plaid\plaid-account-map.json" Link="plaid-account-map.json"
+          CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\Expense.Importers.Plaid\plaid-account-map.json')" />
   </ItemGroup>
 
   <PropertyGroup>

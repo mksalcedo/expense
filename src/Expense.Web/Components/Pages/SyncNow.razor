@@ -31,6 +31,25 @@
     }
     @RenderRecentRuns("amazon-recent-runs", _recentAmazonRuns, _recentAmazonRunsPage, _recentAmazonRunsTotalCount, RefreshRecentAmazonRunsAsync)
 </div>
+<div>
+    <h3>Plaid Backup Import</h3>
+    <p><em>Manual backup import for when SimpleFin's checking connection looks stale - see docs/plaid-import-utility-plan.md.</em></p>
+    <label>
+        Start date
+        <input id="plaid-start-date" type="date" value="@_plaidStartDate.ToString("yyyy-MM-dd")" @onchange="e => _plaidStartDate = DateOnly.Parse((string)e.Value!)" />
+    </label>
+    <label>
+        End date
+        <input id="plaid-end-date" type="date" value="@_plaidEndDate.ToString("yyyy-MM-dd")" @onchange="e => _plaidEndDate = DateOnly.Parse((string)e.Value!)" />
+    </label>
+    <button id="run-plaid-import-btn" @onclick="RunPlaidImportAsync" disabled="@_plaidRunning">
+        @(_plaidRunning ? "Running..." : "Run Plaid Import")
+    </button>
+    @if (_lastPlaidResult is { } plaidResult)
+    {
+        <p id="plaid-import-result" style="@(plaidResult.Success ? "" : "color: #b00020;")">@(plaidResult.Success ? plaidResult.Message : $"FAILED: {plaidResult.Message}")</p>
+    }
+</div>
 
 @if (_syncIssues.Count > 0)
 {
@@ -104,6 +123,10 @@
     private int _recentAmazonRunsPage = 1;
     private bool _historyDetailModalOpen;
     private List<SyncProgressLine> _historyDetailLines = [];
+    private DateOnly _plaidStartDate = DateOnly.FromDateTime(DateTime.Today).AddDays(-7);
+    private DateOnly _plaidEndDate = DateOnly.FromDateTime(DateTime.Today);
+    private bool _plaidRunning;
+    private PlaidImportResult? _lastPlaidResult;
 
     // How many past runs to show per page on this page - not user-configurable, same
     // spirit as the Dashboard's own fixed row counts elsewhere in this app.
@@ -166,6 +189,19 @@
         finally
         {
             _amazonRunning = false;
+        }
+    }
+
+    private async Task RunPlaidImportAsync()
+    {
+        _plaidRunning = true;
+        try
+        {
+            _lastPlaidResult = await SyncStatusProvider.RunPlaidImportAsync(_plaidStartDate, _plaidEndDate);
+        }
+        finally
+        {
+            _plaidRunning = false;
         }
     }
 

@@ -90,7 +90,18 @@ public class SimpleFinImportService(SimpleFinClient client, DedupService dedup, 
                     : DedupService.GenerateFingerprint(account.Id, postedDate, txn.Amount, txn.Description, occurrence);
             }
 
-            if (await dedup.ExistsAsync(context, account.Id, txn.Id, fingerprint))
+            var isDuplicate = await dedup.ExistsAsync(context, account.Id, txn.Id, fingerprint);
+            if (!isDuplicate)
+            {
+                // Cross-source check - catches this same real transaction already having
+                // been imported via Plaid (e.g. a stale-SimpleFin backfill) under a
+                // different id/description. Mirrors the equivalent check already applied
+                // on the Plaid importer's own path - this was the missing, one-directional
+                // half of it (see PlaidTransactionImportService.ImportAsync).
+                isDuplicate = await dedup.ExistsForAccountDateAmountAsync(context, account.Id, postedDate, txn.Amount);
+            }
+
+            if (isDuplicate)
             {
                 summary.DuplicatesSkipped++;
                 continue;

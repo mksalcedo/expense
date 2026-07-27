@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
@@ -5,6 +6,7 @@ using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Forecast;
 using Expense.Domain.Services.Ingestion;
 using Expense.Domain.Services.Ingestion.Amazon;
+using Expense.Domain.Services.Ingestion.Plaid;
 using Expense.Domain.Services.Ingestion.SimpleFin;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -23,6 +25,7 @@ public class SyncStatusProvider(
     SimpleFinSyncService simpleFinSync,
     AmazonImportService amazonImportService,
     CategorizationService categorization,
+    DedupService dedup,
     IConfiguration configuration,
     SyncIssueService syncIssues,
     IForecastResultProvider forecastResultProvider,
@@ -84,6 +87,83 @@ public class SyncStatusProvider(
         var result = await syncService.RunAsync(context, onProgress, cancellationToken);
         await CaptureForecastSnapshotAsync(cancellationToken);
         return result.Run;
+    }
+
+    // Manual, on-demand only (see docs/plaid-import-utility-plan.md) - deliberately not
+    // wired into ImportRun/progress-log tracking like the other two sources, since this is
+    // still just a backup tool being evaluated, not a scheduled sync. Shells out to the
+    // real plaid-cli (already linked to the user's own Plaid account) exactly the way the
+    // console importer's usage instructions already describe running it by hand.
+    public async Task<PlaidImportResult> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default)
+    {
+        var plaidCliPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "bin", "plaid-cli");
+        if (!File.Exists(plaidCliPath))
+        {
+            return new PlaidImportResult(false, $"plaid-cli not found at {plaidCliPath}.");
+        }
+
+        var accountMapPath = Path.Combine(AppContext.BaseDirectory, "plaid-account-map.json");
+        if (!File.Exists(accountMapPath))
+        {
+            return new PlaidImportResult(false, $"No account map found at {accountMapPath} - copy plaid-account-map.example.json and fill in real account IDs.");
+        }
+
+        var accountMap = JsonSerializer.Deserialize<Dictionary<string, int>>(await File.ReadAllTextAsync(accountMapPath, cancellationToken)) ?? [];
+
+        var startInfo = new ProcessStartInfo(plaidCliPath)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        startInfo.ArgumentList.Add("transactions");
+        startInfo.ArgumentList.Add("list");
+        startInfo.ArgumentList.Add("--start-date");
+        startInfo.ArgumentList.Add(startDate.ToString("yyyy-MM-dd"));
+        startInfo.ArgumentList.Add("--end-date");
+        startInfo.ArgumentList.Add(endDate.ToString("yyyy-MM-dd"));
+        // Required once more than one item is linked (e.g. checking + Amex) - plaid-cli
+        // otherwise refuses to run at all, asking which single item to query. Pulling
+        // every linked item in one call is fine here since accountMap already routes each
+        // transaction to the right local account regardless of which item it came from.
+        startInfo.ArgumentList.Add("--all");
+        startInfo.ArgumentList.Add("--json");
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            return new PlaidImportResult(false, "Failed to start plaid-cli.");
+        }
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+
+        if (process.ExitCode != 0)
+        {
+            return new PlaidImportResult(false, $"plaid-cli exited with code {process.ExitCode}: {stderr}");
+        }
+
+        try
+        {
+            await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var service = new PlaidTransactionImportService(dedup, categorization);
+            var summary = await service.ImportAsync(context, stdout, accountMap, DateTimeOffset.UtcNow, cancellationToken);
+            await CaptureForecastSnapshotAsync(cancellationToken);
+
+            return new PlaidImportResult(true,
+                $"Transactions added: {summary.TransactionsAdded}, duplicates skipped: {summary.DuplicatesSkipped}, balance snapshots added: {summary.BalanceSnapshotsAdded}");
+        }
+        catch (Exception ex)
+        {
+            // A raw exception here would otherwise crash the whole Blazor circuit (see the
+            // real "no transactions array" parse failure this guarded against) instead of
+            // just showing an error on this one page - same friendly-failure shape as the
+            // other early-return cases above.
+            return new PlaidImportResult(false, $"Import failed: {ex.Message}");
+        }
     }
 
     public async Task<RecentRunsPage> GetRecentRunsAsync(ImportSource source, int page, int pageSize, CancellationToken cancellationToken = default)

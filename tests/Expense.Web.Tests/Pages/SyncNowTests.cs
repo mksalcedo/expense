@@ -43,6 +43,19 @@ public class SyncNowTests : BunitContext
             return NextAmazonGmailRunResult;
         }
 
+        public int PlaidImportCount { get; private set; }
+        public DateOnly? LastPlaidStartDate { get; private set; }
+        public DateOnly? LastPlaidEndDate { get; private set; }
+        public PlaidImportResult NextPlaidImportResult { get; set; } = new(true, "Transactions added: 0, duplicates skipped: 0, balance snapshots added: 1");
+
+        public Task<PlaidImportResult> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default)
+        {
+            PlaidImportCount++;
+            LastPlaidStartDate = startDate;
+            LastPlaidEndDate = endDate;
+            return Task.FromResult(NextPlaidImportResult);
+        }
+
         public Dictionary<ImportSource, List<ImportRun>> RecentRuns { get; set; } = new()
         {
             [ImportSource.SimpleFin] = [],
@@ -479,6 +492,82 @@ public class SyncNowTests : BunitContext
         cut.Find("#close-run-detail-modal-btn").Click();
 
         Assert.Empty(cut.FindAll("#run-detail-modal"));
+    }
+
+    [Fact]
+    public void PlaidImportSection_IsNotLabeledAsCheckingOnly_NowThatItCanCoverMultipleAccounts()
+    {
+        RegisterFakes();
+
+        var cut = Render<SyncNow>();
+
+        Assert.DoesNotContain("(Checking)", cut.Markup);
+    }
+
+    [Fact]
+    public void PlaidImport_DefaultsToTheLastSevenDaysThroughToday()
+    {
+        RegisterFakes();
+
+        var cut = Render<SyncNow>();
+
+        var expectedStart = DateOnly.FromDateTime(DateTime.Today).AddDays(-7).ToString("yyyy-MM-dd");
+        var expectedEnd = DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd");
+        Assert.Equal(expectedStart, cut.Find("#plaid-start-date").GetAttribute("value"));
+        Assert.Equal(expectedEnd, cut.Find("#plaid-end-date").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void ClickingRunPlaidImport_PassesTheEnteredDatesToTheProvider()
+    {
+        var fake = RegisterFakes();
+        var cut = Render<SyncNow>();
+
+        cut.Find("#plaid-start-date").Change("2026-07-15");
+        cut.Find("#plaid-end-date").Change("2026-07-20");
+        cut.Find("#run-plaid-import-btn").Click();
+
+        Assert.Equal(1, fake.PlaidImportCount);
+        Assert.Equal(new DateOnly(2026, 7, 15), fake.LastPlaidStartDate);
+        Assert.Equal(new DateOnly(2026, 7, 20), fake.LastPlaidEndDate);
+    }
+
+    [Fact]
+    public void PlaidImport_OnSuccess_ShowsTheResultSummary()
+    {
+        var fake = RegisterFakes();
+        fake.NextPlaidImportResult = new PlaidImportResult(true, "Transactions added: 3, duplicates skipped: 12, balance snapshots added: 1");
+        var cut = Render<SyncNow>();
+
+        cut.Find("#run-plaid-import-btn").Click();
+
+        var result = cut.Find("#plaid-import-result");
+        Assert.Contains("Transactions added: 3", result.TextContent);
+        Assert.DoesNotContain("FAILED", result.TextContent);
+    }
+
+    [Fact]
+    public void PlaidImport_OnFailure_ShowsTheErrorClearly()
+    {
+        var fake = RegisterFakes();
+        fake.NextPlaidImportResult = new PlaidImportResult(false, "plaid-cli not found at /home/user/bin/plaid-cli.");
+        var cut = Render<SyncNow>();
+
+        cut.Find("#run-plaid-import-btn").Click();
+
+        Assert.Contains("FAILED: plaid-cli not found", cut.Find("#plaid-import-result").TextContent);
+    }
+
+    [Fact]
+    public void ClickingRunPlaidImport_DoesNotAffectSimpleFinOrAmazonRunCounts()
+    {
+        var fake = RegisterFakes();
+        var cut = Render<SyncNow>();
+
+        cut.Find("#run-plaid-import-btn").Click();
+
+        Assert.Equal(0, fake.SimpleFinRunCount);
+        Assert.Equal(0, fake.AmazonGmailRunCount);
     }
 
     [Fact]

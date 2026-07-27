@@ -28,6 +28,23 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
 
     private static Dictionary<string, int> BuildAccountMap(Account account) => new() { ["plaid-checking-1"] = account.Id };
 
+    // Real shape of `plaid-cli transactions list --all --json` once more than one item is
+    // linked - captured directly from real output, not guessed. No top-level "accounts"/
+    // "transactions" at all - each linked item nests its own, inside a top-level "items"
+    // array. Trimmed to one transaction per item for readability.
+    private const string SampleAllItemsCliOutput = """
+    {"diagnostic":{"code":"FETCHING_TRANSACTIONS","end_date":"2026-07-27","level":"info","message":"Fetching transactions...","start_date":"2026-07-20"}}
+    {"items":[{"item":{"item_id":"item-checking","institution_id":"ins_127991"},"accounts":[{"account_id":"plaid-checking-1","balances":{"available":4959.63,"current":5136.49}}],"transactions":[{"transaction_id":"txn-checking-1","account_id":"plaid-checking-1","amount":58.83,"date":"2026-07-26","name":"Teds Montana","merchant_name":"Teds Montana","pending":false}],"total_transactions":1},{"item":{"item_id":"item-amex","institution_id":"ins_10"},"accounts":[{"account_id":"plaid-amex-1","balances":{"available":0,"current":45635.21}}],"transactions":[{"transaction_id":"txn-amex-1","account_id":"plaid-amex-1","amount":55.63,"date":"2026-07-25","name":"INGLES MARKETS #474","merchant_name":"Ingles Markets","pending":false}],"total_transactions":1}]}
+    """;
+
+    private async Task<Account> CreateAmexAccountAsync()
+    {
+        var account = new Account { Name = "Amex", Type = AccountType.ActiveSpending };
+        Context.Accounts.Add(account);
+        await Context.SaveChangesAsync();
+        return account;
+    }
+
     [Fact]
     public async Task ImportAsync_ParsesThePayloadLine_IgnoringTheDiagnosticLine()
     {
@@ -166,6 +183,38 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         Assert.Equal(new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero), snapshot.AsOfTimestamp);
         Assert.Equal(5092.71m, snapshot.Balance);
         Assert.Equal(1, summary.BalanceSnapshotsAdded);
+    }
+
+    [Fact]
+    public async Task ImportAsync_AllItemsShape_ImportsTransactionsFromEveryLinkedItem_NotJustTheFirst()
+    {
+        // Real bug this guards: `--all` output nests each item's transactions inside a
+        // top-level "items" array instead of a top-level "transactions" property - a
+        // parser that only ever looks for a top-level "transactions" property throws
+        // instead of finding either item's data at all.
+        var checking = await CreateCheckingAccountAsync();
+        var amex = await CreateAmexAccountAsync();
+        var accountMap = new Dictionary<string, int> { ["plaid-checking-1"] = checking.Id, ["plaid-amex-1"] = amex.Id };
+
+        var summary = await CreateSut().ImportAsync(Context, SampleAllItemsCliOutput, accountMap, new DateTimeOffset(2026, 7, 27, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(2, summary.TransactionsAdded);
+        Assert.NotNull(await Context.BankTransactions.SingleOrDefaultAsync(t => t.Description == "Teds Montana" && t.AccountId == checking.Id));
+        Assert.NotNull(await Context.BankTransactions.SingleOrDefaultAsync(t => t.Merchant == "Ingles Markets" && t.AccountId == amex.Id));
+    }
+
+    [Fact]
+    public async Task ImportAsync_AllItemsShape_OnlyChecking_GetsABalanceSnapshot_AmexDoesNot()
+    {
+        var checking = await CreateCheckingAccountAsync();
+        var amex = await CreateAmexAccountAsync();
+        var accountMap = new Dictionary<string, int> { ["plaid-checking-1"] = checking.Id, ["plaid-amex-1"] = amex.Id };
+
+        var summary = await CreateSut().ImportAsync(Context, SampleAllItemsCliOutput, accountMap, new DateTimeOffset(2026, 7, 27, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(1, summary.BalanceSnapshotsAdded);
+        var snapshot = await Context.CheckingBalanceSnapshots.SingleAsync();
+        Assert.Equal(4959.63m, snapshot.Balance);
     }
 
     [Fact]

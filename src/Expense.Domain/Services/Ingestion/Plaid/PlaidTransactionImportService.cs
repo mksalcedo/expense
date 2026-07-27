@@ -105,6 +105,22 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
         foreach (var line in rawCliOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             using var doc = JsonDocument.Parse(line);
+
+            // --all output (more than one linked item) has no top-level "accounts"/
+            // "transactions" at all - each item nests its own inside a top-level "items"
+            // array instead. Flatten into the same shape single-item output already uses,
+            // so the rest of ImportAsync never needs to know which one it got.
+            if (doc.RootElement.TryGetProperty("items", out _))
+            {
+                var envelope = JsonSerializer.Deserialize<PlaidAllItemsPayload>(line)
+                    ?? throw new InvalidOperationException("Plaid CLI --all transactions payload line failed to deserialize.");
+                return new PlaidTransactionsPayload
+                {
+                    Accounts = envelope.Items.SelectMany(i => i.Accounts).ToList(),
+                    Transactions = envelope.Items.SelectMany(i => i.Transactions).ToList()
+                };
+            }
+
             if (doc.RootElement.TryGetProperty("transactions", out _))
             {
                 return JsonSerializer.Deserialize<PlaidTransactionsPayload>(line)

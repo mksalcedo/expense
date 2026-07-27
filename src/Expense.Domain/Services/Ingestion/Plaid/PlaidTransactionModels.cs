@@ -11,6 +11,20 @@ public class PlaidTransactionsPayload
     public List<PlaidTransaction> Transactions { get; set; } = [];
 }
 
+/// <summary>
+/// The real shape of `plaid-cli transactions list --all --json` once more than one item
+/// is linked - confirmed directly against real output, not guessed. Unlike the single-item
+/// shape, there's no top-level "accounts"/"transactions" at all - each linked item gets its
+/// own nested object (same accounts/transactions shape as PlaidTransactionsPayload) inside
+/// a top-level "items" array. Flattened into one PlaidTransactionsPayload at parse time so
+/// the rest of the import logic never needs to know which shape it came from.
+/// </summary>
+public class PlaidAllItemsPayload
+{
+    [JsonPropertyName("items")]
+    public List<PlaidTransactionsPayload> Items { get; set; } = [];
+}
+
 public class PlaidAccountInfo
 {
     [JsonPropertyName("account_id")]
