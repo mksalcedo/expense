@@ -144,6 +144,79 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         Assert.Equal(1, await Context.BankTransactions.CountAsync(t => t.Description.Contains("PAYROLL")));
     }
 
+    // Real scenario this guards (found live 2026-07-28): Plaid doesn't update a pending
+    // transaction in place when it posts - it issues a brand new transaction_id and links
+    // back to the original one via pending_transaction_id. Neither existing dedup check
+    // catches this: ExternalId legitimately differs, and the cross-source posted-date+amount
+    // check requires the existing row to already have a real PostedDate, which the pending
+    // row doesn't have yet.
+    private const string PendingChatGptCliOutput = """
+    {"diagnostic":{"code":"FETCHING_TRANSACTIONS","end_date":"2026-07-27","level":"info","message":"Fetching transactions...","start_date":"2026-07-20"}}
+    {"accounts":[{"account_id":"plaid-checking-1","balances":{"available":5092.71,"current":5136.49}}],"total_transactions":1,"transactions":[{"transaction_id":"txn-chatgpt-pending","account_id":"plaid-checking-1","amount":20.00,"date":"2026-07-27","name":"CHATGPT","merchant_name":"OpenAI","pending":true}]}
+    """;
+
+    private const string PostedChatGptCliOutput = """
+    {"diagnostic":{"code":"FETCHING_TRANSACTIONS","end_date":"2026-07-28","level":"info","message":"Fetching transactions...","start_date":"2026-07-20"}}
+    {"accounts":[{"account_id":"plaid-checking-1","balances":{"available":5072.71,"current":5116.49}}],"total_transactions":1,"transactions":[{"transaction_id":"txn-chatgpt-posted","account_id":"plaid-checking-1","amount":20.00,"date":"2026-07-27","name":"OPENAI *CHATGPT SUBSSAN FRANCISCO","merchant_name":"OpenAI","pending":false,"pending_transaction_id":"txn-chatgpt-pending"}]}
+    """;
+
+    [Fact]
+    public async Task ImportAsync_PostedTransactionReferencingAPendingId_UpdatesTheExistingRow_InsteadOfInsertingADuplicate()
+    {
+        var account = await CreateCheckingAccountAsync();
+        var accountMap = BuildAccountMap(account);
+        var sut = CreateSut();
+        await sut.ImportAsync(Context, PendingChatGptCliOutput, accountMap, new DateTimeOffset(2026, 7, 27, 12, 0, 0, TimeSpan.Zero));
+
+        var summary = await sut.ImportAsync(Context, PostedChatGptCliOutput, accountMap, new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(1, await Context.BankTransactions.CountAsync());
+        Assert.Equal(0, summary.TransactionsAdded);
+        Assert.Equal(0, summary.DuplicatesSkipped);
+        Assert.Equal(1, summary.PendingTransactionsUpdated);
+
+        var merged = await Context.BankTransactions.SingleAsync();
+        Assert.Equal(new DateOnly(2026, 7, 27), merged.PostedDate);
+        Assert.Equal("OPENAI *CHATGPT SUBSSAN FRANCISCO", merged.Description);
+        Assert.Equal("txn-chatgpt-posted", merged.ExternalId);
+    }
+
+    [Fact]
+    public async Task ImportAsync_MergingAPostedTransactionIntoItsPendingRow_PreservesTheExistingCategoryId()
+    {
+        var account = await CreateCheckingAccountAsync();
+        var accountMap = BuildAccountMap(account);
+        var category = new Category { Name = "Subscriptions" };
+        Context.Categories.Add(category);
+        await Context.SaveChangesAsync();
+        var sut = CreateSut();
+        await sut.ImportAsync(Context, PendingChatGptCliOutput, accountMap, new DateTimeOffset(2026, 7, 27, 12, 0, 0, TimeSpan.Zero));
+        var pending = await Context.BankTransactions.SingleAsync();
+        pending.CategoryId = category.Id;
+        await Context.SaveChangesAsync();
+
+        await sut.ImportAsync(Context, PostedChatGptCliOutput, accountMap, new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.Zero));
+
+        var merged = await Context.BankTransactions.SingleAsync();
+        Assert.Equal(category.Id, merged.CategoryId);
+    }
+
+    [Fact]
+    public async Task ImportAsync_PostedTransactionReferencingAPendingId_ButNoMatchingRowExists_ImportsNormally()
+    {
+        // The pending version may never have been imported (e.g. outside a previous
+        // import's date window) - pending_transaction_id pointing at nothing local must
+        // not crash, just fall through to a normal insert.
+        var account = await CreateCheckingAccountAsync();
+        var accountMap = BuildAccountMap(account);
+
+        var summary = await CreateSut().ImportAsync(Context, PostedChatGptCliOutput, accountMap, new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(1, summary.TransactionsAdded);
+        Assert.Equal(0, summary.PendingTransactionsUpdated);
+        Assert.Equal(1, await Context.BankTransactions.CountAsync());
+    }
+
     [Fact]
     public async Task ImportAsync_UnmappedAccount_IsSkippedAndReported_NotACrash()
     {

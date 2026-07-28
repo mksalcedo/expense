@@ -72,4 +72,13 @@ public class PlaidTransaction
 
     [JsonPropertyName("pending")]
     public bool Pending { get; set; }
+
+    /// <summary>
+    /// Set on a posted transaction that originated from a pending one - Plaid never
+    /// updates the pending transaction in place, it issues a brand new transaction_id and
+    /// links back to the original via this field. Used to merge the posted version into
+    /// the existing local row instead of inserting a duplicate.
+    /// </summary>
+    [JsonPropertyName("pending_transaction_id")]
+    public string? PendingTransactionId { get; set; }
 }

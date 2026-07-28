@@ -62,6 +62,28 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
             var amount = -txn.Amount;
             var postedDate = txn.Pending ? (DateOnly?)null : txn.Date;
 
+            // Plaid never updates a pending transaction in place when it posts - it issues
+            // a brand new transaction_id and links back to the original via
+            // pending_transaction_id. Merge into the existing row (preserving whatever
+            // category it already has) instead of inserting a second one; ExternalId-based
+            // dedup can't catch this since the ids legitimately differ, and the posted-date
+            // cross-check can't either since the existing row's PostedDate is still null.
+            if (!txn.Pending && txn.PendingTransactionId is not null)
+            {
+                var pendingRow = await context.BankTransactions.SingleOrDefaultAsync(
+                    t => t.AccountId == localAccountId && t.ExternalId == txn.PendingTransactionId, cancellationToken);
+                if (pendingRow is not null)
+                {
+                    pendingRow.PostedDate = postedDate;
+                    pendingRow.Description = txn.Name;
+                    pendingRow.Merchant = txn.MerchantName;
+                    pendingRow.Amount = amount;
+                    pendingRow.ExternalId = txn.TransactionId;
+                    summary.PendingTransactionsUpdated++;
+                    continue;
+                }
+            }
+
             var isDuplicate = await dedup.ExistsAsync(context, localAccountId, externalId: txn.TransactionId, fingerprint: null);
             if (!isDuplicate && postedDate is not null)
             {
