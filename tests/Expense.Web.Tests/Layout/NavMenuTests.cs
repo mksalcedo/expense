@@ -124,38 +124,38 @@ public class NavMenuTests : BunitContext
     }
 
     [Fact]
-    public void NavMenu_HasASyncNowLink()
+    public void NavMenu_HasAnImportDataLink()
     {
         RegisterFakes();
 
         var cut = Render<NavMenu>();
 
-        var link = cut.Find("#nav-sync-now-link");
-        Assert.Equal("sync-now", link.GetAttribute("href"));
+        var link = cut.Find("#nav-import-data-link");
+        Assert.Equal("import-data", link.GetAttribute("href"));
     }
 
     [Fact]
-    public void SyncNowLink_HasNoFailureSuffix_WhenBothLastSyncsSucceededOrNeverRan()
+    public void ImportDataLink_HasNoFailureSuffix_WhenBothLastSyncsSucceededOrNeverRan()
     {
         RegisterFakes(lastSimpleFinRun: new ImportRun { Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true });
 
         var cut = Render<NavMenu>();
 
-        Assert.Equal("Sync Now", cut.Find("#nav-sync-now-link").TextContent.Trim());
+        Assert.Equal("Import Data", cut.Find("#nav-import-data-link").TextContent.Trim());
     }
 
     [Fact]
-    public void SyncNowLink_ShowsSingularFailureSuffix_WhenExactlyOneSourceFailed()
+    public void ImportDataLink_ShowsSingularFailureSuffix_WhenExactlyOneSourceFailed()
     {
         RegisterFakes(lastSimpleFinRun: new ImportRun { Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = false, ErrorMessage = "connection timed out" });
 
         var cut = Render<NavMenu>();
 
-        Assert.Equal("Sync Now (1 sync failed)", cut.Find("#nav-sync-now-link").TextContent.Trim());
+        Assert.Equal("Import Data (1 sync failed)", cut.Find("#nav-import-data-link").TextContent.Trim());
     }
 
     [Fact]
-    public void SyncNowLink_ShowsPluralFailureSuffix_WhenBothSourcesFailed()
+    public void ImportDataLink_ShowsPluralFailureSuffix_WhenBothSourcesFailed()
     {
         RegisterFakes(
             lastSimpleFinRun: new ImportRun { Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = false, ErrorMessage = "connection timed out" },
@@ -163,6 +163,18 @@ public class NavMenuTests : BunitContext
 
         var cut = Render<NavMenu>();
 
-        Assert.Equal("Sync Now (2 syncs failed)", cut.Find("#nav-sync-now-link").TextContent.Trim());
+        Assert.Equal("Import Data (2 syncs failed)", cut.Find("#nav-import-data-link").TextContent.Trim());
+    }
+
+    [Fact]
+    public void NavMenu_HasABackupDataLink()
+    {
+        RegisterFakes();
+
+        var cut = Render<NavMenu>();
+
+        var link = cut.Find("#nav-backup-data-link");
+        Assert.Equal("backup-data", link.GetAttribute("href"));
+        Assert.Equal("Backup Data", link.TextContent.Trim());
     }
 }

@@ -1,12 +1,12 @@
-@page "/sync-now"
+@page "/import-data"
 @using Expense.Domain.Entities
 @using Expense.Domain.Services.Dashboard
 @using Expense.Domain.Services.Ingestion.Amazon
 @inject ISyncStatusProvider SyncStatusProvider
 
-<PageTitle>Sync Now</PageTitle>
+<PageTitle>Import Data</PageTitle>
 
-<h1>Sync Now</h1>
+<h1>Import Data</h1>
 
 <div>
     <button id="sync-simplefin-btn" @onclick="RunSimpleFinSyncAsync" disabled="@_simpleFinRunning">

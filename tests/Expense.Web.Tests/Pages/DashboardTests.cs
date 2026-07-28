@@ -31,7 +31,7 @@ public class DashboardTests : BunitContext
     }
 
     // Only Dashboard.razor's narrow "did the last sync fail" read is exercised here - the
-    // full sync UI (buttons, modal, issues) lives on Sync Now and is tested there instead.
+    // full sync UI (buttons, modal, issues) lives on Import Data and is tested there instead.
     private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null) : ISyncStatusProvider
     {
         public Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastSimpleFinRun);
@@ -236,7 +236,7 @@ public class DashboardTests : BunitContext
     public void Dashboard_LinksToItsOwnDetailPages()
     {
         // Only the pages this dashboard summarizes get their own "drill in" link here -
-        // every other page (Categories, Budgets, Accounts, Review Queue, Sync Now, etc.) is
+        // every other page (Categories, Budgets, Accounts, Review Queue, Import Data, etc.) is
         // reachable from the navigation menu now.
         RegisterFakes();
 
@@ -257,14 +257,14 @@ public class DashboardTests : BunitContext
     }
 
     [Fact]
-    public void Dashboard_DoesNotShowReviewQueueOrSyncNow_TheyHaveTheirOwnPagesNow()
+    public void Dashboard_DoesNotShowReviewQueueOrImportData_TheyHaveTheirOwnPagesNow()
     {
         RegisterFakes();
 
         var cut = Render<Dashboard>();
 
         Assert.DoesNotContain("Review Queue", cut.Markup);
-        Assert.DoesNotContain("Sync Now", cut.Markup);
+        Assert.DoesNotContain("Import Data", cut.Markup);
         Assert.Empty(cut.FindAll("#sync-simplefin-btn"));
         Assert.Empty(cut.FindAll("#sync-amazon-btn"));
     }

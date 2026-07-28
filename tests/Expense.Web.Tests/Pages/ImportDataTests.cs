@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Expense.Web.Tests.Pages;
 
-public class SyncNowTests : BunitContext
+public class ImportDataTests : BunitContext
 {
     private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null) : ISyncStatusProvider
     {
@@ -109,7 +109,7 @@ public class SyncNowTests : BunitContext
     {
         RegisterFakes();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         var button = cut.Find("#sync-amazon-btn");
         Assert.Contains("Amazon", button.TextContent);
@@ -121,7 +121,7 @@ public class SyncNowTests : BunitContext
     {
         RegisterFakes();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         Assert.Contains("Last synced: never", cut.Find("#sync-simplefin-status").TextContent);
         Assert.Contains("Last synced: never", cut.Find("#sync-amazon-status").TextContent);
@@ -136,7 +136,7 @@ public class SyncNowTests : BunitContext
         };
         RegisterFakes(lastSimpleFinRun: lastRun);
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         Assert.Contains("Last synced:", cut.Find("#sync-simplefin-status").TextContent);
         Assert.DoesNotContain("FAILED", cut.Find("#sync-simplefin-status").TextContent);
@@ -151,7 +151,7 @@ public class SyncNowTests : BunitContext
         };
         RegisterFakes(lastAmazonRun: failedRun);
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         Assert.Contains("FAILED: Gmail OAuth token expired", cut.Find("#sync-amazon-status").TextContent);
     }
@@ -166,7 +166,7 @@ public class SyncNowTests : BunitContext
             Summary = "Transactions added: 5, duplicates skipped: 0, balance snapshots added: 2"
         };
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
         cut.Find("#sync-simplefin-btn").Click();
 
         Assert.Equal(1, fake.SimpleFinRunCount);
@@ -179,7 +179,7 @@ public class SyncNowTests : BunitContext
     {
         var fake = RegisterFakes();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
         cut.Find("#sync-amazon-btn").Click();
 
         Assert.Equal(1, fake.AmazonGmailRunCount);
@@ -191,7 +191,7 @@ public class SyncNowTests : BunitContext
     {
         RegisterFakes();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         Assert.Empty(cut.FindAll("#amazon-sync-modal"));
     }
@@ -205,7 +205,7 @@ public class SyncNowTests : BunitContext
             new SyncProgressLine("Found 1 order confirmation email(s) to check."),
             new SyncProgressLine("[2026-07-18] \"Your order\"\n--- Email body ---\nOrder #\n113-TEST\n--- Result ---\nAdded: Widget - $9.99 x1")
         ];
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#sync-amazon-btn").Click();
 
@@ -221,7 +221,7 @@ public class SyncNowTests : BunitContext
     {
         var fake = RegisterFakes();
         fake.ProgressLinesToReport = [new SyncProgressLine("FAILED: could not parse", IsError: true)];
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#sync-amazon-btn").Click();
 
@@ -234,7 +234,7 @@ public class SyncNowTests : BunitContext
     {
         var fake = RegisterFakes();
         fake.RunGate = new TaskCompletionSource();
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#sync-amazon-btn").Click();
 
@@ -248,7 +248,7 @@ public class SyncNowTests : BunitContext
     {
         RegisterFakes();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
         cut.Find("#sync-amazon-btn").Click();
 
         Assert.NotNull(cut.Find("#close-amazon-sync-modal-btn"));
@@ -258,7 +258,7 @@ public class SyncNowTests : BunitContext
     public void ClosingTheAmazonSyncModal_HidesIt()
     {
         RegisterFakes();
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
         cut.Find("#sync-amazon-btn").Click();
 
         cut.Find("#close-amazon-sync-modal-btn").Click();
@@ -270,7 +270,7 @@ public class SyncNowTests : BunitContext
     public void ClickingSimpleFinSync_DoesNotOpenTheAmazonModal()
     {
         RegisterFakes();
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#sync-simplefin-btn").Click();
 
@@ -287,7 +287,7 @@ public class SyncNowTests : BunitContext
         };
         RegisterFakes(lastAmazonRun: lastAmazonRun);
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         Assert.Contains("2 email(s) failed to parse", cut.Markup);
     }
@@ -297,7 +297,7 @@ public class SyncNowTests : BunitContext
     {
         RegisterFakes();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         Assert.Empty(cut.FindAll("#sync-issues-section"));
     }
@@ -316,7 +316,7 @@ public class SyncNowTests : BunitContext
         };
         RegisterFakes(activeSyncIssues: issues);
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         var section = cut.Find("#sync-issues-section");
         Assert.Contains("1", section.TextContent);
@@ -334,7 +334,7 @@ public class SyncNowTests : BunitContext
             new() { Id = 1, Source = ImportSource.AmazonGmail, MessageId = "msg-1", Subject = "Ordered: 2 Nutrition items", Reason = "could not find any items", ReceivedDate = new DateOnly(2026, 7, 18), CreatedAt = DateTimeOffset.UtcNow }
         };
         var fake = RegisterFakes(activeSyncIssues: issues);
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#resolve-order-id-1").Change("113-3763507-4662613");
         cut.Find("#resolve-item-title-1").Change("Some Supplement");
@@ -357,7 +357,7 @@ public class SyncNowTests : BunitContext
             new() { Id = 1, Source = ImportSource.AmazonGmail, MessageId = "msg-1", Subject = "An Amazon Gift Card you sent was received", Reason = "could not find an 'Order #' line", ReceivedDate = new DateOnly(2026, 7, 18), CreatedAt = DateTimeOffset.UtcNow }
         };
         RegisterFakes(activeSyncIssues: issues);
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#ignore-not-order-btn-1").Click();
 
@@ -374,7 +374,7 @@ public class SyncNowTests : BunitContext
             new ImportRun { Id = 1, Source = ImportSource.SimpleFin, RanAt = new DateTimeOffset(2026, 7, 22, 6, 0, 0, TimeSpan.Zero), Success = true, Summary = "6am run" }
         ];
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         var section = cut.Find("#simplefin-recent-runs");
         var rows = section.QuerySelectorAll("tbody tr");
@@ -392,7 +392,7 @@ public class SyncNowTests : BunitContext
             new ImportRun { Id = 3, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = false, ErrorMessage = "Gmail OAuth token expired" }
         ];
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         var section = cut.Find("#amazon-recent-runs");
         Assert.Contains("FAILED", section.TextContent);
@@ -412,7 +412,7 @@ public class SyncNowTests : BunitContext
             new SyncProgressLine("Found 1 order confirmation email(s) to check."),
             new SyncProgressLine("[2026-07-22] \"Your order\"\n--- Email body ---\nOrder #\n113-TEST\n--- Result ---\nAdded: Widget - $9.99 x1")
         ];
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#view-run-details-5").Click();
 
@@ -429,7 +429,7 @@ public class SyncNowTests : BunitContext
         fake.RecentRuns[ImportSource.SimpleFin] =
             Enumerable.Range(1, 12).Select(i => new ImportRun { Id = i, Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = $"run {i}" }).ToList();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         var section = cut.Find("#simplefin-recent-runs");
         Assert.Equal(5, section.QuerySelectorAll("tbody tr").Length);
@@ -443,7 +443,7 @@ public class SyncNowTests : BunitContext
         fake.RecentRuns[ImportSource.SimpleFin] =
             Enumerable.Range(1, 12).Select(i => new ImportRun { Id = i, Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = $"run {i}" }).ToList();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         Assert.True(cut.Find("#simplefin-recent-runs-prev-page-btn").HasAttribute("disabled"));
         Assert.False(cut.Find("#simplefin-recent-runs-next-page-btn").HasAttribute("disabled"));
@@ -455,7 +455,7 @@ public class SyncNowTests : BunitContext
         var fake = RegisterFakes();
         fake.RecentRuns[ImportSource.AmazonGmail] =
             Enumerable.Range(1, 7).Select(i => new ImportRun { Id = i, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = $"run {i}" }).ToList();
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#amazon-recent-runs-next-page-btn").Click();
 
@@ -470,7 +470,7 @@ public class SyncNowTests : BunitContext
         var fake = RegisterFakes();
         fake.RecentRuns[ImportSource.AmazonGmail] =
             Enumerable.Range(1, 7).Select(i => new ImportRun { Id = i, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = $"run {i}" }).ToList();
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
         cut.Find("#amazon-recent-runs-next-page-btn").Click();
 
         cut.Find("#amazon-recent-runs-prev-page-btn").Click();
@@ -486,7 +486,7 @@ public class SyncNowTests : BunitContext
         [
             new ImportRun { Id = 5, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" }
         ];
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
         cut.Find("#view-run-details-5").Click();
 
         cut.Find("#close-run-detail-modal-btn").Click();
@@ -499,7 +499,7 @@ public class SyncNowTests : BunitContext
     {
         RegisterFakes();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         Assert.DoesNotContain("(Checking)", cut.Markup);
     }
@@ -509,7 +509,7 @@ public class SyncNowTests : BunitContext
     {
         RegisterFakes();
 
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         var expectedStart = DateOnly.FromDateTime(DateTime.Today).AddDays(-7).ToString("yyyy-MM-dd");
         var expectedEnd = DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd");
@@ -521,7 +521,7 @@ public class SyncNowTests : BunitContext
     public void ClickingRunPlaidImport_PassesTheEnteredDatesToTheProvider()
     {
         var fake = RegisterFakes();
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#plaid-start-date").Change("2026-07-15");
         cut.Find("#plaid-end-date").Change("2026-07-20");
@@ -537,7 +537,7 @@ public class SyncNowTests : BunitContext
     {
         var fake = RegisterFakes();
         fake.NextPlaidImportResult = new PlaidImportResult(true, "Transactions added: 3, duplicates skipped: 12, balance snapshots added: 1");
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#run-plaid-import-btn").Click();
 
@@ -551,7 +551,7 @@ public class SyncNowTests : BunitContext
     {
         var fake = RegisterFakes();
         fake.NextPlaidImportResult = new PlaidImportResult(false, "plaid-cli not found at /home/user/bin/plaid-cli.");
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#run-plaid-import-btn").Click();
 
@@ -562,7 +562,7 @@ public class SyncNowTests : BunitContext
     public void ClickingRunPlaidImport_DoesNotAffectSimpleFinOrAmazonRunCounts()
     {
         var fake = RegisterFakes();
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
 
         cut.Find("#run-plaid-import-btn").Click();
 
@@ -574,7 +574,7 @@ public class SyncNowTests : BunitContext
     public void AfterAmazonSync_RefreshesTheSyncIssuesList()
     {
         var fake = RegisterFakes();
-        var cut = Render<SyncNow>();
+        var cut = Render<ImportData>();
         Assert.Empty(cut.FindAll("#sync-issues-section"));
 
         fake.ActiveSyncIssues =

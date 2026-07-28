@@ -1,0 +1,108 @@
+@page "/backup-data"
+@using Expense.Domain.Entities
+@using Expense.Domain.Services.Backup
+@inject IDatabaseBackupService BackupService
+
+<PageTitle>Backup Data</PageTitle>
+
+<h1>Backup Data</h1>
+
+<div>
+    <button id="run-backup-btn" @onclick="RunBackupAsync" disabled="@_backupRunning">
+        @(_backupRunning ? "Backing up..." : "Run Backup Now")
+    </button>
+    <p><em>Also runs automatically once a day - see AppSettings:ScheduledBackupTimesLocal.</em></p>
+    <p id="backup-status">@FormatRunStatus(_lastRun)</p>
+
+    @if (_recentRuns.Count > 0)
+    {
+        <table style="table-layout: fixed; width: 100%; max-width: 900px; margin-bottom: 0.5em;">
+            <thead>
+                <tr>
+                    <th style="width: 24%;">Date/Time</th>
+                    <th style="width: 16%;">Status</th>
+                    <th style="width: 15%;">File Size</th>
+                    <th style="width: 15%;">Duration</th>
+                    <th style="width: 30%;">Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var run in _recentRuns)
+                {
+                    <tr>
+                        <td style="overflow-wrap: break-word;">@run.RanAt.ToLocalTime().ToString("MM/dd/yyyy h:mm:ss tt")</td>
+                        <td style="overflow-wrap: break-word;">@(run.Success ? "OK" : "FAILED")</td>
+                        <td style="overflow-wrap: break-word;">@FormatFileSize(run.FileSizeBytes)</td>
+                        <td style="overflow-wrap: break-word;">@FormatDuration(run.Duration)</td>
+                        <td style="overflow-wrap: break-word;">@(run.Success ? run.FilePath : run.ErrorMessage)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p>
+            <button id="backup-runs-prev-page-btn" disabled="@(_recentRunsPage <= 1)" @onclick="() => RefreshRecentRunsAsync(_recentRunsPage - 1)">&laquo; Previous</button>
+            <span id="backup-runs-page-indicator">Page @_recentRunsPage of @TotalPages</span>
+            <button id="backup-runs-next-page-btn" disabled="@(_recentRunsPage >= TotalPages)" @onclick="() => RefreshRecentRunsAsync(_recentRunsPage + 1)">Next &raquo;</button>
+        </p>
+    }
+</div>
+
+@code {
+    private BackupRun? _lastRun;
+    private bool _backupRunning;
+    private List<BackupRun> _recentRuns = [];
+    private int _recentRunsTotalCount;
+    private int _recentRunsPage = 1;
+
+    private const int RecentRunsPageSize = 10;
+
+    private int TotalPages => _recentRunsTotalCount == 0 ? 1 : (int)Math.Ceiling(_recentRunsTotalCount / (double)RecentRunsPageSize);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _lastRun = await BackupService.GetLastRunAsync();
+        await RefreshRecentRunsAsync(1);
+    }
+
+    private async Task RefreshRecentRunsAsync(int page)
+    {
+        var result = await BackupService.GetRecentRunsAsync(page, RecentRunsPageSize);
+        _recentRuns = result.Runs;
+        _recentRunsTotalCount = result.TotalCount;
+        _recentRunsPage = page;
+    }
+
+    private async Task RunBackupAsync()
+    {
+        _backupRunning = true;
+        try
+        {
+            _lastRun = await BackupService.RunAsync();
+            await RefreshRecentRunsAsync(1);
+        }
+        finally
+        {
+            _backupRunning = false;
+        }
+    }
+
+    private static string FormatRunStatus(BackupRun? run)
+    {
+        if (run is null) return "Last backup: never";
+        var when = run.RanAt.ToLocalTime().ToString("MM/dd/yyyy h:mm:ss tt");
+        return run.Success
+            ? $"Last backup: {when} ({FormatFileSize(run.FileSizeBytes)}, {FormatDuration(run.Duration)})"
+            : $"Last backup: {when} - FAILED: {run.ErrorMessage}";
+    }
+
+    private static string FormatFileSize(long? bytes)
+    {
+        if (bytes is null) return "-";
+        return bytes.Value >= 1024 * 1024
+            ? $"{bytes.Value / (1024.0 * 1024.0):0.0} MB"
+            : $"{bytes.Value / 1024.0:0.0} KB";
+    }
+
+    private static string FormatDuration(TimeSpan? duration) =>
+        duration is null ? "-" : $"{duration.Value.TotalSeconds:0.0}s";
+}

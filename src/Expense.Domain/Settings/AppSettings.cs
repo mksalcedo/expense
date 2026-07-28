@@ -5,4 +5,9 @@ public class AppSettings
 {
     public int ForecastHorizonMonths { get; set; } = 12;
     public List<string> ScheduledSyncTimesLocal { get; set; } = ["06:00", "15:00"];
+    public List<string> ScheduledBackupTimesLocal { get; set; } = ["01:00"];
+    public int DatabaseBackupRetentionDays { get; set; } = 30;
+    public string DatabaseBackupDirectory { get; set; } =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "dev", "expense", "db_backups");
+    public string DatabaseContainerName { get; set; } = "expense_db";
 }

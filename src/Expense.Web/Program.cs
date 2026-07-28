@@ -1,5 +1,6 @@
 using Expense.Domain.Data;
 using Expense.Domain.Services.Accounts;
+using Expense.Domain.Services.Backup;
 using Expense.Domain.Services.Budgets;
 using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Categorization;
@@ -88,6 +89,9 @@ builder.Services.AddScoped<SyncIssueService>();
 builder.Services.AddScoped<ISyncStatusProvider, SyncStatusProvider>();
 
 builder.Services.AddHostedService<SyncScheduler>();
+
+builder.Services.AddScoped<IDatabaseBackupService, DatabaseBackupService>();
+builder.Services.AddHostedService<BackupScheduler>();
 
 builder.Services.AddScoped<TransactionManagementService>();
 builder.Services.AddScoped<ITransactionsPageProvider, TransactionsPageProvider>();
