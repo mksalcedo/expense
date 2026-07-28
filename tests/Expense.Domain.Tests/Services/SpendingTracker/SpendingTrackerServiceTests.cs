@@ -258,6 +258,47 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task PendingPlaidCharge_CountsTowardActualSpend_UsingTransactionDate()
+    {
+        // Real bug this guards: a Plaid-imported transaction still pending at the source
+        // (no PostedDate yet) was invisible here even when correctly categorized - the
+        // "count while pending" exception only ever covered ManualScreenshot charges,
+        // never extended to Plaid when Plaid was added as a real import source.
+        var groceries = await CreateGroceriesAsync(450m, Frequency.Weekly);
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 14), PostedDate = null,
+            Description = "Publix", Amount = -107.90m, ImportSource = "Plaid", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(107.90m, summary.Actual);
+    }
+
+    [Fact]
+    public async Task UncategorizedPendingPlaidCharge_ShowsUpAsPending()
+    {
+        var groceries = await CreateGroceriesAsync();
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 14), PostedDate = null,
+            Description = "Publix", Amount = -107.90m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(0m, summary.Actual);
+        Assert.Equal(107.90m, result.PendingAmount);
+    }
+
+    [Fact]
     public async Task PendingSelfReportedCharge_OutsideTheCurrentWeek_IsExcluded()
     {
         var groceries = await CreateGroceriesAsync();

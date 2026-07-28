@@ -146,12 +146,13 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             // be invisible to "how much do I owe" just because it hasn't been categorized
             // yet. Amount < 0 excludes payments/credits (positive amounts) - those must
             // never offset real spending, or the forecast would understate what's owed by
-            // whatever's already been paid toward the card this cycle. Still-unposted,
-            // self-reported (screenshot-derived) charges are included alongside real posted
-            // ones - see AmexCycleCalculator - so a looming overage is caught before it posts.
+            // whatever's already been paid toward the card this cycle. Still-unposted
+            // charges are included alongside real posted ones - both self-reported
+            // (screenshot-derived) and Plaid-reported pending charges - see
+            // AmexCycleCalculator - so a looming overage is caught before it posts.
             var chargeTransactions = await context.BankTransactions
                 .Where(t => t.AccountId == account.Id && t.Amount < 0
-                            && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource))
+                            && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
                 .ToListAsync(cancellationToken);
 
             // Widened backward same as the debt-account/Direct path above, for the same

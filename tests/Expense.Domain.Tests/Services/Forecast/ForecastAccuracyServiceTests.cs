@@ -112,6 +112,43 @@ public class ForecastAccuracyServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task AmexCycle_PendingPlaidReportedCharge_CountsTowardActualAmount()
+    {
+        // Same bug class as ForecastEngine's chargeTransactions query - a Plaid-imported
+        // charge still pending at the source (no PostedDate yet) was invisible to the
+        // accuracy report's "actual amount" figure too.
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 1100m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        // Cycle: 2026-05-26 to 2026-06-25, due 2026-07-15 - closed well before asOfDate.
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 6, 10), PostedDate = null,
+            Description = "Publix", Amount = -1400m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var results = await _sut.GetRecentAccuracyAsync(Context, new DateOnly(2026, 7, 20), lookbackDays: 90);
+
+        var comparison = Assert.Single(results, r => r.Name == "Amex Payment" && r.ScheduledDate == new DateOnly(2026, 7, 15));
+        Assert.Equal(2500m, comparison.ActualAmount); // 1400 real (still-pending) charge + 1100 extra
+    }
+
+    [Fact]
     public async Task OccurrenceWithNoMatchingTransaction_AfterItsMatchWindowCloses_IsReportedAsUnmatched()
     {
         var checking = new Account { Name = "Checking", Type = AccountType.Checking };

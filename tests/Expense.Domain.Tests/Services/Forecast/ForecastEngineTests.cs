@@ -539,6 +539,52 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task AmexCycle_CatchesAPendingPlaidReportedOverage_BeforeItPosts()
+    {
+        // Real bug this guards: a Plaid-imported charge still pending at the source (no
+        // PostedDate yet) was invisible to the Amex "how much do I owe" calculation - the
+        // same "count while pending" exception that already covered ManualScreenshot
+        // charges was never extended to Plaid when Plaid was added as a real import source.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 20));
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+                Description = "TRADER JOE S", Amount = -1250m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            // Reported by Plaid as still pending (no PostedDate yet) - $1,000 alone already
+            // exceeds the $900 budget, so this must be caught before it ever posts.
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 3, 18), PostedDate = null,
+                Description = "Publix", Amount = -1000m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 20), new DateOnly(2026, 4, 30));
+
+        var openCycleRow = Assert.Single(result.Rows, r => r.Amount == -1000m);
+        Assert.Equal(new DateOnly(2026, 4, 15), openCycleRow.Date);
+        Assert.Equal("Amex Payment (includes $1,000.00 pending, not yet posted)", openCycleRow.Description);
+    }
+
+    [Fact]
     public async Task AmexCycle_StaysAtBudget_WhenPendingSelfReportedChargesDontExceedIt()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 20));

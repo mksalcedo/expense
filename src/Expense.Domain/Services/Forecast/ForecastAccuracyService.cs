@@ -152,7 +152,7 @@ public class ForecastAccuracyService(RecurrenceExpander recurrenceExpander, Amex
 
             var chargeTransactions = await context.BankTransactions
                 .Where(t => t.AccountId == account.Id && t.Amount < 0
-                            && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource))
+                            && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
                 .ToListAsync(cancellationToken);
 
             // Same blind-spot guard as the Direct/debt-payment comparisons above, scoped to

@@ -56,7 +56,7 @@ public class SpendingTrackerService(BudgetProrationService proration)
         // Forecast page's Amex cycle calculation already treats these (see AmexCycleCalculator).
         var bankTotalsByCategory = await context.BankTransactions
             .Where(t => !t.IsAmazonMerchant && t.CategoryId != null && qualifyingCategoryIds.Contains(t.CategoryId.Value)
-                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource))
+                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
             .Where(t => (t.PostedDate ?? t.TransactionDate) >= periodStart && (t.PostedDate ?? t.TransactionDate) <= periodEnd)
             .GroupBy(t => t.CategoryId!.Value)
             .Select(g => new { CategoryId = g.Key, Total = g.Sum(t => t.Amount) })
@@ -89,7 +89,7 @@ public class SpendingTrackerService(BudgetProrationService proration)
 
         var pendingBank = await context.BankTransactions
             .Where(t => !t.IsAmazonMerchant && t.CategoryId == null && t.Amount < 0
-                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource))
+                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
             .Where(t => (t.PostedDate ?? t.TransactionDate) >= periodStart && (t.PostedDate ?? t.TransactionDate) <= periodEnd)
             .SumAsync(t => (decimal?)t.Amount, cancellationToken) ?? 0m;
 
