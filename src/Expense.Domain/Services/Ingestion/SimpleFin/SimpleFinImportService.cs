@@ -90,6 +90,22 @@ public class SimpleFinImportService(SimpleFinClient client, DedupService dedup, 
                     : DedupService.GenerateFingerprint(account.Id, postedDate, txn.Amount, txn.Description, occurrence);
             }
 
+            // A Plaid-pending row later posting through SimpleFin instead of Plaid - the
+            // cross-source check below only catches an already-posted match (it compares
+            // by PostedDate, which a pending row never has), so this must be checked first
+            // and merged into, not treated as either a fresh transaction or a duplicate to
+            // skip. Confirmed against 4 real duplicate transactions on 2026-07-29.
+            var pendingMatch = await dedup.FindPendingMatchAsync(context, account.Id, txn.Amount, postedDate);
+            if (pendingMatch is not null)
+            {
+                pendingMatch.PostedDate = postedDate;
+                pendingMatch.Description = txn.Description;
+                pendingMatch.Amount = txn.Amount;
+                pendingMatch.ExternalId = string.IsNullOrEmpty(txn.Id) ? null : txn.Id;
+                summary.PendingTransactionsUpdated++;
+                continue;
+            }
+
             var isDuplicate = await dedup.ExistsAsync(context, account.Id, txn.Id, fingerprint);
             if (!isDuplicate)
             {

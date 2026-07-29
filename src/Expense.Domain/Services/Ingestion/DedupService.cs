@@ -1,4 +1,5 @@
 using Expense.Domain.Data;
+using Expense.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Ingestion;
@@ -48,4 +49,32 @@ public class DedupService
     /// </summary>
     public async Task<bool> ExistsForAccountDateAmountAsync(ExpenseDbContext context, int accountId, DateOnly postedDate, decimal amount) =>
         await context.BankTransactions.AnyAsync(t => t.AccountId == accountId && t.PostedDate == postedDate && t.Amount == amount);
+
+    /// <summary>
+    /// Finds the still-open pending row a newly-posted transaction represents, so the
+    /// caller can merge into it instead of inserting a duplicate. Used as a fallback when
+    /// no direct id link is available - Plaid's own pending_transaction_id, when supplied,
+    /// is a more precise primary match and should be tried first; this exists because that
+    /// field is only populated "when available" (confirmed missing for two real
+    /// transactions on 2026-07-29), and because a cross-source pair (e.g. a Plaid-pending
+    /// row later reported as posted by SimpleFin) has no shared id concept at all -
+    /// ExistsForAccountDateAmountAsync can never catch that case since it compares by
+    /// PostedDate, which a pending row never has. Matches by account + amount, with
+    /// TransactionDate allowed to drift up to windowDays either direction - confirmed for
+    /// real that a pending charge's own date can differ from the eventual posted
+    /// transaction's date by several days (a real Chick-fil-A charge drifted 4 days).
+    /// Scoped to ImportSource == "Plaid" only - manually-entered placeholder charges
+    /// (ManualChargeMatchingService.ManualScreenshotImportSource) also have PostedDate ==
+    /// null while awaiting the real transaction, but already have their own dedicated
+    /// removal-on-match mechanism; this must not intercept them first (confirmed for real
+    /// - it silently broke that mechanism's own test before this scoping was added).
+    /// Narrow, accepted risk: two genuinely different real Plaid transactions on the same
+    /// account/amount within the window would collide - same tradeoff already accepted by
+    /// ExistsForAccountDateAmountAsync above.
+    /// </summary>
+    public async Task<BankTransaction?> FindPendingMatchAsync(
+        ExpenseDbContext context, int accountId, decimal amount, DateOnly transactionDate, int windowDays = 10) =>
+        await context.BankTransactions.FirstOrDefaultAsync(t =>
+            t.AccountId == accountId && t.Amount == amount && t.PostedDate == null && t.ImportSource == "Plaid"
+            && t.TransactionDate >= transactionDate.AddDays(-windowDays) && t.TransactionDate <= transactionDate.AddDays(windowDays));
 }

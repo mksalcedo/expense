@@ -17,7 +17,7 @@
     <NavLink href="add-pending-charges" class="nav-link">Add Pending Charges</NavLink>
     <NavLink href="pending-charges" class="nav-link">Manually Entered Pending Charges</NavLink>
     <NavLink href="spending-tracker" class="nav-link">Spending Tracker</NavLink>
-    <NavLink href="review-queue" id="nav-review-queue-link" class="nav-link">Review Queue@_pendingReviewCountSuffix</NavLink>
+    <NavLink href="review-queue" id="nav-review-queue-link" class="nav-link">Review Queue@_reviewQueueCountFragment</NavLink>
     <NavLink href="transactions" class="nav-link">Transactions</NavLink>
     <NavLink href="historical-analysis" class="nav-link">Historical Analysis</NavLink>
     <NavLink href="import-data" id="nav-import-data-link" class="nav-link">Import Data@_syncFailureSuffix</NavLink>
@@ -40,6 +40,23 @@
         0 => "",
         1 => " (1 item needs review)",
         _ => $" ({_pendingReviewCount} items need review)"
+    };
+
+    // Rendered as a RenderFragment (built via RenderTreeBuilder) rather than inline @if
+    // markup in the .razor file - avoids the empty <span> that inline conditional markup
+    // would otherwise still leave in the DOM when _pendingReviewCount is 0.
+    private RenderFragment _reviewQueueCountFragment => builder =>
+    {
+        if (_pendingReviewCount == 0)
+        {
+            return;
+        }
+
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "id", "nav-review-queue-count");
+        builder.AddAttribute(2, "style", "color: #b00020;");
+        builder.AddContent(3, _pendingReviewCountSuffix);
+        builder.CloseElement();
     };
 
     private string _syncFailureSuffix => _failedSyncCount switch

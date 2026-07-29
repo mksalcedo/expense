@@ -64,14 +64,23 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
 
             // Plaid never updates a pending transaction in place when it posts - it issues
             // a brand new transaction_id and links back to the original via
-            // pending_transaction_id. Merge into the existing row (preserving whatever
-            // category it already has) instead of inserting a second one; ExternalId-based
-            // dedup can't catch this since the ids legitimately differ, and the posted-date
-            // cross-check can't either since the existing row's PostedDate is still null.
-            if (!txn.Pending && txn.PendingTransactionId is not null)
+            // pending_transaction_id, when it supplies that field at all (it's only
+            // populated "when available" - confirmed missing for two real transactions on
+            // 2026-07-29, which is why DedupService.FindPendingMatchAsync exists as a
+            // fallback). Merge into the existing row (preserving whatever category it
+            // already has) instead of inserting a second one; ExternalId-based dedup can't
+            // catch this since the ids legitimately differ, and the posted-date cross-check
+            // can't either since the existing row's PostedDate is still null.
+            if (!txn.Pending)
             {
-                var pendingRow = await context.BankTransactions.SingleOrDefaultAsync(
-                    t => t.AccountId == localAccountId && t.ExternalId == txn.PendingTransactionId, cancellationToken);
+                BankTransaction? pendingRow = null;
+                if (txn.PendingTransactionId is not null)
+                {
+                    pendingRow = await context.BankTransactions.SingleOrDefaultAsync(
+                        t => t.AccountId == localAccountId && t.ExternalId == txn.PendingTransactionId, cancellationToken);
+                }
+                pendingRow ??= await dedup.FindPendingMatchAsync(context, localAccountId, amount, txn.Date);
+
                 if (pendingRow is not null)
                 {
                     pendingRow.PostedDate = postedDate;

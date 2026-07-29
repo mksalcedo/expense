@@ -217,6 +217,62 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         Assert.Equal(1, await Context.BankTransactions.CountAsync());
     }
 
+    // Real scenario this guards (found live 2026-07-29): pending_transaction_id is only
+    // populated by Plaid "when available" - confirmed missing entirely for two genuinely
+    // ordinary transactions (Netflix, Publix), which still needed to merge with their
+    // pending row via account+amount+nearby-date instead of duplicating.
+    private const string PendingNetflixCliOutput = """
+    {"diagnostic":{"code":"FETCHING_TRANSACTIONS","end_date":"2026-07-27","level":"info","message":"Fetching transactions...","start_date":"2026-07-20"}}
+    {"accounts":[{"account_id":"plaid-checking-1","balances":{"available":5092.71,"current":5136.49}}],"total_transactions":1,"transactions":[{"transaction_id":"txn-netflix-pending","account_id":"plaid-checking-1","amount":26.99,"date":"2026-07-18","name":"Netflix","merchant_name":"Netflix","pending":true}]}
+    """;
+
+    private const string PostedNetflixCliOutput_NoPendingId = """
+    {"diagnostic":{"code":"FETCHING_TRANSACTIONS","end_date":"2026-07-28","level":"info","message":"Fetching transactions...","start_date":"2026-07-20"}}
+    {"accounts":[{"account_id":"plaid-checking-1","balances":{"available":5072.71,"current":5116.49}}],"total_transactions":1,"transactions":[{"transaction_id":"txn-netflix-posted","account_id":"plaid-checking-1","amount":26.99,"date":"2026-07-20","name":"Netflix","merchant_name":"Netflix","pending":false}]}
+    """;
+
+    private const string PendingNetflixCliOutput_FarInThePast = """
+    {"diagnostic":{"code":"FETCHING_TRANSACTIONS","end_date":"2026-06-01","level":"info","message":"Fetching transactions...","start_date":"2026-05-25"}}
+    {"accounts":[{"account_id":"plaid-checking-1","balances":{"available":5092.71,"current":5136.49}}],"total_transactions":1,"transactions":[{"transaction_id":"txn-netflix-old-pending","account_id":"plaid-checking-1","amount":26.99,"date":"2026-06-01","name":"Netflix","merchant_name":"Netflix","pending":true}]}
+    """;
+
+    [Fact]
+    public async Task ImportAsync_PostedTransactionWithNoPendingTransactionId_StillMergesViaAccountAmountAndNearbyDate()
+    {
+        var account = await CreateCheckingAccountAsync();
+        var accountMap = BuildAccountMap(account);
+        var sut = CreateSut();
+        await sut.ImportAsync(Context, PendingNetflixCliOutput, accountMap, new DateTimeOffset(2026, 7, 18, 12, 0, 0, TimeSpan.Zero));
+
+        var summary = await sut.ImportAsync(Context, PostedNetflixCliOutput_NoPendingId, accountMap, new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(1, await Context.BankTransactions.CountAsync());
+        Assert.Equal(0, summary.TransactionsAdded);
+        Assert.Equal(1, summary.PendingTransactionsUpdated);
+
+        var merged = await Context.BankTransactions.SingleAsync();
+        Assert.Equal(new DateOnly(2026, 7, 20), merged.PostedDate);
+        Assert.Equal("txn-netflix-posted", merged.ExternalId);
+    }
+
+    [Fact]
+    public async Task ImportAsync_PostedTransactionMatchingAnUnrelatedPendingRowFarOutsideTheWindow_DoesNotMerge_ImportsSeparately()
+    {
+        // A pending row with the same account/amount but from over a month earlier is
+        // almost certainly a different real charge, not a delayed posting of this one -
+        // the date window exists specifically to avoid merging unrelated transactions.
+        var account = await CreateCheckingAccountAsync();
+        var accountMap = BuildAccountMap(account);
+        var sut = CreateSut();
+        await sut.ImportAsync(Context, PendingNetflixCliOutput_FarInThePast, accountMap, new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero));
+
+        var summary = await sut.ImportAsync(Context, PostedNetflixCliOutput_NoPendingId, accountMap, new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(1, summary.TransactionsAdded);
+        Assert.Equal(0, summary.PendingTransactionsUpdated);
+        Assert.Equal(2, await Context.BankTransactions.CountAsync());
+    }
+
     [Fact]
     public async Task ImportAsync_UnmappedAccount_IsSkippedAndReported_NotACrash()
     {

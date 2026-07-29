@@ -75,6 +75,33 @@ public class NavMenuTests : BunitContext
     }
 
     [Fact]
+    public void ReviewQueueLink_ShowsNoRedCountText_WhenNothingIsPending()
+    {
+        RegisterFakes();
+
+        var cut = Render<NavMenu>();
+
+        Assert.Empty(cut.FindAll("#nav-review-queue-count"));
+    }
+
+    [Fact]
+    public void ReviewQueueLink_ShowsTheCountTextInRed_WhenItemsArePending()
+    {
+        RegisterFakes(new ReviewQueueData
+        {
+            TransactionGroups = [new PendingTransactionGroup { SuggestedPattern = "X", SampleDescription = "X", SampleDate = new DateOnly(2026, 7, 1), TransactionIds = [1], TotalAmount = -10m, AccountName = "Amex" }],
+            AmazonItemGroups = [],
+            Categories = []
+        });
+
+        var cut = Render<NavMenu>();
+
+        var countSpan = cut.Find("#nav-review-queue-count");
+        Assert.Equal(" (1 item needs review)", countSpan.TextContent);
+        Assert.Contains("color", countSpan.GetAttribute("style"));
+    }
+
+    [Fact]
     public void ReviewQueueLink_ShowsSingularCount_ForExactlyOnePendingItem()
     {
         RegisterFakes(new ReviewQueueData

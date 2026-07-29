@@ -172,6 +172,90 @@ public class SimpleFinImportServiceTests : DatabaseTestBase
         Assert.Equal(2, await Context.BankTransactions.CountAsync(t => t.AccountId == amex.Id)); // Trader Joe's (pre-seeded) + Amazon, not 3
     }
 
+    // Real scenario this guards (found live 2026-07-29): a Plaid-pending row later posted
+    // through SimpleFin instead of Plaid - the cross-source check above only catches a
+    // transaction that's already posted on both sides (it matches by PostedDate, which a
+    // pending row never has), so this same real transaction still duplicated even with
+    // that check in place. Confirmed against 4 real duplicate transactions.
+    [Fact]
+    public async Task Import_ATransactionMatchingAnExistingPendingPlaidRow_MergesIntoIt_InsteadOfDuplicating()
+    {
+        var (amex, discover) = await CreateAccountsAsync();
+        var postedDate = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(1783857600).UtcDateTime);
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = postedDate.AddDays(-4), PostedDate = null,
+            Description = "Trader Joe's", Amount = -18.83m,
+            ImportSource = "Plaid", ExternalId = "plaid-pending-id-999", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var sut = CreateSut(TwoAccountResponse);
+        var map = BuildAccountMap(amex, discover);
+
+        var summary = await sut.ImportAsync(Context, map, DateTimeOffset.UtcNow.AddDays(-45));
+
+        Assert.Equal(1, summary.TransactionsAdded); // only Amazon is genuinely new
+        Assert.Equal(0, summary.DuplicatesSkipped);
+        Assert.Equal(1, summary.PendingTransactionsUpdated);
+        Assert.Equal(2, await Context.BankTransactions.CountAsync(t => t.AccountId == amex.Id)); // merged Trader Joe's + Amazon, not 3
+
+        var merged = await Context.BankTransactions.SingleAsync(t => t.Description.Contains("TRADER JOE"));
+        Assert.Equal(postedDate, merged.PostedDate);
+        Assert.Equal("amex-tx-1", merged.ExternalId);
+    }
+
+    [Fact]
+    public async Task Import_ATransactionMatchingAManuallyEnteredPlaceholder_DoesNotMergeIntoIt_ThatHasItsOwnSeparateMatchingMechanism()
+    {
+        // Manually-entered placeholder charges (ManualChargeMatchingService) also have
+        // PostedDate == null while awaiting the real transaction to post, same as a
+        // genuinely pending Plaid row - the fallback must not treat them the same way,
+        // or it silently breaks the placeholder's own removal-on-match logic instead of
+        // letting it run.
+        var (amex, discover) = await CreateAccountsAsync();
+        var postedDate = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(1783857600).UtcDateTime);
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = postedDate.AddDays(-2), PostedDate = null,
+            Description = "Trader Joe's (pending)", Amount = -18.83m,
+            ImportSource = "ManualScreenshot", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var sut = CreateSut(TwoAccountResponse);
+        var map = BuildAccountMap(amex, discover);
+
+        var summary = await sut.ImportAsync(Context, map, DateTimeOffset.UtcNow.AddDays(-45));
+
+        Assert.Equal(2, summary.TransactionsAdded);
+        Assert.Equal(0, summary.PendingTransactionsUpdated);
+        Assert.Equal(3, await Context.BankTransactions.CountAsync(t => t.AccountId == amex.Id));
+    }
+
+    [Fact]
+    public async Task Import_ATransactionMatchingAnUnrelatedPendingRowFarOutsideTheWindow_DoesNotMerge_ImportsSeparately()
+    {
+        var (amex, discover) = await CreateAccountsAsync();
+        var postedDate = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(1783857600).UtcDateTime);
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = postedDate.AddDays(-45), PostedDate = null,
+            Description = "Trader Joe's", Amount = -18.83m,
+            ImportSource = "Plaid", ExternalId = "plaid-old-pending-id-999", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var sut = CreateSut(TwoAccountResponse);
+        var map = BuildAccountMap(amex, discover);
+
+        var summary = await sut.ImportAsync(Context, map, DateTimeOffset.UtcNow.AddDays(-45));
+
+        Assert.Equal(2, summary.TransactionsAdded);
+        Assert.Equal(0, summary.PendingTransactionsUpdated);
+        Assert.Equal(3, await Context.BankTransactions.CountAsync(t => t.AccountId == amex.Id));
+    }
+
     [Fact]
     public async Task Import_UnmappedSimpleFinAccount_IsReportedByIdNotErrored()
     {
