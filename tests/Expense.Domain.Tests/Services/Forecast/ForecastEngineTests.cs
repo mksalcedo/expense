@@ -99,6 +99,45 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task MultipleLines_OnTheSameDay_ListsIncomeBeforeExpense()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 13));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        // Rent seeded/added before Paycheck throughout, deliberately - so its lower id
+        // would naturally sort first if the only sort key were still just Date, making
+        // this a genuine red-then-green test of the income-first secondary sort.
+        var rent = new Category { Name = "Rent" };
+        var paycheck = new Category { Name = "Paycheck" };
+        Context.Categories.AddRange(rent, paycheck);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.AddRange(
+            new FundingRule { CategoryId = rent.Id, Strategy = FundingStrategies.Direct },
+            new FundingRule { CategoryId = paycheck.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.AddRange(
+            new BudgetPeriod
+            {
+                CategoryId = rent.Id, Amount = 1500m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+                Anchor = new DateOnly(2026, 7, 17), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+            },
+            new BudgetPeriod
+            {
+                CategoryId = paycheck.Id, Amount = 2000m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+                Anchor = new DateOnly(2026, 7, 17), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+            });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 25));
+
+        Assert.Equal(2, result.Rows.Count);
+        Assert.Equal("Paycheck", result.Rows[0].Description);
+        Assert.Equal("Rent", result.Rows[1].Description);
+    }
+
+    [Fact]
     public async Task DirectFundedBill_PostedEarly_MoreThanMaxMatchWindowDaysBeforeAsOfDate_StillReconciles()
     {
         // Real bug this guards: exclusion used to depend on a date-window search relative

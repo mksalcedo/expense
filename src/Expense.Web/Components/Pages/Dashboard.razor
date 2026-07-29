@@ -8,9 +8,9 @@
 @inject ISpendingTrackerPageProvider SpendingTrackerProvider
 @inject ISyncStatusProvider SyncStatusProvider
 
-<PageTitle>Dashboard</PageTitle>
+<PageTitle>Dashboard - @DateTime.Today.ToString("MMMM d, yyyy")</PageTitle>
 
-<h1>Dashboard</h1>
+<h1>Dashboard - @DateTime.Today.ToString("MMMM d, yyyy")</h1>
 
 @if (_forecast is null || _spendingTracker is null)
 {

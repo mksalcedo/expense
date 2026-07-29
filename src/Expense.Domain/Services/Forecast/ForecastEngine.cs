@@ -336,7 +336,11 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         }
 
         var excludedVisibilityCutoff = asOfDate.AddDays(-ExcludedPaymentVisibilityDays);
-        rows = rows.Where(r => !r.IsExcluded || r.Date >= excludedVisibilityCutoff).OrderBy(r => r.Date).ToList();
+        // Income before expense on days with more than one line - roughly matches how
+        // banks tend to post credits before debits within a day, so the running balance
+        // shown at each same-day row reads as less alarmist than an arbitrary order would.
+        rows = rows.Where(r => !r.IsExcluded || r.Date >= excludedVisibilityCutoff)
+            .OrderBy(r => r.Date).ThenByDescending(r => r.Amount >= 0).ToList();
         var runningBalance = startingBalance;
         foreach (var row in rows)
         {
