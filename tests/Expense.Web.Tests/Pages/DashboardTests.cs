@@ -11,6 +11,14 @@ namespace Expense.Web.Tests.Pages;
 
 public class DashboardTests : BunitContext
 {
+    public DashboardTests()
+    {
+        // Dashboard embeds CashFlowChart, which imports its own JS module on first render for
+        // hover support - these tests don't exercise hovering, so let unconfigured JS interop
+        // calls no-op rather than configuring the module in every single test here.
+        JSInterop.Mode = JSRuntimeMode.Loose;
+    }
+
     private class FakeForecastResultProvider(ForecastResult result) : IForecastResultProvider
     {
         public ForecastResult Result { get; set; } = result;

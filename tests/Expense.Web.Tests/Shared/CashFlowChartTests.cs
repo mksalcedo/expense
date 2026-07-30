@@ -11,12 +11,21 @@ public class CashFlowChartTests : BunitContext
         Date = date, Description = "Row", Amount = 0m, RunningBalance = runningBalance
     };
 
+    private IRenderedComponent<CashFlowChart> RenderChart(ForecastResult forecast)
+    {
+        var module = JSInterop.SetupModule("./js/cashFlowChart.js");
+        module.SetupVoid("attach", _ => true);
+        module.SetupVoid("detach", _ => true);
+
+        return Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+    }
+
     [Fact]
     public void NoRows_ShowsAnEmptyStateMessage_NotAChart()
     {
         var forecast = new ForecastResult { StartingBalance = 1000m, Rows = [] };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
 
         Assert.Empty(cut.FindAll("#cash-flow-chart-svg"));
         Assert.Contains("No forecast data", cut.Markup);
@@ -36,7 +45,7 @@ public class CashFlowChartTests : BunitContext
             ]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
 
         var pointsAttr = cut.Find("#cash-flow-chart-line").GetAttribute("points")!;
         var pairs = pointsAttr.Trim().Split(' ');
@@ -52,7 +61,7 @@ public class CashFlowChartTests : BunitContext
             Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 12, 31), 4000m)]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
 
         var summary = cut.Find("#cash-flow-trend-summary").TextContent;
         Assert.Contains("1,000.00", summary);
@@ -68,7 +77,7 @@ public class CashFlowChartTests : BunitContext
             Rows = [Row(new DateOnly(2026, 1, 15), 1000m), Row(new DateOnly(2026, 3, 15), 1000m)]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
 
         Assert.Contains("Feb", cut.Markup);
         Assert.Contains("Mar", cut.Markup);
@@ -83,7 +92,7 @@ public class CashFlowChartTests : BunitContext
             Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 12, 31), 4000m)]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
 
         Assert.NotEmpty(cut.FindAll("#cash-flow-chart-trend-line"));
     }
@@ -97,7 +106,7 @@ public class CashFlowChartTests : BunitContext
             Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 1, 11), 9000m)]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
 
         // 4 Y-axis value labels plus the dedicated "0" label at the zero line.
         Assert.Contains("9,900", cut.Markup); // padded max, rounded
@@ -124,7 +133,7 @@ public class CashFlowChartTests : BunitContext
             ]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
 
         Assert.Contains("Trending down", cut.Find("#cash-flow-trend-summary").TextContent);
     }
@@ -138,7 +147,7 @@ public class CashFlowChartTests : BunitContext
             Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 12, 31), 4000m)]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
 
         Assert.True(cut.Find("#cash-flow-chart-toggle-trend-line").HasAttribute("checked"));
         Assert.True(cut.Find("#cash-flow-chart-toggle-moving-average").HasAttribute("checked"));
@@ -157,7 +166,7 @@ public class CashFlowChartTests : BunitContext
             Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 12, 31), 4000m)]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
         cut.Find("#cash-flow-chart-toggle-raw-line").Change(false);
 
         Assert.Empty(cut.FindAll("#cash-flow-chart-line"));
@@ -174,7 +183,7 @@ public class CashFlowChartTests : BunitContext
             Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 12, 31), 4000m)]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
         cut.Find("#cash-flow-chart-toggle-trend-line").Change(false);
 
         Assert.Empty(cut.FindAll("#cash-flow-chart-trend-line"));
@@ -190,7 +199,7 @@ public class CashFlowChartTests : BunitContext
             Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 12, 31), 4000m)]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
         cut.Find("#cash-flow-chart-toggle-moving-average").Change(false);
 
         Assert.Empty(cut.FindAll("#cash-flow-chart-moving-average-line"));
@@ -211,10 +220,79 @@ public class CashFlowChartTests : BunitContext
             ]
         };
 
-        var cut = Render<CashFlowChart>(p => p.Add(c => c.Forecast, forecast));
+        var cut = RenderChart(forecast);
 
         Assert.NotEmpty(cut.FindAll("#cash-flow-chart-lowest-marker"));
         Assert.Contains("-250.00", cut.Markup);
         Assert.Contains("01/11/2026", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Hovering_NearAPointOnTheRawLine_ShowsATooltipWithTheDateAndBalance()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 1, 11), 2500m)]
+        };
+        var model = CashFlowChartBuilder.Build(forecast, width: 800, height: 260)!;
+
+        var cut = RenderChart(forecast);
+        await cut.InvokeAsync(() => cut.Instance.OnChartHover(model.Points[0].X, model.Points[0].Y));
+
+        Assert.NotEmpty(cut.FindAll("#cash-flow-chart-hover"));
+        Assert.Contains("01/01/2026", cut.Markup);
+        Assert.Contains("Balance: 1,000.00", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Hovering_FarFromAnyLine_ShowsNoTooltip()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 1, 11), 2500m)]
+        };
+
+        var cut = RenderChart(forecast);
+        await cut.InvokeAsync(() => cut.Instance.OnChartHover(-1000, -1000));
+
+        Assert.Empty(cut.FindAll("#cash-flow-chart-hover"));
+    }
+
+    [Fact]
+    public async Task HoverEnd_ClearsTheTooltip()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 1, 11), 2500m)]
+        };
+        var model = CashFlowChartBuilder.Build(forecast, width: 800, height: 260)!;
+
+        var cut = RenderChart(forecast);
+        await cut.InvokeAsync(() => cut.Instance.OnChartHover(model.Points[0].X, model.Points[0].Y));
+        await cut.InvokeAsync(() => cut.Instance.OnChartHoverEnd());
+
+        Assert.Empty(cut.FindAll("#cash-flow-chart-hover"));
+    }
+
+    [Fact]
+    public async Task Hovering_ExcludesAToggledOffLine_EvenWhenTheCursorIsRightOnItsPoint()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [Row(new DateOnly(2026, 1, 1), 1000m), Row(new DateOnly(2026, 1, 11), 2500m)]
+        };
+        var model = CashFlowChartBuilder.Build(forecast, width: 800, height: 260)!;
+
+        var cut = RenderChart(forecast);
+        cut.Find("#cash-flow-chart-toggle-trend-line").Change(false);
+        cut.Find("#cash-flow-chart-toggle-moving-average").Change(false);
+        cut.Find("#cash-flow-chart-toggle-raw-line").Change(false);
+        await cut.InvokeAsync(() => cut.Instance.OnChartHover(model.Points[0].X, model.Points[0].Y));
+
+        Assert.Empty(cut.FindAll("#cash-flow-chart-hover"));
     }
 }

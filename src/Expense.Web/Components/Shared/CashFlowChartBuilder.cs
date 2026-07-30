@@ -50,6 +50,13 @@ public class CashFlowChartModel
     public required (double X, double Y) TrendLineEnd { get; init; }
 
     /// <summary>
+    /// The trend line's value at every row's own date - same shape/order as Points and
+    /// MovingAveragePoints, so hover hit-testing can index all three lines by the same row
+    /// position instead of needing separate lookup logic per line.
+    /// </summary>
+    public required List<CashFlowChartPoint> TrendPoints { get; init; }
+
+    /// <summary>
     /// A centered moving average (see MovingAverageWindowDays) - unlike the single straight
     /// trend line above, this curve responds to local conditions, so it can gradually bend up
     /// or down over the course of the window rather than being forced into one fixed slope.
@@ -58,6 +65,21 @@ public class CashFlowChartModel
 
     public required int Width { get; init; }
     public required int Height { get; init; }
+}
+
+/// <summary>One visible line's value at the hovered date - a hover can surface more than one of these at once when lines are close together.</summary>
+public class CashFlowChartHoverLine
+{
+    public required string Name { get; init; }
+    public required decimal Value { get; init; }
+    public required double Y { get; init; }
+}
+
+public class CashFlowChartHoverInfo
+{
+    public required DateOnly Date { get; init; }
+    public required double X { get; init; }
+    public required List<CashFlowChartHoverLine> Lines { get; init; }
 }
 
 /// <summary>
@@ -165,8 +187,15 @@ public static class CashFlowChartBuilder
         var slopePerDay = denominator == 0 ? 0m : (decimal)((n * sumXY - sumX * sumY) / denominator);
         var intercept = denominator == 0 ? (decimal)(sumY / n) : (decimal)((sumY - (double)slopePerDay * sumX) / n);
 
-        var trendLineStart = (X: XFor(minDate), Y: YFor(intercept));
-        var trendLineEnd = (X: XFor(maxDate), Y: YFor(intercept + slopePerDay * (decimal)totalDays));
+        var trendPoints = forecast.Rows.Select(r =>
+        {
+            var daysSinceMinDate = (decimal)(r.Date.ToDateTime(TimeOnly.MinValue) - minDate.ToDateTime(TimeOnly.MinValue)).TotalDays;
+            var trendBalance = intercept + slopePerDay * daysSinceMinDate;
+            return new CashFlowChartPoint { Date = r.Date, Balance = trendBalance, X = XFor(r.Date), Y = YFor(trendBalance) };
+        }).ToList();
+
+        var trendLineStart = (X: trendPoints[0].X, Y: trendPoints[0].Y);
+        var trendLineEnd = (X: trendPoints[^1].X, Y: trendPoints[^1].Y);
 
         var movingAveragePoints = forecast.Rows.Select(r =>
         {
@@ -190,9 +219,60 @@ public static class CashFlowChartBuilder
             TrendSlopePerDay = slopePerDay,
             TrendLineStart = trendLineStart,
             TrendLineEnd = trendLineEnd,
+            TrendPoints = trendPoints,
             MovingAveragePoints = movingAveragePoints,
             Width = width,
             Height = height
+        };
+    }
+
+    /// <summary>
+    /// Points on all three lines share the same underlying row order/dates (see TrendPoints),
+    /// so finding "what's near the cursor" is a single nearest-by-X lookup followed by a
+    /// per-line Y-distance check - not literal line-intersection geometry.
+    /// </summary>
+    public static CashFlowChartHoverInfo? GetHoverInfo(
+        CashFlowChartModel model, double mouseX, double mouseY,
+        bool showRawLine, bool showTrendLine, bool showMovingAverage,
+        double thresholdPixels = 15)
+    {
+        if (model.Points.Count == 0) return null;
+
+        var nearestIndex = 0;
+        var nearestDistance = double.MaxValue;
+        for (var i = 0; i < model.Points.Count; i++)
+        {
+            var distance = Math.Abs(model.Points[i].X - mouseX);
+            if (distance < nearestDistance)
+            {
+                nearestDistance = distance;
+                nearestIndex = i;
+            }
+        }
+
+        var lines = new List<CashFlowChartHoverLine>();
+
+        void MaybeAdd(string name, bool visible, List<CashFlowChartPoint> points)
+        {
+            if (!visible) return;
+            var point = points[nearestIndex];
+            if (Math.Abs(point.Y - mouseY) <= thresholdPixels)
+            {
+                lines.Add(new CashFlowChartHoverLine { Name = name, Value = point.Balance, Y = point.Y });
+            }
+        }
+
+        MaybeAdd("Balance", showRawLine, model.Points);
+        MaybeAdd("Trend", showTrendLine, model.TrendPoints);
+        MaybeAdd("30-Day Average", showMovingAverage, model.MovingAveragePoints);
+
+        if (lines.Count == 0) return null;
+
+        return new CashFlowChartHoverInfo
+        {
+            Date = model.Points[nearestIndex].Date,
+            X = model.Points[nearestIndex].X,
+            Lines = lines
         };
     }
 }

@@ -282,6 +282,67 @@ public class CashFlowChartBuilderTests
     }
 
     [Fact]
+    public void Build_TrendPoints_HasOnePointPerRow()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows =
+            [
+                Row(new DateOnly(2026, 1, 1), 1000m),
+                Row(new DateOnly(2026, 1, 11), 500m),
+                Row(new DateOnly(2026, 1, 21), 1500m)
+            ]
+        };
+
+        var model = CashFlowChartBuilder.Build(forecast, width: 800, height: 260)!;
+
+        Assert.Equal(3, model.TrendPoints.Count);
+    }
+
+    [Fact]
+    public void Build_TrendPoints_FirstAndLastMatch_TrendLineStartAndEnd()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows =
+            [
+                Row(new DateOnly(2026, 1, 1), 1000m),
+                Row(new DateOnly(2026, 1, 6), 1500m),
+                Row(new DateOnly(2026, 1, 11), 2000m)
+            ]
+        };
+
+        var model = CashFlowChartBuilder.Build(forecast, width: 800, height: 260)!;
+
+        Assert.Equal(model.TrendLineStart.X, model.TrendPoints[0].X, precision: 3);
+        Assert.Equal(model.TrendLineStart.Y, model.TrendPoints[0].Y, precision: 3);
+        Assert.Equal(model.TrendLineEnd.X, model.TrendPoints[^1].X, precision: 3);
+        Assert.Equal(model.TrendLineEnd.Y, model.TrendPoints[^1].Y, precision: 3);
+    }
+
+    [Fact]
+    public void Build_TrendPoints_MiddlePointLiesOnTheRegressionLine_ForPerfectlyLinearData()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows =
+            [
+                Row(new DateOnly(2026, 1, 1), 1000m),
+                Row(new DateOnly(2026, 1, 6), 1500m),
+                Row(new DateOnly(2026, 1, 11), 2000m)
+            ]
+        };
+
+        var model = CashFlowChartBuilder.Build(forecast, width: 800, height: 260)!;
+
+        // Perfectly linear data - the middle trend point should sit right on top of the middle raw point.
+        Assert.Equal(model.Points[1].Y, model.TrendPoints[1].Y, precision: 1);
+    }
+
+    [Fact]
     public void Build_MovingAverage_HasOnePointPerRow()
     {
         var forecast = new ForecastResult
