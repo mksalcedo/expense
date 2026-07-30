@@ -58,8 +58,13 @@ public class ForecastSnapshotTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task AsOfDate_IsUniquePerDay()
+    public async Task AsOfDate_IsNotUnique_MultipleCapturesTheSameDayAreAllKept()
     {
+        // AsOfDate used to be unique (one snapshot per calendar day) - changed because
+        // upserting by day silently destroyed every earlier same-day capture, making any
+        // intraday swing invisible (found live 2026-07-29, see
+        // docs/forecast-history-redesign-plan.md). A capture happens after every sync now,
+        // not once daily, so the same day legitimately has several real rows.
         Context.ForecastSnapshots.Add(new ForecastSnapshot
         {
             AsOfDate = new DateOnly(2026, 7, 23), StartingBalance = 1000m, LowestProjectedBalance = 500m, CapturedAt = DateTimeOffset.UtcNow
@@ -70,7 +75,10 @@ public class ForecastSnapshotTests : DatabaseTestBase
         {
             AsOfDate = new DateOnly(2026, 7, 23), StartingBalance = 2000m, LowestProjectedBalance = 600m, CapturedAt = DateTimeOffset.UtcNow
         });
+        await Context.SaveChangesAsync();
 
-        await Assert.ThrowsAnyAsync<Exception>(() => Context.SaveChangesAsync());
+        await using var reloadContext = CreateContextInSameTransaction();
+        var count = await reloadContext.ForecastSnapshots.CountAsync(s => s.AsOfDate == new DateOnly(2026, 7, 23));
+        Assert.Equal(2, count);
     }
 }

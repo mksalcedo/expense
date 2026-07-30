@@ -96,6 +96,9 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal("Paycheck", row.Description);
         Assert.Equal(2000m, row.Amount);
         Assert.Equal(3000m, row.RunningBalance);
+        // Carried through so a captured snapshot line can later be checked against real
+        // reconciled transactions when diffing - see docs/forecast-history-redesign-plan.md.
+        Assert.Equal(paycheck.Id, row.CategoryId);
     }
 
     [Fact]

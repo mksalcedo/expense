@@ -13,6 +13,12 @@ public class ForecastLedgerRow
     public bool IsDeferred { get; set; }
     public int? DeferralId { get; set; }
 
+    /// <summary>Propagated from LedgerLine.CategoryId (see there) - null for one-time
+    /// events. Carried through so a captured ForecastSnapshotLine can later be checked
+    /// against real reconciled transactions, to tell "genuinely removed" apart from
+    /// "resolved by a real transaction for a somewhat different amount" when diffing.</summary>
+    public int? CategoryId { get; set; }
+
     /// <summary>True for a manually confirmed/overridden occurrence - stays in place in the
     /// ledger (see ForecastEngine) rather than being removed, so its amount/date remain
     /// visible instead of only living in a separate undo list.</summary>

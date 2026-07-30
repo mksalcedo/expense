@@ -12,9 +12,23 @@ namespace Expense.Domain.Services.Forecast;
 /// </summary>
 public static class ForecastSnapshotDiffer
 {
-    public static ForecastSnapshotDiff Diff(ForecastSnapshot previous, ForecastSnapshot current)
+    /// <summary>
+    /// reconciledTransactions: real BankTransaction rows with CategoryId and
+    /// ReconciledOccurrenceDate set (the same shape ForecastEngine itself queries) -
+    /// optional, and when omitted every removed line is reported as a bare removal
+    /// exactly as before. When supplied, a removed line whose CategoryId+Date matches a
+    /// reconciled transaction is reported instead as Reconciled, with the real amount
+    /// alongside what was budgeted - see ForecastSnapshotDiff.Reconciled.
+    /// </summary>
+    public static ForecastSnapshotDiff Diff(
+        ForecastSnapshot previous, ForecastSnapshot current, IReadOnlyList<BankTransaction>? reconciledTransactions = null)
     {
         var diff = new ForecastSnapshotDiff();
+
+        if (previous.StartingBalance != current.StartingBalance)
+        {
+            diff.StartingBalanceChange = new StartingBalanceChange { OldBalance = previous.StartingBalance, NewBalance = current.StartingBalance };
+        }
 
         var previousGroups = previous.Lines
             .GroupBy(l => (l.AccountId, l.Description))
@@ -40,7 +54,24 @@ public static class ForecastSnapshotDiffer
                 }
                 else if (previousLine is not null && currentLine is null)
                 {
-                    diff.Removed.Add(previousLine);
+                    var reconciledMatch = reconciledTransactions?.FirstOrDefault(t =>
+                        t.CategoryId == previousLine.CategoryId && t.ReconciledOccurrenceDate == previousLine.Date);
+
+                    if (previousLine.CategoryId is not null && reconciledMatch is not null)
+                    {
+                        diff.Reconciled.Add(new ReconciledLine
+                        {
+                            Description = previousLine.Description,
+                            AccountId = previousLine.AccountId,
+                            Date = previousLine.Date,
+                            BudgetedAmount = previousLine.Amount,
+                            ActualAmount = reconciledMatch.Amount
+                        });
+                    }
+                    else
+                    {
+                        diff.Removed.Add(previousLine);
+                    }
                 }
                 else if (previousLine!.Date != currentLine!.Date || previousLine.Amount != currentLine.Amount)
                 {

@@ -1,14 +1,18 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
-using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Forecast;
 
 /// <summary>
-/// Captures (upserting per calendar day) a lightweight snapshot of the current forecast's
-/// key figures, so a future swing in the lowest projected balance can be explained by
-/// diffing against a prior day's snapshot instead of trying to reconstruct past forecast
-/// state after the fact.
+/// Captures a lightweight snapshot of the current forecast's key figures on every call, so
+/// a future swing in the lowest projected balance can be explained by diffing against a
+/// prior snapshot instead of trying to reconstruct past forecast state after the fact.
+/// One row per capture, not per calendar day - captures happen after every successful
+/// sync (SimpleFin/Amazon/Plaid, scheduled or manual), and with Plaid now scheduled
+/// alongside the others, several real captures happen most days. Upserting by AsOfDate
+/// used to silently destroy every earlier same-day capture, making any intraday swing
+/// invisible by construction (found live 2026-07-29 - see
+/// docs/forecast-history-redesign-plan.md).
 /// </summary>
 public class ForecastSnapshotService
 {
@@ -18,15 +22,6 @@ public class ForecastSnapshotService
 
     public async Task CaptureAsync(ExpenseDbContext context, ForecastResult forecast, DateOnly asOfDate, CancellationToken cancellationToken = default)
     {
-        var existing = await context.ForecastSnapshots
-            .Include(s => s.Lines)
-            .FirstOrDefaultAsync(s => s.AsOfDate == asOfDate, cancellationToken);
-        if (existing is not null)
-        {
-            context.ForecastSnapshots.Remove(existing);
-            await context.SaveChangesAsync(cancellationToken);
-        }
-
         var windowEnd = asOfDate.AddDays(SnapshotWindowDays);
         var snapshot = new ForecastSnapshot
         {
@@ -39,7 +34,8 @@ public class ForecastSnapshotService
                 .Where(r => r.Date <= windowEnd)
                 .Select(r => new ForecastSnapshotLine
                 {
-                    Date = r.Date, Description = r.Description, Amount = r.Amount, RunningBalance = r.RunningBalance, AccountId = r.AccountId
+                    Date = r.Date, Description = r.Description, Amount = r.Amount, RunningBalance = r.RunningBalance,
+                    AccountId = r.AccountId, CategoryId = r.CategoryId
                 })
                 .ToList()
         };

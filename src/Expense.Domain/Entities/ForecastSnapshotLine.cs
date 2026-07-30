@@ -16,4 +16,10 @@ public class ForecastSnapshotLine
     public decimal Amount { get; set; }
     public decimal RunningBalance { get; set; }
     public int AccountId { get; set; }
+
+    /// <summary>Propagated from ForecastLedgerRow.CategoryId - null for one-time events.
+    /// Lets a later diff check whether a line missing from a newer snapshot was
+    /// genuinely removed or resolved by a real reconciled transaction (see
+    /// ForecastSnapshotDiffer and docs/forecast-history-redesign-plan.md).</summary>
+    public int? CategoryId { get; set; }
 }

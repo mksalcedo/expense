@@ -10,6 +10,8 @@ public class ForecastSnapshotConfiguration : IEntityTypeConfiguration<ForecastSn
     {
         builder.ToTable("forecast_snapshots");
         builder.HasKey(s => s.Id);
-        builder.HasIndex(s => s.AsOfDate).IsUnique();
+        // No longer unique - one row per capture (every sync), not one per calendar day.
+        // Still indexed since queries filter/group by AsOfDate often.
+        builder.HasIndex(s => s.AsOfDate);
     }
 }

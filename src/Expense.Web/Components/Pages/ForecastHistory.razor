@@ -5,7 +5,7 @@
 <PageTitle>Forecast History</PageTitle>
 
 <h1>Forecast History</h1>
-<p><em>Daily snapshots of the forecast, so a swing in the lowest projected balance can be traced to what actually changed - see the Forecast Accuracy page for why.</em></p>
+<p><em>Snapshots of the forecast captured on every sync, so a swing in the lowest projected balance can be traced to what actually changed - see the Forecast Accuracy page for why.</em></p>
 
 @if (_diff is null && _snapshots is null)
 {
@@ -13,17 +13,52 @@
 }
 else
 {
-    <h2>Changed since yesterday</h2>
+    <h2>Compare two snapshots</h2>
+    @if (_snapshots is null || _snapshots.Count < 2)
+    {
+        <p>Not enough snapshots yet - check back after the next sync.</p>
+    }
+    else
+    {
+        <label>
+            From
+            <select id="compare-from-select" value="@_fromSnapshotId" @onchange="e => _fromSnapshotId = int.Parse((string)e.Value!)">
+                @foreach (var snapshot in _snapshots)
+                {
+                    <option value="@snapshot.Id">@snapshot.CapturedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</option>
+                }
+            </select>
+        </label>
+        <label>
+            To
+            <select id="compare-to-select" value="@_toSnapshotId" @onchange="e => _toSnapshotId = int.Parse((string)e.Value!)">
+                @foreach (var snapshot in _snapshots)
+                {
+                    <option value="@snapshot.Id">@snapshot.CapturedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</option>
+                }
+            </select>
+        </label>
+        <button id="compare-btn" @onclick="CompareAsync">Compare</button>
+    }
+
+    <h2>What changed</h2>
     @if (_diff is null)
     {
-        <p>Not enough snapshots yet - check back after tomorrow's sync.</p>
+        <p>Not enough snapshots yet - check back after the next sync.</p>
     }
-    else if (_diff.Changed.Count == 0 && _diff.Added.Count == 0 && _diff.Removed.Count == 0)
+    else if (_diff.Changed.Count == 0 && _diff.Added.Count == 0 && _diff.Removed.Count == 0 && _diff.Reconciled.Count == 0 && _diff.StartingBalanceChange is null)
     {
         <p>Nothing changed since the last snapshot.</p>
     }
     else
     {
+        @if (_diff.StartingBalanceChange is { } balanceChange)
+        {
+            <p id="starting-balance-change">
+                Starting balance: @balanceChange.OldBalance.ToString("N2") -&gt; @balanceChange.NewBalance.ToString("N2")
+                (@(balanceChange.Delta >= 0 ? "+" : "")@balanceChange.Delta.ToString("N2"))
+            </p>
+        }
         @if (_diff.Changed.Count > 0)
         {
             <table>
@@ -45,6 +80,33 @@ else
                             <td>@change.NewDate.ToString("MM/dd/yyyy")</td>
                             <td class="text-right">@change.OldAmount.ToString("N2")</td>
                             <td class="text-right">@change.NewAmount.ToString("N2")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        @if (_diff.Reconciled.Count > 0)
+        {
+            <h3>Reconciled (budgeted vs. actual)</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Description</th>
+                        <th>Date</th>
+                        <th class="text-right">Budgeted</th>
+                        <th class="text-right">Actual</th>
+                        <th class="text-right">Variance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var line in _diff.Reconciled)
+                    {
+                        <tr>
+                            <td>@line.Description</td>
+                            <td>@line.Date.ToString("MM/dd/yyyy")</td>
+                            <td class="text-right">@line.BudgetedAmount.ToString("N2")</td>
+                            <td class="text-right">@line.ActualAmount.ToString("N2")</td>
+                            <td class="text-right">@(line.Variance >= 0 ? "+" : "")@line.Variance.ToString("N2")</td>
                         </tr>
                     }
                 </tbody>
@@ -82,7 +144,7 @@ else
         <table>
             <thead>
                 <tr>
-                    <th>As Of</th>
+                    <th>Captured</th>
                     <th class="text-right">Lowest Projected Balance</th>
                     <th>On</th>
                 </tr>
@@ -91,7 +153,7 @@ else
                 @foreach (var snapshot in _snapshots)
                 {
                     <tr>
-                        <td>@snapshot.AsOfDate.ToString("MM/dd/yyyy")</td>
+                        <td>@snapshot.CapturedAt.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</td>
                         <td class="text-right">@snapshot.LowestProjectedBalance.ToString("N2")</td>
                         <td>@(snapshot.LowestProjectedBalanceDate?.ToString("MM/dd/yyyy") ?? "-")</td>
                     </tr>
@@ -104,10 +166,26 @@ else
 @code {
     private List<Expense.Domain.Entities.ForecastSnapshot>? _snapshots;
     private ForecastSnapshotDiff? _diff;
+    private int _fromSnapshotId;
+    private int _toSnapshotId;
 
     protected override async Task OnInitializedAsync()
     {
         _snapshots = await HistoryProvider.GetRecentSnapshotsAsync();
         _diff = await HistoryProvider.GetLatestDiffAsync();
+
+        // _snapshots is already ordered newest-first - default the pickers to the two most
+        // recent, matching what GetLatestDiffAsync above already computed, so the initial
+        // view and the picker's own defaults agree.
+        if (_snapshots is { Count: >= 2 })
+        {
+            _toSnapshotId = _snapshots[0].Id;
+            _fromSnapshotId = _snapshots[1].Id;
+        }
+    }
+
+    private async Task CompareAsync()
+    {
+        _diff = await HistoryProvider.GetDiffAsync(_fromSnapshotId, _toSnapshotId);
     }
 }

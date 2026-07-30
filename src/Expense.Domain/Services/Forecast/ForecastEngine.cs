@@ -274,6 +274,7 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     RunningBalance = 0m,
                     AccountId = line.AccountId,
                     OriginalDate = line.Date,
+                    CategoryId = line.CategoryId,
                     IsExcluded = realPosting is not null,
                     ExclusionReason = realPosting is not null ? ConfirmationReason.AutoReconciled : null
                 });
@@ -291,6 +292,7 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     RunningBalance = 0m,
                     AccountId = line.AccountId,
                     OriginalDate = line.Date,
+                    CategoryId = line.CategoryId,
                     IsExcluded = true,
                     ExclusionReason = confirmation.Reason,
                     ConfirmationId = confirmation.Id
@@ -308,6 +310,7 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 RunningBalance = 0m,
                 AccountId = line.AccountId,
                 OriginalDate = line.Date,
+                CategoryId = line.CategoryId,
                 PartialPayments = appliedPartialPayments
                     .Select(p => new PartialPaymentSummary { PartialPaymentId = p.Id, Amount = p.Amount, PaidDate = p.PaidDate })
                     .ToList(),

@@ -10,12 +10,27 @@ public class ForecastHistoryTests : BunitContext
 {
     private class FakeForecastHistoryPageProvider(List<ForecastSnapshot> snapshots, ForecastSnapshotDiff? diff) : IForecastHistoryPageProvider
     {
+        public ForecastSnapshotDiff? NextManualDiffResult { get; set; }
+        public int? LastRequestedOlderSnapshotId { get; private set; }
+        public int? LastRequestedNewerSnapshotId { get; private set; }
+
         public Task<List<ForecastSnapshot>> GetRecentSnapshotsAsync(int days = 30, CancellationToken cancellationToken = default) => Task.FromResult(snapshots);
         public Task<ForecastSnapshotDiff?> GetLatestDiffAsync(CancellationToken cancellationToken = default) => Task.FromResult(diff);
+
+        public Task<ForecastSnapshotDiff?> GetDiffAsync(int olderSnapshotId, int newerSnapshotId, CancellationToken cancellationToken = default)
+        {
+            LastRequestedOlderSnapshotId = olderSnapshotId;
+            LastRequestedNewerSnapshotId = newerSnapshotId;
+            return Task.FromResult(NextManualDiffResult);
+        }
     }
 
-    private void RegisterFakes(List<ForecastSnapshot>? snapshots = null, ForecastSnapshotDiff? diff = null) =>
-        Services.AddSingleton<IForecastHistoryPageProvider>(new FakeForecastHistoryPageProvider(snapshots ?? [], diff));
+    private FakeForecastHistoryPageProvider RegisterFakes(List<ForecastSnapshot>? snapshots = null, ForecastSnapshotDiff? diff = null)
+    {
+        var provider = new FakeForecastHistoryPageProvider(snapshots ?? [], diff);
+        Services.AddSingleton<IForecastHistoryPageProvider>(provider);
+        return provider;
+    }
 
     [Fact]
     public void NoSnapshotsYet_ShowsFriendlyEmptyStates()
@@ -94,5 +109,105 @@ public class ForecastHistoryTests : BunitContext
         var cut = Render<ForecastHistory>();
 
         Assert.Contains("Nothing changed since the last snapshot", cut.Markup);
+    }
+
+    [Fact]
+    public void StartingBalanceChange_IsShownExplicitly_WithTheDelta()
+    {
+        var diff = new ForecastSnapshotDiff
+        {
+            StartingBalanceChange = new StartingBalanceChange { OldBalance = 4488.63m, NewBalance = 4418.31m }
+        };
+        RegisterFakes(diff: diff);
+
+        var cut = Render<ForecastHistory>();
+
+        Assert.Contains("4,488.63", cut.Markup);
+        Assert.Contains("4,418.31", cut.Markup);
+        Assert.Contains("-70.32", cut.Markup);
+    }
+
+    [Fact]
+    public void StartingBalanceChangeAlone_WithNoLineChanges_DoesNotShowTheNothingChangedMessage()
+    {
+        var diff = new ForecastSnapshotDiff
+        {
+            StartingBalanceChange = new StartingBalanceChange { OldBalance = 4488.63m, NewBalance = 4418.31m }
+        };
+        RegisterFakes(diff: diff);
+
+        var cut = Render<ForecastHistory>();
+
+        Assert.DoesNotContain("Nothing changed since the last snapshot", cut.Markup);
+    }
+
+    [Fact]
+    public void ReconciledLine_ShowsBudgetedAndActualAmounts_AndTheVariance()
+    {
+        var diff = new ForecastSnapshotDiff
+        {
+            Reconciled =
+            [
+                new ReconciledLine { Description = "Groceries", AccountId = 1, Date = new DateOnly(2026, 7, 25), BudgetedAmount = -150m, ActualAmount = -162.37m }
+            ]
+        };
+        RegisterFakes(diff: diff);
+
+        var cut = Render<ForecastHistory>();
+
+        Assert.Contains("Groceries", cut.Markup);
+        Assert.Contains("-150.00", cut.Markup);
+        Assert.Contains("-162.37", cut.Markup);
+        Assert.Contains("12.37", cut.Markup);
+    }
+
+    [Fact]
+    public void ReconciledLineAlone_WithNoOtherChanges_DoesNotShowTheNothingChangedMessage()
+    {
+        var diff = new ForecastSnapshotDiff
+        {
+            Reconciled = [new ReconciledLine { Description = "Groceries", AccountId = 1, Date = new DateOnly(2026, 7, 25), BudgetedAmount = -150m, ActualAmount = -162.37m }]
+        };
+        RegisterFakes(diff: diff);
+
+        var cut = Render<ForecastHistory>();
+
+        Assert.DoesNotContain("Nothing changed since the last snapshot", cut.Markup);
+    }
+
+    [Fact]
+    public void SnapshotPickers_DefaultToTheTwoMostRecentSnapshots()
+    {
+        RegisterFakes(snapshots:
+        [
+            new ForecastSnapshot { Id = 3, AsOfDate = new DateOnly(2026, 7, 24), CapturedAt = new DateTimeOffset(2026, 7, 24, 15, 0, 0, TimeSpan.Zero), StartingBalance = 1000m, LowestProjectedBalance = 250m },
+            new ForecastSnapshot { Id = 2, AsOfDate = new DateOnly(2026, 7, 24), CapturedAt = new DateTimeOffset(2026, 7, 24, 6, 0, 0, TimeSpan.Zero), StartingBalance = 1000m, LowestProjectedBalance = 300m },
+            new ForecastSnapshot { Id = 1, AsOfDate = new DateOnly(2026, 7, 23), CapturedAt = new DateTimeOffset(2026, 7, 23, 6, 0, 0, TimeSpan.Zero), StartingBalance = 1000m, LowestProjectedBalance = 1100m }
+        ]);
+
+        var cut = Render<ForecastHistory>();
+
+        Assert.Equal("2", cut.Find("#compare-from-select").GetAttribute("value"));
+        Assert.Equal("3", cut.Find("#compare-to-select").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void ClickingCompare_RequestsTheDiffForTheSelectedSnapshots()
+    {
+        var provider = RegisterFakes(snapshots:
+        [
+            new ForecastSnapshot { Id = 3, AsOfDate = new DateOnly(2026, 7, 24), CapturedAt = new DateTimeOffset(2026, 7, 24, 15, 0, 0, TimeSpan.Zero), StartingBalance = 1000m, LowestProjectedBalance = 250m },
+            new ForecastSnapshot { Id = 2, AsOfDate = new DateOnly(2026, 7, 24), CapturedAt = new DateTimeOffset(2026, 7, 24, 6, 0, 0, TimeSpan.Zero), StartingBalance = 1000m, LowestProjectedBalance = 300m },
+            new ForecastSnapshot { Id = 1, AsOfDate = new DateOnly(2026, 7, 23), CapturedAt = new DateTimeOffset(2026, 7, 23, 6, 0, 0, TimeSpan.Zero), StartingBalance = 1000m, LowestProjectedBalance = 1100m }
+        ]);
+        provider.NextManualDiffResult = new ForecastSnapshotDiff();
+        var cut = Render<ForecastHistory>();
+
+        cut.Find("#compare-from-select").Change("1");
+        cut.Find("#compare-to-select").Change("2");
+        cut.Find("#compare-btn").Click();
+
+        Assert.Equal(1, provider.LastRequestedOlderSnapshotId);
+        Assert.Equal(2, provider.LastRequestedNewerSnapshotId);
     }
 }

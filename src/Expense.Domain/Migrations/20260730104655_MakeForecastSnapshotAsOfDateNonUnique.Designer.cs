@@ -3,6 +3,7 @@ using System;
 using Expense.Domain.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Expense.Domain.Migrations
 {
     [DbContext(typeof(ExpenseDbContext))]
-    partial class ExpenseDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260730104655_MakeForecastSnapshotAsOfDateNonUnique")]
+    partial class MakeForecastSnapshotAsOfDateNonUnique
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -508,10 +511,6 @@ namespace Expense.Domain.Migrations
                     b.Property<decimal>("Amount")
                         .HasColumnType("numeric")
                         .HasColumnName("amount");
-
-                    b.Property<int?>("CategoryId")
-                        .HasColumnType("integer")
-                        .HasColumnName("category_id");
 
                     b.Property<DateOnly>("Date")
                         .HasColumnType("date")
