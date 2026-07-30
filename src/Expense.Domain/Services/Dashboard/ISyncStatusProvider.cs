@@ -7,9 +7,11 @@ public interface ISyncStatusProvider
 {
     Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default);
     Task<ImportRun?> GetLastAmazonGmailRunAsync(CancellationToken cancellationToken = default);
+    Task<ImportRun?> GetLastPlaidRunAsync(CancellationToken cancellationToken = default);
     Task<ImportRun> RunSimpleFinSyncAsync(CancellationToken cancellationToken = default);
     Task<ImportRun> RunAmazonGmailSyncAsync(Action<SyncProgressLine>? onProgress = null, CancellationToken cancellationToken = default);
-    Task<PlaidImportResult> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default);
+    Task<ImportRun> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default);
+    Task<ImportRun> RunScheduledPlaidSyncAsync(CancellationToken cancellationToken = default);
 
     Task<RecentRunsPage> GetRecentRunsAsync(ImportSource source, int page, int pageSize, CancellationToken cancellationToken = default);
     Task<List<SyncProgressLine>> GetRunProgressLogAsync(int importRunId, CancellationToken cancellationToken = default);

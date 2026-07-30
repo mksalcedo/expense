@@ -8,8 +8,8 @@ using Microsoft.Extensions.Options;
 namespace Expense.Domain.Services.Scheduling;
 
 /// <summary>
-/// Runs SimpleFin then Amazon Gmail sync automatically at the configured times of day
-/// (see AppSettings.ScheduledSyncTimesLocal), via the exact same ISyncStatusProvider
+/// Runs SimpleFin, then Amazon Gmail, then Plaid sync automatically at the configured
+/// times of day (see AppSettings.ScheduledSyncTimesLocal), via the exact same ISyncStatusProvider
 /// methods the manual Sync Now buttons call, so scheduled and manual runs behave
 /// identically and share the same ImportRun tracking (and, since SyncStatusProvider itself
 /// captures a ForecastSnapshot after each successful sync - see
@@ -56,11 +56,15 @@ public class SyncScheduler(IServiceScopeFactory scopeFactory, IOptions<AppSettin
         using var scope = scopeFactory.CreateScope();
         var syncStatus = scope.ServiceProvider.GetRequiredService<ISyncStatusProvider>();
 
-        // RunSimpleFinSyncAsync/RunAmazonGmailSyncAsync already catch broadly and record a
-        // failed ImportRun themselves, so no per-source try/catch is needed here - only a
-        // truly unexpected failure (e.g. a database connectivity issue) would ever reach
-        // the outer loop's own catch above.
-        await syncStatus.RunSimpleFinSyncAsync(cancellationToken);
+        // RunSimpleFinSyncAsync/RunAmazonGmailSyncAsync/RunScheduledPlaidSyncAsync already
+        // catch broadly and record a failed ImportRun themselves, so no per-source
+        // try/catch is needed here - only a truly unexpected failure (e.g. a database
+        // connectivity issue) would ever reach the outer loop's own catch above.
+        if (options.Value.SimpleFinEnabled)
+        {
+            await syncStatus.RunSimpleFinSyncAsync(cancellationToken);
+        }
         await syncStatus.RunAmazonGmailSyncAsync(cancellationToken: cancellationToken);
+        await syncStatus.RunScheduledPlaidSyncAsync(cancellationToken);
     }
 }

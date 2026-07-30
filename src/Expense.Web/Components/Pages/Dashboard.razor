@@ -18,7 +18,7 @@
 }
 else
 {
-    @if (_lastSimpleFinRun is { Success: false } || _lastAmazonRun is { Success: false })
+    @if (_lastSimpleFinRun is { Success: false } || _lastAmazonRun is { Success: false } || _lastPlaidRun is { Success: false })
     {
         <div id="sync-failure-banner" style="background:#fee2e2; color:#7f1d1d; border:1px solid #fca5a5; border-radius:6px; padding:0.75em 1em; margin-bottom:1em;">
             <strong>Sync issue:</strong>
@@ -29,6 +29,10 @@ else
             @if (_lastAmazonRun is { Success: false } failedAmazon)
             {
                 <div>Amazon sync failed: @failedAmazon.ErrorMessage</div>
+            }
+            @if (_lastPlaidRun is { Success: false } failedPlaid)
+            {
+                <div>Plaid sync failed: @failedPlaid.ErrorMessage</div>
             }
             <div><a href="/import-data">Go to Import Data</a></div>
         </div>
@@ -100,6 +104,7 @@ else
     private SpendingTrackerPageData? _spendingTracker;
     private ImportRun? _lastSimpleFinRun;
     private ImportRun? _lastAmazonRun;
+    private ImportRun? _lastPlaidRun;
 
     protected override async Task OnInitializedAsync()
     {
@@ -116,6 +121,7 @@ else
         _spendingTracker = await SpendingTrackerProvider.GetSpendingTrackerAsync();
         _lastSimpleFinRun = await SyncStatusProvider.GetLastSimpleFinRunAsync();
         _lastAmazonRun = await SyncStatusProvider.GetLastAmazonGmailRunAsync();
+        _lastPlaidRun = await SyncStatusProvider.GetLastPlaidRunAsync();
     }
 
     // Mirrors Forecast.razor's own row styling, so a deferred/excluded payment looks the

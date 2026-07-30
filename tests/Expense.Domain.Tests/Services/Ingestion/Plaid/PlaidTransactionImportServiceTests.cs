@@ -1,6 +1,7 @@
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Ingestion;
+using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Services.Ingestion.Plaid;
 using Expense.Domain.Tests.TestSupport;
 using Microsoft.EntityFrameworkCore;
@@ -357,5 +358,107 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
 
         Assert.Empty(await Context.CheckingBalanceSnapshots.ToListAsync());
         Assert.Equal(0, summary.BalanceSnapshotsAdded);
+    }
+
+    [Fact]
+    public async Task ImportAsync_EmitsOneProgressLinePerAddedTransaction_PlusAFinalSummaryLine()
+    {
+        var account = await CreateCheckingAccountAsync();
+        var lines = new List<SyncProgressLine>();
+
+        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero), lines.Add);
+
+        Assert.Contains(lines, l => l.Text.Contains("Chipotle Mexican Grill") && l.Text.Contains("added"));
+        Assert.Contains(lines, l => l.Text.Contains("PAYROLL") && l.Text.Contains("added"));
+        Assert.Contains(lines, l => l.Text.StartsWith("Done"));
+    }
+
+    [Fact]
+    public async Task ImportAsync_EmitsADuplicateLine_ForATransactionAlreadyImportedFromAnotherSource()
+    {
+        var account = await CreateCheckingAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 24), PostedDate = new DateOnly(2026, 7, 24),
+            Description = "OASISBATCH PAYROLL 260724 G1923022160 MARK SALCEDO", Amount = 4492.86m,
+            ImportSource = "SimpleFin", ExternalId = "simplefin-own-id-999", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+        var lines = new List<SyncProgressLine>();
+
+        await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero), lines.Add);
+
+        Assert.Contains(lines, l => l.Text.Contains("PAYROLL") && l.Text.Contains("duplicate"));
+    }
+
+    [Fact]
+    public async Task ImportAsync_EmitsAMergedLine_ForAPostedTransactionMergedIntoAPendingRow()
+    {
+        var account = await CreateCheckingAccountAsync();
+        var accountMap = BuildAccountMap(account);
+        var sut = CreateSut();
+        await sut.ImportAsync(Context, PendingChatGptCliOutput, accountMap, new DateTimeOffset(2026, 7, 27, 12, 0, 0, TimeSpan.Zero));
+        var pendingRow = await Context.BankTransactions.SingleAsync();
+        var lines = new List<SyncProgressLine>();
+
+        await sut.ImportAsync(Context, PostedChatGptCliOutput, accountMap, new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.Zero), lines.Add);
+
+        Assert.Contains(lines, l => l.Text.Contains("OPENAI") && l.Text.Contains("merged") && l.Text.Contains($"id {pendingRow.Id}"));
+    }
+
+    [Fact]
+    public async Task ImportAsync_EmitsAnErrorLine_ForAnUnmappedAccount()
+    {
+        var lines = new List<SyncProgressLine>();
+
+        await CreateSut().ImportAsync(Context, SampleCliOutput, new Dictionary<string, int>(), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero), lines.Add);
+
+        Assert.Contains(lines, l => l.Text.Contains("plaid-checking-1") && l.Text.Contains("unmapped") && l.IsError);
+    }
+
+    // Real scenario this guards (found live 2026-07-29): Plaid can re-report an
+    // already-resolved (already posted in our system) real transaction as pending again,
+    // under a brand new transaction_id with no pending_transaction_id link back to
+    // anything - confirmed for real, 4 transactions duplicated this way. Nothing
+    // previously checked an incoming *pending* transaction against an already-*posted*
+    // existing row - ExistsForAccountDateAmountAsync only ever ran for posted incoming
+    // transactions (it needs a postedDate to compare), and FindPendingMatchAsync only
+    // matches posted incoming transactions against pending existing rows, not the reverse.
+    [Fact]
+    public async Task ImportAsync_APendingTransactionMatchingAnAlreadyPostedRow_IsSkipped_NotDuplicated()
+    {
+        var account = await CreateCheckingAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 24), PostedDate = new DateOnly(2026, 7, 24),
+            Description = "Chipotle Mexican Grill", Amount = -33.87m,
+            ImportSource = "Plaid", ExternalId = "already-resolved-id", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(1, summary.TransactionsAdded); // only the payroll deposit is genuinely new
+        Assert.Equal(1, summary.DuplicatesSkipped); // the pending Chipotle re-report is recognized as already resolved
+        Assert.Equal(2, await Context.BankTransactions.CountAsync()); // pre-seeded Chipotle + payroll, not 3
+    }
+
+    [Fact]
+    public async Task ImportAsync_APendingTransactionFarOutsideTheWindowFromAnAlreadyPostedRow_ImportsNormally()
+    {
+        var account = await CreateCheckingAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 1), PostedDate = new DateOnly(2026, 6, 1),
+            Description = "Chipotle Mexican Grill", Amount = -33.87m,
+            ImportSource = "Plaid", ExternalId = "unrelated-older-charge", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(2, summary.TransactionsAdded); // Chipotle (genuinely new pending) + payroll
+        Assert.Equal(0, summary.DuplicatesSkipped);
+        Assert.Equal(3, await Context.BankTransactions.CountAsync());
     }
 }

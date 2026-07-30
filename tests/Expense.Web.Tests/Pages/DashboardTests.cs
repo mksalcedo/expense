@@ -32,13 +32,15 @@ public class DashboardTests : BunitContext
 
     // Only Dashboard.razor's narrow "did the last sync fail" read is exercised here - the
     // full sync UI (buttons, modal, issues) lives on Import Data and is tested there instead.
-    private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null) : ISyncStatusProvider
+    private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null) : ISyncStatusProvider
     {
         public Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastSimpleFinRun);
         public Task<ImportRun?> GetLastAmazonGmailRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastAmazonRun);
+        public Task<ImportRun?> GetLastPlaidRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastPlaidRun);
         public Task<ImportRun> RunSimpleFinSyncAsync(CancellationToken cancellationToken = default) => Task.FromResult(new ImportRun { Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true });
         public Task<ImportRun> RunAmazonGmailSyncAsync(Action<SyncProgressLine>? onProgress = null, CancellationToken cancellationToken = default) => Task.FromResult(new ImportRun { Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true });
-        public Task<PlaidImportResult> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default) => Task.FromResult(new PlaidImportResult(true, "ok"));
+        public Task<ImportRun> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default) => Task.FromResult(new ImportRun { Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true });
+        public Task<ImportRun> RunScheduledPlaidSyncAsync(CancellationToken cancellationToken = default) => Task.FromResult(new ImportRun { Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true });
         public Task<RecentRunsPage> GetRecentRunsAsync(ImportSource source, int page, int pageSize, CancellationToken cancellationToken = default) => Task.FromResult(new RecentRunsPage { Runs = [], TotalCount = 0 });
         public Task<List<SyncProgressLine>> GetRunProgressLogAsync(int importRunId, CancellationToken cancellationToken = default) => Task.FromResult(new List<SyncProgressLine>());
         public Task<List<SyncIssue>> GetActiveSyncIssuesAsync(CancellationToken cancellationToken = default) => Task.FromResult(new List<SyncIssue>());
@@ -74,11 +76,11 @@ public class DashboardTests : BunitContext
         }
     };
 
-    private void RegisterFakes(ForecastResult? forecast = null, ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null)
+    private void RegisterFakes(ForecastResult? forecast = null, ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null)
     {
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(forecast ?? MakeForecast()));
         Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeSpendingTracker()));
-        Services.AddSingleton<ISyncStatusProvider>(new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun));
+        Services.AddSingleton<ISyncStatusProvider>(new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun, lastPlaidRun));
     }
 
     [Fact]
@@ -291,6 +293,18 @@ public class DashboardTests : BunitContext
 
         var banner = cut.Find("#sync-failure-banner");
         Assert.Contains("Gmail OAuth token expired", banner.TextContent);
+    }
+
+    [Fact]
+    public void Dashboard_ShowsAFailureBanner_WhenTheLastPlaidSyncFailed()
+    {
+        var failedRun = new ImportRun { Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = false, ErrorMessage = "plaid-cli exited with code 1" };
+        RegisterFakes(lastPlaidRun: failedRun);
+
+        var cut = Render<Dashboard>();
+
+        var banner = cut.Find("#sync-failure-banner");
+        Assert.Contains("plaid-cli exited with code 1", banner.TextContent);
     }
 
     [Fact]

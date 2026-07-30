@@ -100,7 +100,8 @@
     {
         var lastSimpleFinRun = await SyncStatusProvider.GetLastSimpleFinRunAsync();
         var lastAmazonRun = await SyncStatusProvider.GetLastAmazonGmailRunAsync();
-        _failedSyncCount = (lastSimpleFinRun is { Success: false } ? 1 : 0) + (lastAmazonRun is { Success: false } ? 1 : 0);
+        var lastPlaidRun = await SyncStatusProvider.GetLastPlaidRunAsync();
+        _failedSyncCount = (lastSimpleFinRun is { Success: false } ? 1 : 0) + (lastAmazonRun is { Success: false } ? 1 : 0) + (lastPlaidRun is { Success: false } ? 1 : 0);
     }
 
     // The app runs in a chromeless Chrome window (see scripts/start-expense.sh) with no

@@ -2,14 +2,16 @@ using Bunit;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Dashboard;
 using Expense.Domain.Services.Ingestion.Amazon;
+using Expense.Domain.Settings;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Expense.Web.Tests.Pages;
 
 public class ImportDataTests : BunitContext
 {
-    private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null) : ISyncStatusProvider
+    private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null) : ISyncStatusProvider
     {
         public int SimpleFinRunCount { get; private set; }
         public int AmazonGmailRunCount { get; private set; }
@@ -19,6 +21,7 @@ public class ImportDataTests : BunitContext
 
         public Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastSimpleFinRun);
         public Task<ImportRun?> GetLastAmazonGmailRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastAmazonRun);
+        public Task<ImportRun?> GetLastPlaidRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastPlaidRun);
 
         public Task<ImportRun> RunSimpleFinSyncAsync(CancellationToken cancellationToken = default)
         {
@@ -46,20 +49,30 @@ public class ImportDataTests : BunitContext
         public int PlaidImportCount { get; private set; }
         public DateOnly? LastPlaidStartDate { get; private set; }
         public DateOnly? LastPlaidEndDate { get; private set; }
-        public PlaidImportResult NextPlaidImportResult { get; set; } = new(true, "Transactions added: 0, duplicates skipped: 0, balance snapshots added: 1");
+        public ImportRun NextPlaidImportRun { get; set; } = new() { Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "Transactions added: 0, duplicates skipped: 0, pending transactions updated: 0, balance snapshots added: 1" };
 
-        public Task<PlaidImportResult> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default)
+        public Task<ImportRun> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default)
         {
             PlaidImportCount++;
             LastPlaidStartDate = startDate;
             LastPlaidEndDate = endDate;
-            return Task.FromResult(NextPlaidImportResult);
+            return Task.FromResult(NextPlaidImportRun);
+        }
+
+        public int ScheduledPlaidRunCount { get; private set; }
+        public ImportRun NextScheduledPlaidRunResult { get; set; } = new() { Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" };
+
+        public Task<ImportRun> RunScheduledPlaidSyncAsync(CancellationToken cancellationToken = default)
+        {
+            ScheduledPlaidRunCount++;
+            return Task.FromResult(NextScheduledPlaidRunResult);
         }
 
         public Dictionary<ImportSource, List<ImportRun>> RecentRuns { get; set; } = new()
         {
             [ImportSource.SimpleFin] = [],
-            [ImportSource.AmazonGmail] = []
+            [ImportSource.AmazonGmail] = [],
+            [ImportSource.Plaid] = []
         };
         public Dictionary<int, List<SyncProgressLine>> ProgressLogsByRunId { get; set; } = [];
 
@@ -97,11 +110,47 @@ public class ImportDataTests : BunitContext
         }
     }
 
-    private FakeSyncStatusProvider RegisterFakes(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, List<SyncIssue>? activeSyncIssues = null)
+    private FakeSyncStatusProvider RegisterFakes(
+        ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null,
+        List<SyncIssue>? activeSyncIssues = null, bool simpleFinEnabled = true)
     {
-        var provider = new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun) { ActiveSyncIssues = activeSyncIssues ?? [] };
+        var provider = new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun, lastPlaidRun) { ActiveSyncIssues = activeSyncIssues ?? [] };
         Services.AddSingleton<ISyncStatusProvider>(provider);
+        Services.AddSingleton<IOptions<AppSettings>>(Options.Create(new AppSettings { SimpleFinEnabled = simpleFinEnabled }));
         return provider;
+    }
+
+    [Fact]
+    public void SimpleFinSection_IsShown_WhenSimpleFinIsEnabled()
+    {
+        RegisterFakes(simpleFinEnabled: true);
+
+        var cut = Render<ImportData>();
+
+        Assert.NotEmpty(cut.FindAll("#sync-simplefin-btn"));
+    }
+
+    [Fact]
+    public void SimpleFinSection_IsHidden_WhenSimpleFinIsDisabled()
+    {
+        RegisterFakes(simpleFinEnabled: false);
+
+        var cut = Render<ImportData>();
+
+        Assert.Empty(cut.FindAll("#sync-simplefin-btn"));
+        Assert.Empty(cut.FindAll("#sync-simplefin-status"));
+        Assert.Empty(cut.FindAll("#simplefin-recent-runs"));
+    }
+
+    [Fact]
+    public void AmazonAndPlaidSections_StillShow_WhenSimpleFinIsDisabled()
+    {
+        RegisterFakes(simpleFinEnabled: false);
+
+        var cut = Render<ImportData>();
+
+        Assert.NotEmpty(cut.FindAll("#sync-amazon-btn"));
+        Assert.NotEmpty(cut.FindAll("#run-plaid-import-btn"));
     }
 
     [Fact]
@@ -400,6 +449,26 @@ public class ImportDataTests : BunitContext
     }
 
     [Fact]
+    public void RecentRunsSection_ListsPastPlaidRuns_ScheduledAndManualAlike()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.Plaid] =
+        [
+            new ImportRun { Id = 5, Source = ImportSource.Plaid, RanAt = new DateTimeOffset(2026, 7, 29, 15, 0, 0, TimeSpan.Zero), Success = true, Summary = "scheduled run" },
+            new ImportRun { Id = 4, Source = ImportSource.Plaid, RanAt = new DateTimeOffset(2026, 7, 29, 6, 0, 0, TimeSpan.Zero), Success = false, ErrorMessage = "plaid-cli exited with code 1" }
+        ];
+
+        var cut = Render<ImportData>();
+
+        var section = cut.Find("#plaid-recent-runs");
+        var rows = section.QuerySelectorAll("tbody tr");
+        Assert.Equal(2, rows.Length);
+        Assert.Contains("scheduled run", rows[0].TextContent);
+        Assert.Contains("FAILED", rows[1].TextContent);
+        Assert.Contains("plaid-cli exited with code 1", rows[1].TextContent);
+    }
+
+    [Fact]
     public void ClickingViewDetails_OpensTheDetailModal_WithThatRunsPersistedProgressLog()
     {
         var fake = RegisterFakes();
@@ -420,6 +489,118 @@ public class ImportDataTests : BunitContext
         Assert.Contains("Found 1 order confirmation email(s)", modal.TextContent);
         Assert.Contains("113-TEST", modal.TextContent);
         Assert.Contains("Added: Widget", modal.TextContent);
+    }
+
+    [Fact]
+    public void ClickingViewDetails_ShowsTheRawResponse_BelowTheParsedProgressLog_WhenOneWasCaptured()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.Plaid] =
+        [
+            new ImportRun { Id = 9, Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok", RawResponse = """{"transactions":[{"transaction_id":"txn-raw-check"}]}""" }
+        ];
+        fake.ProgressLogsByRunId[9] = [new SyncProgressLine("Netflix -26.99 (07/28/2026) - added")];
+        var cut = Render<ImportData>();
+
+        cut.Find("#view-run-details-9").Click();
+
+        var modal = cut.Find("#run-detail-modal");
+        Assert.Contains("Netflix", modal.TextContent);
+        Assert.Contains("txn-raw-check", modal.TextContent);
+    }
+
+    [Fact]
+    public void ClickingViewDetails_RendersPlaidStyleLines_AsATable_WithOneRowPerTransaction()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.Plaid] =
+        [
+            new ImportRun { Id = 9, Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" }
+        ];
+        fake.ProgressLogsByRunId[9] =
+        [
+            new SyncProgressLine("Netflix -26.99 (07/28/2026) - added"),
+            new SyncProgressLine("Chipotle Mexican Grill -33.87 (07/27/2026) - duplicate, already imported"),
+            new SyncProgressLine("Costco -55.00 (07/28/2026) - unmapped account plaid-checking-9, skipped", IsError: true),
+            new SyncProgressLine("Done - transactions added: 1, duplicates skipped: 1, pending transactions updated: 0, balance snapshots added: 0")
+        ];
+        var cut = Render<ImportData>();
+
+        cut.Find("#view-run-details-9").Click();
+
+        var modal = cut.Find("#run-detail-modal");
+        var rows = modal.QuerySelectorAll("table tbody tr");
+        Assert.Equal(3, rows.Length);
+        Assert.Contains("Netflix", rows[0].TextContent);
+        Assert.Contains("-26.99", rows[0].TextContent);
+        Assert.Contains("07/28/2026", rows[0].TextContent);
+        Assert.Contains("added", rows[0].TextContent);
+        Assert.Contains("duplicate, already imported", rows[1].TextContent);
+        Assert.Contains("unmapped account", rows[2].TextContent);
+        // The final "Done" summary doesn't fit the per-transaction shape - it renders
+        // outside the table instead of as a broken row.
+        Assert.Contains("Done - transactions added: 1", modal.TextContent);
+        Assert.DoesNotContain("Done - transactions added: 1", modal.QuerySelector("table")!.TextContent);
+    }
+
+    [Fact]
+    public void ClickingViewDetails_IncludesLinesWithThousandsSeparatorAmounts_InTheTable()
+    {
+        // Real bug found live 2026-07-30: N2 formatting inserts a thousands-separator
+        // comma for amounts >= $1,000 (e.g. "-3,852.27") - the parsing regex didn't
+        // account for it, so every large-amount line silently fell out of the table and
+        // rendered as a stray line below it instead.
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.Plaid] =
+        [
+            new ImportRun { Id = 9, Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" }
+        ];
+        fake.ProgressLogsByRunId[9] =
+        [
+            new SyncProgressLine("Netflix -26.99 (07/28/2026) - added"),
+            new SyncProgressLine("AMERICAN EXPRESS ACH PMT 260724 W8172 MARK SALCEDO -3,852.27 (07/24/2026) - duplicate, already imported"),
+            new SyncProgressLine("OASISBATCH PAYROLL 260724 G1923022160 MARK SALCEDO 4,492.86 (07/24/2026) - duplicate, already imported")
+        ];
+        var cut = Render<ImportData>();
+
+        cut.Find("#view-run-details-9").Click();
+
+        var modal = cut.Find("#run-detail-modal");
+        var rows = modal.QuerySelectorAll("table tbody tr");
+        Assert.Equal(3, rows.Length);
+        Assert.Contains(rows, r => r.TextContent.Contains("-3,852.27"));
+        Assert.Contains(rows, r => r.TextContent.Contains("4,492.86"));
+    }
+
+    [Fact]
+    public void ClickingViewDetails_DoesNotRenderATable_ForNonPlaidStyleLines()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.AmazonGmail] =
+        [
+            new ImportRun { Id = 5, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" }
+        ];
+        fake.ProgressLogsByRunId[5] = [new SyncProgressLine("Found 1 order confirmation email(s) to check.")];
+        var cut = Render<ImportData>();
+
+        cut.Find("#view-run-details-5").Click();
+
+        Assert.Empty(cut.Find("#run-detail-modal").QuerySelectorAll("table"));
+    }
+
+    [Fact]
+    public void ClickingViewDetails_ShowsNoRawResponseSection_WhenNoneWasCaptured()
+    {
+        var fake = RegisterFakes();
+        fake.RecentRuns[ImportSource.AmazonGmail] =
+        [
+            new ImportRun { Id = 5, Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true, Summary = "ok" }
+        ];
+        var cut = Render<ImportData>();
+
+        cut.Find("#view-run-details-5").Click();
+
+        Assert.Empty(cut.FindAll("#run-detail-raw-response"));
     }
 
     [Fact]
@@ -536,26 +717,33 @@ public class ImportDataTests : BunitContext
     public void PlaidImport_OnSuccess_ShowsTheResultSummary()
     {
         var fake = RegisterFakes();
-        fake.NextPlaidImportResult = new PlaidImportResult(true, "Transactions added: 3, duplicates skipped: 12, balance snapshots added: 1");
+        fake.NextPlaidImportRun = new ImportRun
+        {
+            Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true,
+            Summary = "Transactions added: 3, duplicates skipped: 12, pending transactions updated: 0, balance snapshots added: 1"
+        };
         var cut = Render<ImportData>();
 
         cut.Find("#run-plaid-import-btn").Click();
 
-        var result = cut.Find("#plaid-import-result");
-        Assert.Contains("Transactions added: 3", result.TextContent);
-        Assert.DoesNotContain("FAILED", result.TextContent);
+        Assert.DoesNotContain("FAILED", cut.Find("#sync-plaid-status").TextContent);
+        Assert.Contains("Transactions added: 3", cut.Find("#sync-plaid-summary").TextContent);
     }
 
     [Fact]
     public void PlaidImport_OnFailure_ShowsTheErrorClearly()
     {
         var fake = RegisterFakes();
-        fake.NextPlaidImportResult = new PlaidImportResult(false, "plaid-cli not found at /home/user/bin/plaid-cli.");
+        fake.NextPlaidImportRun = new ImportRun
+        {
+            Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = false,
+            ErrorMessage = "plaid-cli not found at /home/user/bin/plaid-cli."
+        };
         var cut = Render<ImportData>();
 
         cut.Find("#run-plaid-import-btn").Click();
 
-        Assert.Contains("FAILED: plaid-cli not found", cut.Find("#plaid-import-result").TextContent);
+        Assert.Contains("FAILED: plaid-cli not found", cut.Find("#sync-plaid-status").TextContent);
     }
 
     [Fact]

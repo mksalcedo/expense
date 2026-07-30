@@ -2,6 +2,7 @@ using System.Text.Json;
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Categorization;
+using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Services.Ingestion.SimpleFin;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,7 +19,7 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
 {
     public async Task<ImportSummary> ImportAsync(
         ExpenseDbContext context, string rawCliOutput, IReadOnlyDictionary<string, int> accountMap, DateTimeOffset asOfTimestamp,
-        CancellationToken cancellationToken = default)
+        Action<SyncProgressLine>? onProgress = null, CancellationToken cancellationToken = default)
     {
         var summary = new ImportSummary();
         var payload = ParsePayload(rawCliOutput);
@@ -53,6 +54,8 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
             if (!accountMap.TryGetValue(txn.AccountId, out var localAccountId))
             {
                 summary.UnmappedAccounts.Add(txn.AccountId);
+                onProgress?.Invoke(new SyncProgressLine(
+                    $"{txn.Name} {-txn.Amount:N2} ({txn.Date:MM/dd/yyyy}) - unmapped account {txn.AccountId}, skipped", IsError: true));
                 continue;
             }
 
@@ -89,6 +92,8 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
                     pendingRow.Amount = amount;
                     pendingRow.ExternalId = txn.TransactionId;
                     summary.PendingTransactionsUpdated++;
+                    onProgress?.Invoke(new SyncProgressLine(
+                        $"{txn.Name} {amount:N2} ({txn.Date:MM/dd/yyyy}) - merged into pending row (id {pendingRow.Id})"));
                     continue;
                 }
             }
@@ -101,9 +106,20 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
                 isDuplicate = await dedup.ExistsForAccountDateAmountAsync(context, localAccountId, postedDate.Value, amount);
             }
 
+            if (!isDuplicate && txn.Pending)
+            {
+                // This pending transaction might actually represent a real charge we've
+                // already fully resolved (posted) - Plaid can re-report an already-settled
+                // transaction as pending again under a brand new id, confirmed for real on
+                // 2026-07-29 (4 real transactions). Skip it rather than creating a
+                // redundant pending shadow of something already resolved.
+                isDuplicate = await dedup.ExistsAlreadyPostedAsync(context, localAccountId, amount, txn.Date);
+            }
+
             if (isDuplicate)
             {
                 summary.DuplicatesSkipped++;
+                onProgress?.Invoke(new SyncProgressLine($"{txn.Name} {amount:N2} ({txn.Date:MM/dd/yyyy}) - duplicate, already imported"));
                 continue;
             }
 
@@ -125,7 +141,12 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
             context.BankTransactions.Add(bankTransaction);
             summary.TransactionsAdded++;
             summary.NewTransactions.Add(bankTransaction);
+            onProgress?.Invoke(new SyncProgressLine($"{txn.Name} {amount:N2} ({txn.Date:MM/dd/yyyy}) - added"));
         }
+
+        onProgress?.Invoke(new SyncProgressLine(
+            $"Done - transactions added: {summary.TransactionsAdded}, duplicates skipped: {summary.DuplicatesSkipped}, " +
+            $"pending transactions updated: {summary.PendingTransactionsUpdated}, balance snapshots added: {summary.BalanceSnapshotsAdded}"));
 
         await context.SaveChangesAsync(cancellationToken);
         return summary;

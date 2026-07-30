@@ -10,4 +10,10 @@ public class AppSettings
     public string DatabaseBackupDirectory { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "dev", "expense", "db_backups");
     public string DatabaseContainerName { get; set; } = "expense_db";
+
+    /// <summary>Plaid is now the primary scheduled source (see SyncScheduler) - SimpleFin
+    /// is kept disabled rather than removed, in case it's ever needed again. When false,
+    /// the scheduler skips it and its section disappears from the Import Data page, but
+    /// its own code/tests/history are untouched.</summary>
+    public bool SimpleFinEnabled { get; set; } = true;
 }

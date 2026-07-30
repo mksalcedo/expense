@@ -27,13 +27,15 @@ public class NavMenuTests : BunitContext
 
     // Only NavMenu.razor's narrow "did the last sync fail" read is exercised here - the
     // full sync UI (buttons, modal, history, issues) lives on Sync Now and is tested there.
-    private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null) : ISyncStatusProvider
+    private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null) : ISyncStatusProvider
     {
         public Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastSimpleFinRun);
         public Task<ImportRun?> GetLastAmazonGmailRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastAmazonRun);
+        public Task<ImportRun?> GetLastPlaidRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastPlaidRun);
         public Task<ImportRun> RunSimpleFinSyncAsync(CancellationToken cancellationToken = default) => Task.FromResult(new ImportRun { Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true });
         public Task<ImportRun> RunAmazonGmailSyncAsync(Action<SyncProgressLine>? onProgress = null, CancellationToken cancellationToken = default) => Task.FromResult(new ImportRun { Source = ImportSource.AmazonGmail, RanAt = DateTimeOffset.UtcNow, Success = true });
-        public Task<PlaidImportResult> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default) => Task.FromResult(new PlaidImportResult(true, "ok"));
+        public Task<ImportRun> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default) => Task.FromResult(new ImportRun { Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true });
+        public Task<ImportRun> RunScheduledPlaidSyncAsync(CancellationToken cancellationToken = default) => Task.FromResult(new ImportRun { Source = ImportSource.Plaid, RanAt = DateTimeOffset.UtcNow, Success = true });
         public Task<RecentRunsPage> GetRecentRunsAsync(ImportSource source, int page, int pageSize, CancellationToken cancellationToken = default) => Task.FromResult(new RecentRunsPage { Runs = [], TotalCount = 0 });
         public Task<List<SyncProgressLine>> GetRunProgressLogAsync(int importRunId, CancellationToken cancellationToken = default) => Task.FromResult(new List<SyncProgressLine>());
         public Task<List<SyncIssue>> GetActiveSyncIssuesAsync(CancellationToken cancellationToken = default) => Task.FromResult(new List<SyncIssue>());
@@ -43,11 +45,11 @@ public class NavMenuTests : BunitContext
 
     private static ReviewQueueData EmptyQueue() => new() { TransactionGroups = [], AmazonItemGroups = [], Categories = [] };
 
-    private FakeReviewQueueProvider RegisterFakes(ReviewQueueData? data = null, ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null)
+    private FakeReviewQueueProvider RegisterFakes(ReviewQueueData? data = null, ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null)
     {
         var provider = new FakeReviewQueueProvider(data ?? EmptyQueue());
         Services.AddSingleton<IReviewQueueProvider>(provider);
-        Services.AddSingleton<ISyncStatusProvider>(new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun));
+        Services.AddSingleton<ISyncStatusProvider>(new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun, lastPlaidRun));
         return provider;
     }
 

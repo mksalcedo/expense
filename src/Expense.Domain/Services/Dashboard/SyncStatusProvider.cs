@@ -43,6 +43,12 @@ public class SyncStatusProvider(
         return await ImportRunLookup.GetLastRunAsync(context, ImportSource.AmazonGmail, cancellationToken);
     }
 
+    public async Task<ImportRun?> GetLastPlaidRunAsync(CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await ImportRunLookup.GetLastRunAsync(context, ImportSource.Plaid, cancellationToken);
+    }
+
     public async Task<ImportRun> RunSimpleFinSyncAsync(CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -89,23 +95,44 @@ public class SyncStatusProvider(
         return result.Run;
     }
 
-    // Manual, on-demand only (see docs/plaid-import-utility-plan.md) - deliberately not
-    // wired into ImportRun/progress-log tracking like the other two sources, since this is
-    // still just a backup tool being evaluated, not a scheduled sync. Shells out to the
-    // real plaid-cli (already linked to the user's own Plaid account) exactly the way the
-    // console importer's usage instructions already describe running it by hand.
-    public async Task<PlaidImportResult> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default)
+    // Manual, on-demand run with an explicit date range - the Import Data page's own
+    // "Run Plaid Import" button. Shells out to the real plaid-cli (already linked to the
+    // user's own Plaid account) exactly the way the console importer's usage instructions
+    // already describe running it by hand.
+    public Task<ImportRun> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default) =>
+        RunPlaidImportCoreAsync(startDate, endDate, cancellationToken);
+
+    // Scheduled run - see PlaidSyncWindowCalculator for why the window is "OverlapDays
+    // before the last successful run" with no separate bootstrap-window special case (the
+    // manual date-range picker above is the deliberate safety net for anything this narrow
+    // window might miss).
+    public async Task<ImportRun> RunScheduledPlaidSyncAsync(CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var lastSuccessfulRun = await ImportRunLookup.GetLastSuccessfulRunAsync(context, ImportSource.Plaid, cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        var startDate = PlaidSyncWindowCalculator.GetWindowStartDate(lastSuccessfulRun?.RanAt, now);
+        var endDate = DateOnly.FromDateTime(now.DateTime);
+        return await RunPlaidImportCoreAsync(startDate, endDate, cancellationToken);
+    }
+
+    private async Task<ImportRun> RunPlaidImportCoreAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken)
     {
         var plaidCliPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "bin", "plaid-cli");
         if (!File.Exists(plaidCliPath))
         {
-            return new PlaidImportResult(false, $"plaid-cli not found at {plaidCliPath}.");
+            await using var failureContext = await contextFactory.CreateDbContextAsync(cancellationToken);
+            return await RecordConfigurationFailureAsync(failureContext, ImportSource.Plaid, $"plaid-cli not found at {plaidCliPath}.", cancellationToken);
         }
 
         var accountMapPath = Path.Combine(AppContext.BaseDirectory, "plaid-account-map.json");
         if (!File.Exists(accountMapPath))
         {
-            return new PlaidImportResult(false, $"No account map found at {accountMapPath} - copy plaid-account-map.example.json and fill in real account IDs.");
+            await using var failureContext = await contextFactory.CreateDbContextAsync(cancellationToken);
+            return await RecordConfigurationFailureAsync(
+                failureContext, ImportSource.Plaid,
+                $"No account map found at {accountMapPath} - copy plaid-account-map.example.json and fill in real account IDs.",
+                cancellationToken);
         }
 
         var accountMap = JsonSerializer.Deserialize<Dictionary<string, int>>(await File.ReadAllTextAsync(accountMapPath, cancellationToken)) ?? [];
@@ -132,7 +159,8 @@ public class SyncStatusProvider(
         using var process = Process.Start(startInfo);
         if (process is null)
         {
-            return new PlaidImportResult(false, "Failed to start plaid-cli.");
+            await using var failureContext = await contextFactory.CreateDbContextAsync(cancellationToken);
+            return await RecordConfigurationFailureAsync(failureContext, ImportSource.Plaid, "Failed to start plaid-cli.", cancellationToken);
         }
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
@@ -143,18 +171,41 @@ public class SyncStatusProvider(
 
         if (process.ExitCode != 0)
         {
-            return new PlaidImportResult(false, $"plaid-cli exited with code {process.ExitCode}: {stderr}");
+            await using var failureContext = await contextFactory.CreateDbContextAsync(cancellationToken);
+            return await RecordConfigurationFailureAsync(
+                failureContext, ImportSource.Plaid, $"plaid-cli exited with code {process.ExitCode}: {stderr}", cancellationToken);
         }
 
         try
         {
             await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
             var service = new PlaidTransactionImportService(dedup, categorization);
-            var summary = await service.ImportAsync(context, stdout, accountMap, DateTimeOffset.UtcNow, cancellationToken);
+
+            // Captured (not live-streamed) - unlike Amazon Gmail sync's per-message loop
+            // over the network, a Plaid import is one fast local call, so there's no
+            // real-time modal value here, only the persisted transcript reviewable
+            // afterward via "View details".
+            var progressLines = new List<ImportRunProgressLine>();
+            void CaptureProgress(SyncProgressLine line) =>
+                progressLines.Add(new ImportRunProgressLine { Sequence = progressLines.Count, Text = line.Text, IsError = line.IsError });
+
+            var summary = await service.ImportAsync(context, stdout, accountMap, DateTimeOffset.UtcNow, CaptureProgress, cancellationToken);
+
+            var run = new ImportRun
+            {
+                Source = ImportSource.Plaid,
+                RanAt = DateTimeOffset.UtcNow,
+                Success = true,
+                Summary = $"Transactions added: {summary.TransactionsAdded}, duplicates skipped: {summary.DuplicatesSkipped}, " +
+                          $"pending transactions updated: {summary.PendingTransactionsUpdated}, balance snapshots added: {summary.BalanceSnapshotsAdded}",
+                ProgressLines = progressLines,
+                RawResponse = stdout
+            };
+            context.ImportRuns.Add(run);
+            await context.SaveChangesAsync(cancellationToken);
             await CaptureForecastSnapshotAsync(cancellationToken);
 
-            return new PlaidImportResult(true,
-                $"Transactions added: {summary.TransactionsAdded}, duplicates skipped: {summary.DuplicatesSkipped}, balance snapshots added: {summary.BalanceSnapshotsAdded}");
+            return run;
         }
         catch (Exception ex)
         {
@@ -162,7 +213,8 @@ public class SyncStatusProvider(
             // real "no transactions array" parse failure this guarded against) instead of
             // just showing an error on this one page - same friendly-failure shape as the
             // other early-return cases above.
-            return new PlaidImportResult(false, $"Import failed: {ex.Message}");
+            await using var failureContext = await contextFactory.CreateDbContextAsync(cancellationToken);
+            return await RecordConfigurationFailureAsync(failureContext, ImportSource.Plaid, $"Import failed: {ex.Message}", cancellationToken);
         }
     }
 

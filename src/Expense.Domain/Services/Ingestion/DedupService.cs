@@ -77,4 +77,25 @@ public class DedupService
         await context.BankTransactions.FirstOrDefaultAsync(t =>
             t.AccountId == accountId && t.Amount == amount && t.PostedDate == null && t.ImportSource == "Plaid"
             && t.TransactionDate >= transactionDate.AddDays(-windowDays) && t.TransactionDate <= transactionDate.AddDays(windowDays));
+
+    /// <summary>
+    /// The mirror image of FindPendingMatchAsync: true if an incoming *pending*
+    /// transaction actually represents a real charge that's already fully posted in our
+    /// system. Plaid can re-report an already-resolved transaction as pending again under
+    /// a brand new transaction_id, with no pending_transaction_id link back to anything -
+    /// confirmed for real on 2026-07-29 (4 real transactions duplicated this way). Nothing
+    /// else catches this: ExistsForAccountDateAmountAsync only ever runs for posted
+    /// incoming transactions (it needs a postedDate to compare with), and
+    /// FindPendingMatchAsync only matches posted incoming transactions against pending
+    /// existing rows, never the reverse. Not scoped by ImportSource on the existing side -
+    /// the already-posted row could equally have come from SimpleFin, and there's no
+    /// manually-entered-placeholder risk here (a placeholder is never posted, by
+    /// definition, until ManualChargeMatchingService resolves it). Same accepted narrow
+    /// risk and date window as FindPendingMatchAsync.
+    /// </summary>
+    public async Task<bool> ExistsAlreadyPostedAsync(
+        ExpenseDbContext context, int accountId, decimal amount, DateOnly transactionDate, int windowDays = 10) =>
+        await context.BankTransactions.AnyAsync(t =>
+            t.AccountId == accountId && t.Amount == amount && t.PostedDate != null
+            && t.TransactionDate >= transactionDate.AddDays(-windowDays) && t.TransactionDate <= transactionDate.AddDays(windowDays));
 }
