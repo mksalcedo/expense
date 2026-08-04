@@ -47,6 +47,20 @@ public class ForecastLedgerRow
     /// (which category+date matching uses) records which bill it was assigned to, not when it
     /// actually happened.</summary>
     public DateOnly? SuggestedOverrideDate { get; set; }
+
+    /// <summary>
+    /// Null for a normal category - use SuggestedOverrideAmount/Date instead (a single real
+    /// transaction is assumed to be the whole story). Non-null (possibly empty) for a category
+    /// with ReconcileByCalendarMonth set, where several real transactions legitimately
+    /// contribute to one line (e.g. Piano - several payers on their own schedules) and no
+    /// single one should ever be offered as "the" resolution via Change Amount. Every real
+    /// transaction reconciled to this line's date, whether already recorded as a partial
+    /// payment (PartialPaymentId set, for Undo) or still unclaimed (PartialPaymentId null, for
+    /// a one-click "Record partial income") - plus any recorded partial payment that never
+    /// matched a real transaction at all (manually entered, not yet synced or never will be),
+    /// so nothing recorded here is ever silently lost from view.
+    /// </summary>
+    public List<PartialPaymentCandidate>? PartialPaymentCandidates { get; set; }
 }
 
 public class PartialPaymentSummary
@@ -54,6 +68,16 @@ public class PartialPaymentSummary
     public required int PartialPaymentId { get; set; }
     public required decimal Amount { get; set; }
     public required DateOnly PaidDate { get; set; }
+}
+
+public class PartialPaymentCandidate
+{
+    public required decimal Amount { get; set; }
+    public required DateOnly Date { get; set; }
+
+    /// <summary>Null if this is a real transaction found nearby but not yet recorded as a
+    /// partial payment; set (to the real PartialPaymentId, for Undo) once one already covers it.</summary>
+    public int? PartialPaymentId { get; set; }
 }
 
 public class ForecastResult

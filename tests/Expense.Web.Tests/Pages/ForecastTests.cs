@@ -80,7 +80,24 @@ public class ForecastTests : BunitContext
         {
             var row = result.Rows.Single(r => r.AccountId == accountId && r.OriginalDate == originalDate);
             row.Amount += direction == Direction.Income ? -amount : amount;
-            row.PartialPayments.Add(new PartialPaymentSummary { PartialPaymentId = _nextPartialPaymentId++, Amount = amount, PaidDate = paidDate });
+            var newId = _nextPartialPaymentId++;
+            row.PartialPayments.Add(new PartialPaymentSummary { PartialPaymentId = newId, Amount = amount, PaidDate = paidDate });
+
+            // Mirrors ForecastEngine.BuildPartialPaymentCandidates: recording a payment that
+            // matches an existing unclaimed candidate marks *that* candidate claimed, in place,
+            // rather than adding a new row - so a suggestion goes struck-through, not doubled.
+            if (row.PartialPaymentCandidates is { } candidates)
+            {
+                var matching = candidates.FirstOrDefault(c => c.Amount == amount && c.Date == paidDate && c.PartialPaymentId is null);
+                if (matching is not null)
+                {
+                    matching.PartialPaymentId = newId;
+                }
+                else
+                {
+                    candidates.Add(new PartialPaymentCandidate { Amount = amount, Date = paidDate, PartialPaymentId = newId });
+                }
+            }
             return Task.CompletedTask;
         }
 
@@ -88,8 +105,11 @@ public class ForecastTests : BunitContext
         {
             var row = result.Rows.Single(r => r.PartialPayments.Any(p => p.PartialPaymentId == partialPaymentId));
             var partialPayment = row.PartialPayments.Single(p => p.PartialPaymentId == partialPaymentId);
-            row.Amount -= partialPayment.Amount;
+            row.Amount += row.Amount >= 0 ? partialPayment.Amount : -partialPayment.Amount;
             row.PartialPayments.Remove(partialPayment);
+
+            var candidate = row.PartialPaymentCandidates?.SingleOrDefault(c => c.PartialPaymentId == partialPaymentId);
+            if (candidate is not null) candidate.PartialPaymentId = null;
             return Task.CompletedTask;
         }
     }
@@ -801,6 +821,110 @@ public class ForecastTests : BunitContext
         var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
         Assert.Contains("Received $429.00 on 07/22/2026", row!.TextContent);
         Assert.DoesNotContain("Paid $429.00", row.TextContent);
+    }
+
+    // Real gap this guards (found live 2026-08-04, user-identified): a single near-miss
+    // suggestion pointed at Change Amount is wrong for a multi-payer category like Piano -
+    // accepting just one real transaction via Change Amount would wrongly mark the *entire*
+    // line resolved, writing off the rest of the month's still-expected income. Categories
+    // flagged ReconcileByCalendarMonth get a full list of individually-recordable candidates
+    // instead, and no single-suggestion Change Amount prompt at all.
+    [Fact]
+    public void RowWithPartialPaymentCandidates_ShowsEachOneIndividually_WithItsOwnRecordAction()
+    {
+        var row = PianoRow();
+        row.PartialPaymentCandidates =
+        [
+            new PartialPaymentCandidate { Amount = 95m, Date = new DateOnly(2026, 8, 2) },
+            new PartialPaymentCandidate { Amount = 25m, Date = new DateOnly(2026, 8, 3) }
+        ];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Contains("95.00 on 08/02/2026", cut.Find("#suggested-partial-0-0").TextContent);
+        Assert.Contains("25.00 on 08/03/2026", cut.Find("#suggested-partial-0-1").TextContent);
+        Assert.NotNull(cut.Find("#record-suggested-partial-btn-0-0"));
+        Assert.NotNull(cut.Find("#record-suggested-partial-btn-0-1"));
+        // No single "found nearby - review with Change Amount" prompt for this kind of category.
+        Assert.Empty(cut.FindAll("#near-miss-note-0"));
+    }
+
+    [Fact]
+    public void ClickingRecordOnACandidate_PreFillsTheModalWithItsExactAmountAndDate()
+    {
+        var row = PianoRow();
+        row.PartialPaymentCandidates = [new PartialPaymentCandidate { Amount = 95m, Date = new DateOnly(2026, 8, 2) }];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#record-suggested-partial-btn-0-0").Click();
+
+        Assert.Equal("95", cut.Find("#modal-amount-input").GetAttribute("value"));
+        Assert.Equal("2026-08-02", cut.Find("#modal-date-input").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void RecordingACandidate_MovesItToStruckThrough_InTheSameList_NotADifferentOne()
+    {
+        var row = PianoRow();
+        row.PartialPaymentCandidates =
+        [
+            new PartialPaymentCandidate { Amount = 95m, Date = new DateOnly(2026, 8, 2) },
+            new PartialPaymentCandidate { Amount = 25m, Date = new DateOnly(2026, 8, 3) }
+        ];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#record-suggested-partial-btn-0-0").Click();
+        cut.Find("#action-modal-apply").Click();
+
+        // The recorded one is gone from the "not yet recorded" list...
+        Assert.Empty(cut.FindAll("#suggested-partial-0-0"));
+        var ledgerRow = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("Received $95.00 on 08/02/2026", ledgerRow!.TextContent);
+        Assert.NotNull(cut.Find("#undo-partial-payment-btn-1"));
+        // ...while the still-unclaimed one is untouched, still in the list.
+        Assert.Contains("25.00 on 08/03/2026", cut.Find("#suggested-partial-0-1").TextContent);
+        // The remaining expected amount shrank correctly (600 - 95 = 505).
+        Assert.Contains("505.00", ledgerRow.TextContent);
+    }
+
+    [Fact]
+    public void UndoingARecordedCandidate_RestoresItToTheUnclaimedList()
+    {
+        var row = PianoRow();
+        row.PartialPaymentCandidates = [new PartialPaymentCandidate { Amount = 95m, Date = new DateOnly(2026, 8, 2) }];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#record-suggested-partial-btn-0-0").Click();
+        cut.Find("#action-modal-apply").Click();
+        cut.Find("#undo-partial-payment-btn-1").Click();
+        cut.Find("#action-modal-apply").Click();
+
+        Assert.Contains("95.00 on 08/02/2026", cut.Find("#suggested-partial-0-0").TextContent);
+        Assert.Empty(cut.FindAll("#undo-partial-payment-btn-1"));
+        var ledgerRow = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("600.00", ledgerRow!.TextContent);
+    }
+
+    [Fact]
+    public void RowWithAnEmptyCandidatesList_ShowsNoSuggestionsAndNoNearMissNote()
+    {
+        var row = PianoRow();
+        row.PartialPaymentCandidates = [];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Empty(cut.FindAll("#suggested-partial-0-0"));
+        Assert.Empty(cut.FindAll("#near-miss-note-0"));
     }
 
     [Fact]

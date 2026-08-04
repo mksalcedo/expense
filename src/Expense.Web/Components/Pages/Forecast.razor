@@ -72,13 +72,39 @@ else
                                 </span>
                             }
                         }
-                        @foreach (var partialPayment in row.PartialPayments)
+                        @if (row.PartialPaymentCandidates is { } candidates)
                         {
-                            <br />
-                            <span style="color: #555">
-                                @(IsIncomeLine(row) ? "Received" : "Paid") $@partialPayment.Amount.ToString("N2") on @partialPayment.PaidDate.ToString("MM/dd/yyyy")
-                                <button id="undo-partial-payment-btn-@partialPayment.PartialPaymentId" @onclick="() => OpenUndoPartialPaymentModal(row, partialPayment)">Undo</button>
-                            </span>
+                            @foreach (var (candidate, candidateIndex) in candidates.Select((c, i) => (c, i)))
+                            {
+                                <br />
+                                @if (candidate.PartialPaymentId is { } recordedId)
+                                {
+                                    <span style="color: #555; text-decoration: line-through;">
+                                        Received $@candidate.Amount.ToString("N2") on @candidate.Date.ToString("MM/dd/yyyy")
+                                    </span>
+                                    <button id="undo-partial-payment-btn-@recordedId"
+                                            @onclick="() => OpenUndoPartialPaymentModal(row, new PartialPaymentSummary { PartialPaymentId = recordedId, Amount = candidate.Amount, PaidDate = candidate.Date })">Undo</button>
+                                }
+                                else
+                                {
+                                    <span id="suggested-partial-@index-@candidateIndex" style="color: #0969da">
+                                        $@candidate.Amount.ToString("N2") on @candidate.Date.ToString("MM/dd/yyyy") - not yet recorded
+                                    </span>
+                                    <button id="record-suggested-partial-btn-@index-@candidateIndex"
+                                            @onclick="() => OpenPayPartialModal(row, candidate.Amount, candidate.Date)">Record partial income</button>
+                                }
+                            }
+                        }
+                        else
+                        {
+                            @foreach (var partialPayment in row.PartialPayments)
+                            {
+                                <br />
+                                <span style="color: #555">
+                                    @(IsIncomeLine(row) ? "Received" : "Paid") $@partialPayment.Amount.ToString("N2") on @partialPayment.PaidDate.ToString("MM/dd/yyyy")
+                                    <button id="undo-partial-payment-btn-@partialPayment.PartialPaymentId" @onclick="() => OpenUndoPartialPaymentModal(row, partialPayment)">Undo</button>
+                                </span>
+                            }
                         }
                     </td>
                     <td style="@CellStyle(rightAlign: true)">@row.Amount.ToString("N2")</td>
@@ -225,12 +251,12 @@ else
         _modalDate = row.SuggestedOverrideDate ?? row.Date;
     }
 
-    private void OpenPayPartialModal(ForecastLedgerRow row)
+    private void OpenPayPartialModal(ForecastLedgerRow row, decimal? suggestedAmount = null, DateOnly? suggestedDate = null)
     {
         _activeModal = ModalKind.PayPartial;
         _modalRow = row;
-        _modalAmount = null;
-        _modalDate = DateOnly.FromDateTime(DateTime.Today);
+        _modalAmount = suggestedAmount;
+        _modalDate = suggestedDate ?? DateOnly.FromDateTime(DateTime.Today);
     }
 
     private void OpenRemoveDeferralModal(ForecastLedgerRow row)

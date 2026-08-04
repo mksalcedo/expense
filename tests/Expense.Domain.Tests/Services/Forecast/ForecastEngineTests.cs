@@ -1170,6 +1170,148 @@ public class ForecastEngineTests : DatabaseTestBase
         var row = Assert.Single(result.Rows, r => r.Description == "Gas (utility)");
         Assert.Null(row.SuggestedOverrideAmount);
         Assert.Null(row.SuggestedOverrideDate);
+        Assert.Null(row.PartialPaymentCandidates); // not a calendar-month category - uses the single-suggestion mechanism, not the list
+    }
+
+    // Real gap this guards (found live 2026-08-04, user-identified): a single near-miss
+    // suggestion pointed at Change Amount is actively wrong for a category like Piano, where
+    // several real transactions legitimately contribute to one line - accepting just one via
+    // Change Amount would wrongly write off the rest as never coming. ReconcileByCalendarMonth
+    // categories get a full list of candidates instead, each individually recordable.
+    [Fact]
+    public async Task CalendarMonthCategory_MultipleUnclaimedTransactions_AllSurfaceAsCandidates_NoSingleSuggestion()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 4));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano", ReconcileByCalendarMonth = true };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 2), PostedDate = new DateOnly(2026, 8, 2),
+                Description = "ZELLE FROM GABRIEL", Amount = 95m, ImportSource = "Test", CategoryId = piano.Id,
+                ReconciledOccurrenceDate = new DateOnly(2026, 8, 5), CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 3), PostedDate = new DateOnly(2026, 8, 3),
+                Description = "ZELLE FROM JAKE", Amount = 25m, ImportSource = "Test", CategoryId = piano.Id,
+                ReconciledOccurrenceDate = new DateOnly(2026, 8, 5), CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 4), new DateOnly(2026, 8, 31));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Piano");
+        Assert.Null(row.SuggestedOverrideAmount); // suppressed - no single suggestion for a multi-payer category
+        Assert.NotNull(row.PartialPaymentCandidates);
+        Assert.Equal(2, row.PartialPaymentCandidates!.Count);
+        Assert.Contains(row.PartialPaymentCandidates, c => c.Amount == 95m && c.Date == new DateOnly(2026, 8, 2) && c.PartialPaymentId == null);
+        Assert.Contains(row.PartialPaymentCandidates, c => c.Amount == 25m && c.Date == new DateOnly(2026, 8, 3) && c.PartialPaymentId == null);
+    }
+
+    [Fact]
+    public async Task CalendarMonthCategory_ARecordedTransaction_ShowsInTheListWithItsPartialPaymentId_NotAsUnclaimed()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 4));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano", ReconcileByCalendarMonth = true };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 2), PostedDate = new DateOnly(2026, 8, 2),
+                Description = "ZELLE FROM GABRIEL", Amount = 95m, ImportSource = "Test", CategoryId = piano.Id,
+                ReconciledOccurrenceDate = new DateOnly(2026, 8, 5), CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 3), PostedDate = new DateOnly(2026, 8, 3),
+                Description = "ZELLE FROM JAKE", Amount = 25m, ImportSource = "Test", CategoryId = piano.Id,
+                ReconciledOccurrenceDate = new DateOnly(2026, 8, 5), CreatedAt = DateTimeOffset.UtcNow
+            });
+        var oneTimeEvent = new OneTimeEvent { Name = "Checking Payment (partial)", Amount = 95m, Direction = Direction.Income, Date = new DateOnly(2026, 8, 2), AccountId = checking.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+        var recorded = new PartialPayment
+        {
+            AccountId = checking.Id, OriginalDate = new DateOnly(2026, 8, 5), Amount = 95m, PaidDate = new DateOnly(2026, 8, 2),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.PartialPayments.Add(recorded);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 4), new DateOnly(2026, 8, 31));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Piano");
+        Assert.Equal(2, row.PartialPaymentCandidates!.Count);
+        var recordedCandidate = Assert.Single(row.PartialPaymentCandidates, c => c.Amount == 95m);
+        Assert.Equal(recorded.Id, recordedCandidate.PartialPaymentId);
+        var unclaimedCandidate = Assert.Single(row.PartialPaymentCandidates, c => c.Amount == 25m);
+        Assert.Null(unclaimedCandidate.PartialPaymentId);
+    }
+
+    [Fact]
+    public async Task CalendarMonthCategory_ARecordedPaymentWithNoMatchingRealTransaction_StillAppearsInTheList()
+    {
+        // A manually-entered partial payment that never synced from the bank (or never will,
+        // e.g. cash) must never silently vanish from view just because no real transaction
+        // backs it.
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 4));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano", ReconcileByCalendarMonth = true };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        var oneTimeEvent = new OneTimeEvent { Name = "Checking Payment (partial)", Amount = 50m, Direction = Direction.Income, Date = new DateOnly(2026, 8, 1), AccountId = checking.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+        var recorded = new PartialPayment
+        {
+            AccountId = checking.Id, OriginalDate = new DateOnly(2026, 8, 5), Amount = 50m, PaidDate = new DateOnly(2026, 8, 1),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.PartialPayments.Add(recorded);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 4), new DateOnly(2026, 8, 31));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Piano");
+        var candidate = Assert.Single(row.PartialPaymentCandidates!);
+        Assert.Equal(50m, candidate.Amount);
+        Assert.Equal(new DateOnly(2026, 8, 1), candidate.Date);
+        Assert.Equal(recorded.Id, candidate.PartialPaymentId);
     }
 
     [Fact]

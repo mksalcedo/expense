@@ -201,6 +201,16 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         var confirmationsByAccountAndDate = confirmations.ToDictionary(c => (c.AccountId, c.CategoryId, c.OriginalDate));
         var matchedConfirmationIds = new HashSet<int>();
 
+        // Categories where several real transactions legitimately contribute to one line (e.g.
+        // Piano - several payers on their own schedules) - these get a full list of candidate
+        // transactions further below (PartialPaymentCandidates), never a single "this is the
+        // whole story" near-miss suggestion, since offering Change Amount on just one of
+        // several contributors would wrongly write off the rest as never coming.
+        var calendarMonthCategoryIds = await context.Categories
+            .Where(c => c.ReconcileByCalendarMonth)
+            .Select(c => c.Id)
+            .ToHashSetAsync(cancellationToken);
+
         var deferrals = await context.PaymentDeferrals.ToListAsync(cancellationToken);
         var deferralsByAccountAndDate = deferrals.ToDictionary(d => (d.AccountId, d.OriginalDate));
 
@@ -336,9 +346,24 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
 
             var isDeferred = deferralsByAccountAndDate.TryGetValue((line.AccountId, line.Date), out var deferral);
             var appliedPartialPayments = partialPaymentsByAccountAndDate.GetValueOrDefault((line.AccountId, line.Date), []);
-            var nearMissTransaction = line.SourceOneTimeEventId is not null
-                ? FindOneTimeEventNearMissTransaction(line, reconciliationTransactions)
-                : FindNearMissTransaction(line, reconciliationTransactions);
+            var isCalendarMonthCategory = line.CategoryId is { } lineCategoryId && calendarMonthCategoryIds.Contains(lineCategoryId);
+
+            decimal? nearMissAmount = null;
+            DateOnly? nearMissDate = null;
+            List<PartialPaymentCandidate>? partialPaymentCandidates = null;
+            if (isCalendarMonthCategory)
+            {
+                partialPaymentCandidates = BuildPartialPaymentCandidates(line, reconciliationTransactions, appliedPartialPayments);
+            }
+            else
+            {
+                var nearMissTransaction = line.SourceOneTimeEventId is not null
+                    ? FindOneTimeEventNearMissTransaction(line, reconciliationTransactions)
+                    : FindNearMissTransaction(line, reconciliationTransactions);
+                nearMissAmount = nearMissTransaction?.Amount;
+                nearMissDate = nearMissTransaction is null ? null : nearMissTransaction.PostedDate ?? nearMissTransaction.TransactionDate;
+            }
+
             // PartialPayment.Amount is always a positive magnitude (the UI never makes anyone
             // type a sign) - for an expense line (budgeted negative) that shrinks the debt
             // toward zero by adding it; for an income line (budgeted positive) it must instead
@@ -360,8 +385,9 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     .ToList(),
                 IsDeferred = isDeferred,
                 DeferralId = isDeferred ? deferral!.Id : null,
-                SuggestedOverrideAmount = nearMissTransaction?.Amount,
-                SuggestedOverrideDate = nearMissTransaction is null ? null : nearMissTransaction.PostedDate ?? nearMissTransaction.TransactionDate
+                SuggestedOverrideAmount = nearMissAmount,
+                SuggestedOverrideDate = nearMissDate,
+                PartialPaymentCandidates = partialPaymentCandidates
             });
         }
 
@@ -477,5 +503,43 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
 
         return transactions.FirstOrDefault(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate is { } reconciledDate
             && Math.Abs(reconciledDate.DayNumber - line.Date.DayNumber) <= RecurrenceExpander.MaxMatchWindowDays);
+    }
+
+    /// <summary>
+    /// Every real transaction reconciled to this line's date (already correctly bucketed by
+    /// ReconcileByCalendarMonth's own matching, see TransactionReconciliationService), each
+    /// tagged with the PartialPayment that already claims it (if any, matched the same way
+    /// PartialPaymentService's own reconciliation does: exact amount, PaidDate within
+    /// PartialPaymentMatchWindowDays) - plus any recorded partial payment that never matched a
+    /// real transaction at all, so a manually-entered one (e.g. cash, never synced) is never
+    /// silently lost from view.
+    /// </summary>
+    private static List<PartialPaymentCandidate> BuildPartialPaymentCandidates(
+        LedgerLine line, IReadOnlyList<BankTransaction> transactions, IReadOnlyList<PartialPayment> appliedPartialPayments)
+    {
+        var candidates = new List<PartialPaymentCandidate>();
+        var matchedPartialPaymentIds = new HashSet<int>();
+
+        foreach (var txn in transactions.Where(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate == line.Date))
+        {
+            var effectiveDate = txn.PostedDate ?? txn.TransactionDate;
+            var amount = Math.Abs(txn.Amount);
+            var matchingPartialPayment = appliedPartialPayments.FirstOrDefault(p =>
+                p.Amount == amount
+                && p.PaidDate >= effectiveDate.AddDays(-PartialPaymentMatchWindowDays)
+                && p.PaidDate <= effectiveDate.AddDays(PartialPaymentMatchWindowDays));
+
+            if (matchingPartialPayment is not null)
+            {
+                matchedPartialPaymentIds.Add(matchingPartialPayment.Id);
+            }
+            candidates.Add(new PartialPaymentCandidate { Amount = amount, Date = effectiveDate, PartialPaymentId = matchingPartialPayment?.Id });
+        }
+
+        candidates.AddRange(appliedPartialPayments
+            .Where(p => !matchedPartialPaymentIds.Contains(p.Id))
+            .Select(p => new PartialPaymentCandidate { Amount = p.Amount, Date = p.PaidDate, PartialPaymentId = p.Id }));
+
+        return candidates.OrderBy(c => c.Date).ToList();
     }
 }
