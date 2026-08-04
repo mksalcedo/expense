@@ -16,6 +16,19 @@ public class PaymentConfirmation
     public int Id { get; set; }
     public int AccountId { get; set; }
     public Account Account { get; set; } = null!;
+
+    /// <summary>
+    /// Which line this confirmation is really for, alongside AccountId+OriginalDate - more
+    /// than one line can share the same account and date (e.g. a recurring bill anchored on
+    /// the same day a one-time top-up happens to land), and without this a confirmation
+    /// for one would be silently "inherited" by the other (found live 2026-08-04: a Water
+    /// top-up confirmation was also matching MAS's unrelated same-day/same-account income
+    /// line). Null for a line with no category of its own (e.g. an Amex partial-payment
+    /// placeholder One-Time Event) - narrower residual collision risk accepted there.
+    /// </summary>
+    public int? CategoryId { get; set; }
+    public Category? Category { get; set; }
+
     public DateOnly OriginalDate { get; set; }
 
     /// <summary>

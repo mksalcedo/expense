@@ -26,8 +26,8 @@ public class DashboardTests : BunitContext
         public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(Result);
         public Task DeferPaymentAsync(int accountId, DateOnly originalDate, DateOnly deferredToDate, string? note, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemoveDeferralAsync(int deferralId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task OverridePaymentAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ConfirmPaymentAsync(int accountId, int? categoryId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task OverridePaymentAsync(int accountId, int? categoryId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default) => Task.CompletedTask;

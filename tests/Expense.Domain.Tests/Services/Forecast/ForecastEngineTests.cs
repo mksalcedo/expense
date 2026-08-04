@@ -475,7 +475,12 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 2), new DateOnly(2026, 8, 31));
 
-        Assert.DoesNotContain(result.Rows, r => r.Description == "Water additional");
+        // Stays visible (struck through), same treatment as every other reconciliation
+        // reason - only ages out of the ledger after ExcludedPaymentVisibilityDays, not
+        // immediately just because it reconciled.
+        var row = Assert.Single(result.Rows, r => r.Description == "Water additional");
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, row.ExclusionReason);
     }
 
     [Fact]
@@ -613,7 +618,9 @@ public class ForecastEngineTests : DatabaseTestBase
         // asOfDate is just after the 3/15 due date - the real payment already posted 3/14.
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 3, 16), new DateOnly(2026, 3, 31));
 
-        Assert.DoesNotContain(result.Rows, r => r.Description == "Amex Payment");
+        var row = Assert.Single(result.Rows, r => r.Description == "Amex Payment");
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, row.ExclusionReason);
     }
 
     [Fact]
@@ -954,6 +961,47 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
 
+        var row = Assert.Single(result.Rows);
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, row.ExclusionReason);
+    }
+
+    // Real gap this guards (found live 2026-08-04, user-identified): before this fix, a
+    // regular recurring bill (unlike a manual Confirm Paid/Override) vanished from the
+    // ledger the instant it reconciled - no strikethrough moment at all, just gone, forcing
+    // a trip to Transactions to piece together what happened. Now every reconciliation
+    // reason shares the same visible-then-fades behavior: it must disappear once it's
+    // genuinely aged past the visibility window, but that's the *window* doing it, not
+    // reconciliation itself silently omitting the row.
+    [Fact]
+    public async Task DirectCategory_AutoReconciled_AgesOutOfTheLedger_OnlyAfterTheVisibilityWindow_NotImmediately()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 22));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var mortgage = new Category { Name = "Truist" };
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = mortgage.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = mortgage.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 15), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
+            Description = "TRUIST MORTGAGE", Amount = -2681.22m, ImportSource = "Test", CategoryId = mortgage.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 15), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        // asOfDate is 8 days after the reconciled date - one day past the 7-day visibility window.
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 23), new DateOnly(2026, 8, 10));
+
         Assert.Empty(result.Rows);
     }
 
@@ -1016,7 +1064,9 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
 
-        Assert.Empty(result.Rows);
+        var row = Assert.Single(result.Rows);
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, row.ExclusionReason);
     }
 
     [Fact]
@@ -1074,7 +1124,9 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
 
-        Assert.Empty(result.Rows);
+        var row = Assert.Single(result.Rows);
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, row.ExclusionReason);
     }
 
     [Fact]
@@ -1082,6 +1134,9 @@ public class ForecastEngineTests : DatabaseTestBase
     {
         // The issuer raised the real minimum payment slightly since this was configured -
         // a small underpayment relative to what's configured shouldn't block reconciliation.
+        // Also verifies the real transaction's own amount is what gets shown, not the
+        // configured $150 - found live 2026-08-04, a stale budgeted amount displayed next to
+        // "AutoReconciled" would misrepresent what actually happened.
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
         var discover = new Account { Name = "Discover", Type = AccountType.Debt, MinPayment = 50m, ExtraPayment = 100m, PaymentDueDay = 15 };
         Context.Accounts.Add(discover);
@@ -1102,7 +1157,10 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
 
-        Assert.Empty(result.Rows);
+        var row = Assert.Single(result.Rows);
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, row.ExclusionReason);
+        Assert.Equal(-145m, row.Amount);
     }
 
     [Fact]
@@ -1129,7 +1187,9 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
 
-        Assert.Empty(result.Rows);
+        var row = Assert.Single(result.Rows);
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, row.ExclusionReason);
     }
 
     [Fact]
@@ -1567,6 +1627,57 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.True(row.IsExcluded);
         Assert.Equal(ConfirmationReason.Overridden, row.ExclusionReason);
         Assert.Equal(-2000m, row.Amount);
+    }
+
+    // Real bug this guards (found live 2026-08-04, user-identified): a confirmation for one
+    // bill (Water, a one-time top-up) was silently "inherited" by an unrelated recurring
+    // income line (MAS) that just happened to share the same account and date - the
+    // confirmation lookup only ever keyed on (AccountId, OriginalDate), with nothing to tell
+    // two different same-day/same-account lines apart. CategoryId is what disambiguates them.
+    [Fact]
+    public async Task ConfirmationForOneCategory_IsNotIncorrectlyInheritedByAnUnrelatedLine_SharingTheSameAccountAndDate()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 29));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var water = new Category { Name = "Water" };
+        var mas = new Category { Name = "MAS" };
+        Context.Categories.AddRange(water, mas);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.AddRange(
+            new FundingRule { CategoryId = water.Id, Strategy = FundingStrategies.Direct },
+            new FundingRule { CategoryId = mas.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.AddRange(
+            new BudgetPeriod
+            {
+                CategoryId = water.Id, Amount = 193m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+                Anchor = new DateOnly(2026, 7, 30), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+            },
+            new BudgetPeriod
+            {
+                CategoryId = mas.Id, Amount = 230m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+                Anchor = new DateOnly(2026, 7, 30), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+            });
+        // Only Water was ever confirmed paid - MAS never was.
+        Context.PaymentConfirmations.Add(new PaymentConfirmation
+        {
+            AccountId = checking.Id, CategoryId = water.Id, OriginalDate = new DateOnly(2026, 7, 30), EffectiveDate = new DateOnly(2026, 7, 30),
+            Amount = -185.20m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 30), new DateOnly(2026, 8, 15));
+
+        var waterRow = Assert.Single(result.Rows, r => r.Description == "Water");
+        Assert.True(waterRow.IsExcluded);
+        Assert.Equal(ConfirmationReason.AlreadyPaid, waterRow.ExclusionReason);
+
+        var masRow = Assert.Single(result.Rows, r => r.Description == "MAS");
+        Assert.False(masRow.IsExcluded);
+        Assert.Equal(230m, masRow.Amount);
     }
 
     [Fact]

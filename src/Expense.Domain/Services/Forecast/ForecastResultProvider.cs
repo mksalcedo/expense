@@ -45,17 +45,17 @@ public class ForecastResultProvider(
     }
 
     public async Task ConfirmPaymentAsync(
-        int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default)
+        int accountId, int? categoryId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await confirmations.CreateAsync(context, accountId, originalDate, effectiveDate, amount, ConfirmationReason.AlreadyPaid);
+        await confirmations.CreateAsync(context, accountId, categoryId, originalDate, effectiveDate, amount, ConfirmationReason.AlreadyPaid);
     }
 
     public async Task OverridePaymentAsync(
-        int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default)
+        int accountId, int? categoryId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await confirmations.CreateAsync(context, accountId, originalDate, effectiveDate, amount, ConfirmationReason.Overridden);
+        await confirmations.CreateAsync(context, accountId, categoryId, originalDate, effectiveDate, amount, ConfirmationReason.Overridden);
     }
 
     public async Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default)

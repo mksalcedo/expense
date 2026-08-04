@@ -8,6 +8,15 @@ namespace Expense.Web.Tests.Pages;
 
 public class ForecastTests : BunitContext
 {
+    public ForecastTests()
+    {
+        // The "show resolved items" preference is read/written via localStorage - Loose mode
+        // auto-returns default values for any JS call not explicitly configured, so existing
+        // tests that don't care about persistence don't all need their own JSInterop setup.
+        JSInterop.Mode = JSRuntimeMode.Loose;
+    }
+
+
     // Stateful fake: DeferPaymentAsync/RemoveDeferralAsync/ConfirmPaymentAsync/
     // RemoveConfirmationAsync actually mutate the underlying result (mirroring what
     // re-querying the real backend would show) so tests can drive the full action ->
@@ -40,10 +49,10 @@ public class ForecastTests : BunitContext
             return Task.CompletedTask;
         }
 
-        public Task ConfirmPaymentAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) =>
+        public Task ConfirmPaymentAsync(int accountId, int? categoryId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) =>
             ExcludeAsync(accountId, originalDate, effectiveDate, amount, ConfirmationReason.AlreadyPaid);
 
-        public Task OverridePaymentAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) =>
+        public Task OverridePaymentAsync(int accountId, int? categoryId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) =>
             ExcludeAsync(accountId, originalDate, effectiveDate, amount, ConfirmationReason.Overridden);
 
         private Task ExcludeAsync(int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, ConfirmationReason reason)
@@ -755,6 +764,100 @@ public class ForecastTests : BunitContext
         var removeBtn = cut.Find("#remove-deferral-btn-0");
         Assert.Equal("Remove deferral", removeBtn.GetAttribute("title"));
         Assert.NotEqual("Remove deferral", removeBtn.TextContent.Trim());
+    }
+
+    [Fact]
+    public void Forecast_ShowsAShowResolvedToggle_CheckedByDefault()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.True(cut.Find("#show-resolved-toggle").HasAttribute("checked"));
+    }
+
+    [Fact]
+    public void UncheckingShowResolved_HidesExcludedRows_ButLeavesNormalRowsVisible()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows =
+            [
+                AmexRow(),
+                new ForecastLedgerRow { Date = new DateOnly(2026, 8, 25), Description = "GPC", Amount = -351m, RunningBalance = -1351m, AccountId = 1, OriginalDate = new DateOnly(2026, 8, 25) }
+            ]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
+        cut.Find("#show-resolved-toggle").Change(false);
+
+        Assert.DoesNotContain("Amex Payment", cut.Markup);
+        Assert.Contains("GPC", cut.Markup);
+    }
+
+    [Fact]
+    public void ReCheckingShowResolved_BringsExcludedRowsBack()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
+        cut.Find("#show-resolved-toggle").Change(false);
+        cut.Find("#show-resolved-toggle").Change(true);
+
+        Assert.Contains("Amex Payment", cut.Markup);
+    }
+
+    [Fact]
+    public void UncheckingShowResolved_DoesNotHideDeferredOrPartiallyPaidRows()
+    {
+        // Deferred/partially-paid rows are never IsExcluded (still fully or partially owed),
+        // so the toggle - scoped to resolved/settled items only - must never touch them.
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#defer-btn-0").Click();
+        cut.Find("#modal-date-input").Change("2026-08-22");
+        cut.Find("#action-modal-apply").Click();
+        cut.Find("#show-resolved-toggle").Change(false);
+
+        Assert.Contains("Amex Payment", cut.Markup);
+    }
+
+    [Fact]
+    public void UncheckingShowResolved_SavesThePreferenceToLocalStorage()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+        var setItemCall = JSInterop.SetupVoid("localStorage.setItem", _ => true).SetVoidResult();
+
+        var cut = Render<Forecast>();
+        cut.Find("#show-resolved-toggle").Change(false);
+
+        setItemCall.VerifyInvoke("localStorage.setItem");
+    }
+
+    [Fact]
+    public void OnLoad_UsesTheSavedShowResolvedPreferenceFromLocalStorage()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+        JSInterop.Setup<string?>("localStorage.getItem", _ => true).SetResult("false");
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
+
+        Assert.False(cut.Find("#show-resolved-toggle").HasAttribute("checked"));
+        Assert.DoesNotContain("Amex Payment", cut.Markup);
     }
 
     [Fact]

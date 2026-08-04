@@ -13,11 +13,12 @@ namespace Expense.Domain.Services.Forecast;
 public class PaymentConfirmationService
 {
     public async Task<PaymentConfirmation> CreateAsync(
-        ExpenseDbContext context, int accountId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, ConfirmationReason reason)
+        ExpenseDbContext context, int accountId, int? categoryId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, ConfirmationReason reason)
     {
         var confirmation = new PaymentConfirmation
         {
             AccountId = accountId,
+            CategoryId = categoryId,
             OriginalDate = originalDate,
             EffectiveDate = effectiveDate,
             Amount = amount,

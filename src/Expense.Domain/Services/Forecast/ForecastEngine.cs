@@ -105,14 +105,17 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             .Where(t => t.CategoryId != null && t.ReconciledOccurrenceDate != null)
             .ToListAsync(cancellationToken);
 
-        lines = lines.Where(l => !IsAlreadyReflectedInAnActualTransaction(l, reconciliationTransactions)).ToList();
+        // Reconciliation status is no longer decided here - a matched line still becomes a
+        // row (marked IsExcluded/AutoReconciled in the main loop below), same visible-then-
+        // fades treatment every other exclusion reason gets, instead of silently vanishing
+        // with no trace on the page the user was already looking at.
 
         // Same backward-widening as above - a deferred/confirmed one-time event's original
         // date can end up in the past relative to asOfDate, and it must not vanish just
         // because of that.
         var oneTimeEvents = await context.OneTimeEvents.ToListAsync(cancellationToken);
         var oneTimeEventLines = recurrenceExpander.Expand([], oneTimeEvents, asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays), windowEnd);
-        lines.AddRange(oneTimeEventLines.Where(l => !IsOneTimeEventAlreadyCoveredByARelatedPayment(l, reconciliationTransactions)));
+        lines.AddRange(oneTimeEventLines);
 
         var activeSpendingAccounts = await context.Accounts
             .Where(a => a.Type == AccountType.ActiveSpending && a.IsActive
@@ -174,15 +177,11 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 var description = cycle.PendingSelfReportedAmount > 0m
                     ? $"{account.Name} Payment (includes ${cycle.PendingSelfReportedAmount:N2} pending, not yet posted)"
                     : $"{account.Name} Payment";
-                var line = new LedgerLine
+                lines.Add(new LedgerLine
                 {
                     Date = cycle.DueDate, Description = description, Amount = -cycle.Amount, AccountId = account.Id,
                     CategoryId = amexPaymentCategoryId, MatchWindowDays = RecurrenceExpander.MatchWindowDaysFor(Frequency.Monthly)
-                };
-                if (!IsAlreadyReflectedInAnActualTransaction(line, reconciliationTransactions))
-                {
-                    lines.Add(line);
-                }
+                });
             }
         }
 
@@ -192,8 +191,14 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         // instead of only living in a separate undo list. Deferral is looked up independently
         // of confirmation status, so undoing a confirmation on a previously-deferred payment
         // naturally brings it back still deferred - nothing here needs to know about that.
+        // Keyed by (AccountId, CategoryId, OriginalDate), not just (AccountId, OriginalDate) -
+        // more than one line can share an account and date (e.g. a recurring bill anchored on
+        // the same day a one-time top-up happens to land) and CategoryId is what tells them
+        // apart (see PaymentConfirmation.CategoryId doc comment - a real bug found live
+        // 2026-08-04, a Water top-up confirmation was silently "inherited" by MAS's unrelated
+        // same-day/same-account income line).
         var confirmations = await context.PaymentConfirmations.Include(c => c.Account).ToListAsync(cancellationToken);
-        var confirmationsByAccountAndDate = confirmations.ToDictionary(c => (c.AccountId, c.OriginalDate));
+        var confirmationsByAccountAndDate = confirmations.ToDictionary(c => (c.AccountId, c.CategoryId, c.OriginalDate));
         var matchedConfirmationIds = new HashSet<int>();
 
         var deferrals = await context.PaymentDeferrals.ToListAsync(cancellationToken);
@@ -282,7 +287,7 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 continue;
             }
 
-            if (confirmationsByAccountAndDate.TryGetValue((line.AccountId, line.Date), out var confirmation))
+            if (confirmationsByAccountAndDate.TryGetValue((line.AccountId, line.CategoryId, line.Date), out var confirmation))
             {
                 matchedConfirmationIds.Add(confirmation.Id);
                 rows.Add(new ForecastLedgerRow
@@ -297,6 +302,34 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     IsExcluded = true,
                     ExclusionReason = confirmation.Reason,
                     ConfirmationId = confirmation.Id
+                });
+                continue;
+            }
+
+            // Automatic reconciliation against a real posted transaction - a one-time event
+            // uses the windowed category check (the real payment that covers it is the same
+            // one that already satisfied a same-category recurring line, so it can't also
+            // carry this event's exact date); every other line type uses the exact-date
+            // check, unchanged from before this consistency pass. Shows the real transaction's
+            // actual amount, not the budgeted line's amount - a $70.97 real bill against a
+            // $76.68 budgeted line should read as "$70.97, resolved," not silently claim the
+            // stale estimate was exactly right (found live 2026-08-04).
+            var reflectingTransaction = line.SourceOneTimeEventId is not null
+                ? FindOneTimeEventCoveringTransaction(line, reconciliationTransactions)
+                : FindReflectingTransaction(line, reconciliationTransactions);
+            if (reflectingTransaction is not null)
+            {
+                rows.Add(new ForecastLedgerRow
+                {
+                    Date = line.Date,
+                    Description = line.Description,
+                    Amount = reflectingTransaction.Amount,
+                    RunningBalance = 0m,
+                    AccountId = line.AccountId,
+                    OriginalDate = line.Date,
+                    CategoryId = line.CategoryId,
+                    IsExcluded = true,
+                    ExclusionReason = ConfirmationReason.AutoReconciled
                 });
                 continue;
             }
@@ -378,14 +411,14 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
     // posts against, so AccountId isn't a usable signal here. CategoryId alone is already
     // unique per obligation (one current BudgetPeriod per category; one FundingRule per
     // debt account), so it doesn't need the extra filter.
-    private static bool IsAlreadyReflectedInAnActualTransaction(LedgerLine line, IReadOnlyList<BankTransaction> transactions)
+    private static BankTransaction? FindReflectingTransaction(LedgerLine line, IReadOnlyList<BankTransaction> transactions)
     {
-        if (line.CategoryId is null) return false;
+        if (line.CategoryId is null) return null;
 
         var expectedAmount = Math.Abs(line.Amount);
         var minimumAcceptedAmount = expectedAmount * (1m - ReconciliationAmountToleranceFraction);
 
-        return transactions.Any(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate == line.Date
+        return transactions.FirstOrDefault(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate == line.Date
             && Math.Abs(t.Amount) >= minimumAcceptedAmount);
     }
 
@@ -399,14 +432,14 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
     /// date" as evidence the same payment covered the top-up too - still gated by the same
     /// amount floor so an unrelated, too-small reconciled transaction can't count.
     /// </summary>
-    private static bool IsOneTimeEventAlreadyCoveredByARelatedPayment(LedgerLine line, IReadOnlyList<BankTransaction> transactions)
+    private static BankTransaction? FindOneTimeEventCoveringTransaction(LedgerLine line, IReadOnlyList<BankTransaction> transactions)
     {
-        if (line.CategoryId is null) return false;
+        if (line.CategoryId is null) return null;
 
         var expectedAmount = Math.Abs(line.Amount);
         var minimumAcceptedAmount = expectedAmount * (1m - ReconciliationAmountToleranceFraction);
 
-        return transactions.Any(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate is { } reconciledDate
+        return transactions.FirstOrDefault(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate is { } reconciledDate
             && Math.Abs(reconciledDate.DayNumber - line.Date.DayNumber) <= RecurrenceExpander.MaxMatchWindowDays
             && Math.Abs(t.Amount) >= minimumAcceptedAmount);
     }

@@ -11,7 +11,10 @@ public class PaymentConfirmationConfiguration : IEntityTypeConfiguration<Payment
         builder.ToTable("payment_confirmations");
         builder.HasKey(c => c.Id);
         builder.HasOne(c => c.Account).WithMany().HasForeignKey(c => c.AccountId);
-        builder.HasIndex(c => new { c.AccountId, c.OriginalDate }).IsUnique();
+        builder.HasOne(c => c.Category).WithMany().HasForeignKey(c => c.CategoryId).OnDelete(DeleteBehavior.SetNull);
+        // Was (AccountId, OriginalDate) alone - too coarse, since more than one line can
+        // share an account and date (see PaymentConfirmation.CategoryId doc comment).
+        builder.HasIndex(c => new { c.AccountId, c.CategoryId, c.OriginalDate }).IsUnique();
 
         // Explicit default, not left to EF's CLR-type inference - AlreadyPaid (0) matches
         // this column's pre-existing rows' actual meaning before Reason existed.

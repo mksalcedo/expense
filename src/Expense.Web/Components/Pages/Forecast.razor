@@ -1,6 +1,7 @@
 @page "/forecast"
 @using Expense.Domain.Services.Forecast
 @inject IForecastResultProvider ForecastResultProvider
+@inject IJSRuntime JS
 
 <PageTitle>Forecast</PageTitle>
 
@@ -22,6 +23,13 @@ else
     </p>
     <p><a id="export-excel-link" href="/export/forecast.xlsx" target="_blank">Export to Excel</a></p>
 
+    <p>
+        <label>
+            <input id="show-resolved-toggle" type="checkbox" checked="@_showResolved" @onchange="ToggleShowResolvedAsync" />
+            Show resolved items (paid, overridden, or auto-reconciled)
+        </label>
+    </p>
+
     <table id="ledger-table" style="border-collapse: collapse">
         <thead>
             <tr>
@@ -33,7 +41,7 @@ else
             </tr>
         </thead>
         <tbody>
-            @foreach (var (row, index) in _result.Rows.Select((r, i) => (r, i)))
+            @foreach (var (row, index) in _result.Rows.Where(r => _showResolved || !r.IsExcluded).Select((r, i) => (r, i)))
             {
                 <tr style="@RowStyle(row)">
                     <td style="@CellStyle()">@row.Date.ToString("MM/dd/yyyy")</td>
@@ -127,8 +135,11 @@ else
 @code {
     private enum ModalKind { None, Defer, ConfirmPaid, Override, PayPartial, RemoveDeferral, UndoConfirmation, UndoPartialPayment }
 
+    private const string ShowResolvedStorageKey = "expense-forecast-show-resolved";
+
     private ForecastResult? _result;
     private ForecastLedgerRow? _lowestRow;
+    private bool _showResolved = true;
 
     private ModalKind _activeModal = ModalKind.None;
     private ForecastLedgerRow? _modalRow;
@@ -139,6 +150,24 @@ else
     protected override async Task OnInitializedAsync()
     {
         await RefreshAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var saved = await JS.InvokeAsync<string?>("localStorage.getItem", ShowResolvedStorageKey);
+        if (bool.TryParse(saved, out var savedShowResolved) && savedShowResolved != _showResolved)
+        {
+            _showResolved = savedShowResolved;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleShowResolvedAsync(ChangeEventArgs e)
+    {
+        _showResolved = (bool)e.Value!;
+        await JS.InvokeVoidAsync("localStorage.setItem", ShowResolvedStorageKey, _showResolved.ToString());
     }
 
     private static decimal? ParseNullableDecimal(string value) =>
@@ -211,10 +240,10 @@ else
                 await ForecastResultProvider.DeferPaymentAsync(row.AccountId, row.OriginalDate, _modalDate, null);
                 break;
             case ModalKind.ConfirmPaid:
-                await ForecastResultProvider.ConfirmPaymentAsync(row.AccountId, row.OriginalDate, row.Date, row.Amount);
+                await ForecastResultProvider.ConfirmPaymentAsync(row.AccountId, row.CategoryId, row.OriginalDate, row.Date, row.Amount);
                 break;
             case ModalKind.Override:
-                await ForecastResultProvider.OverridePaymentAsync(row.AccountId, row.OriginalDate, row.Date, row.Amount);
+                await ForecastResultProvider.OverridePaymentAsync(row.AccountId, row.CategoryId, row.OriginalDate, row.Date, row.Amount);
                 break;
             case ModalKind.PayPartial:
                 if (_modalAmount is not { } amount || amount <= 0m) { CloseModal(); return; }
