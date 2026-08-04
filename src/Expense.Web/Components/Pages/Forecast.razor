@@ -123,6 +123,17 @@ else
                                @onchange="e => _modalDate = DateOnly.Parse((string)e.Value!)" />
                     </div>
                 }
+                else if (_activeModal == ModalKind.Override)
+                {
+                    <div class="detail-form">
+                        <label for="modal-amount-input">Amount</label>
+                        <input id="modal-amount-input" type="number" step="0.01" value="@_modalAmount"
+                               @onchange="e => _modalAmount = ParseNullableDecimal((string)e.Value!)" />
+                        <label for="modal-date-input">Date</label>
+                        <input id="modal-date-input" type="date" value="@_modalDate.ToString("yyyy-MM-dd")"
+                               @onchange="e => _modalDate = DateOnly.Parse((string)e.Value!)" />
+                    </div>
+                }
                 <div class="button-row" style="margin-top: 1em;">
                     <button id="action-modal-cancel" class="button-secondary" @onclick="CloseModal">Cancel</button>
                     <button id="action-modal-apply" @onclick="ApplyModalAsync">Apply</button>
@@ -190,6 +201,8 @@ else
     {
         _activeModal = ModalKind.Override;
         _modalRow = row;
+        _modalAmount = row.SuggestedOverrideAmount ?? row.Amount;
+        _modalDate = row.Date;
     }
 
     private void OpenPayPartialModal(ForecastLedgerRow row)
@@ -226,10 +239,12 @@ else
         _modalPartialPayment = null;
     }
 
-    // Pure UX pass, no new capability - Confirm Paid and Override still just resubmit the
-    // row's own current Date/Amount exactly as they did before (see the "why do these behave
-    // identically" conversation); only Defer's new date and Pay Partial's amount/date come
-    // from user input, matching what was editable before this change too.
+    // Confirm Paid still just resubmits the row's own current Date/Amount, unchanged (see the
+    // "why do these behave identically" conversation) - it means "this happened exactly as
+    // scheduled," so there's nothing to edit. Override now accepts a real edited amount/date
+    // instead (see the Gas $70.97-vs-$76.68 conversation) - it means "something different
+    // actually happened," pre-filled with a suggested real transaction's amount when one was
+    // found close by but outside the auto-reconciliation tolerance.
     private async Task ApplyModalAsync()
     {
         if (_modalRow is not { } row) return;
@@ -243,7 +258,8 @@ else
                 await ForecastResultProvider.ConfirmPaymentAsync(row.AccountId, row.CategoryId, row.OriginalDate, row.Date, row.Amount);
                 break;
             case ModalKind.Override:
-                await ForecastResultProvider.OverridePaymentAsync(row.AccountId, row.CategoryId, row.OriginalDate, row.Date, row.Amount);
+                if (_modalAmount is not { } overrideAmount) { CloseModal(); return; }
+                await ForecastResultProvider.OverridePaymentAsync(row.AccountId, row.CategoryId, row.OriginalDate, _modalDate, overrideAmount);
                 break;
             case ModalKind.PayPartial:
                 if (_modalAmount is not { } amount || amount <= 0m) { CloseModal(); return; }
@@ -282,8 +298,9 @@ else
             $"Moves \"{_modalRow?.Description}\" to a new date. The amount stays the same - you'll still owe the same total, just later. Remember to actually reschedule the real bill if this is a real payment.",
         ModalKind.ConfirmPaid =>
             $"Marks \"{_modalRow?.Description}\" as paid on {_modalRow?.Date.ToString("MM/dd/yyyy")} for {_modalRow?.Amount.ToString("N2")}, exactly as scheduled. It'll be removed from your still-owed list since it's already happened.",
-        ModalKind.Override =>
-            $"Marks \"{_modalRow?.Description}\" as resolved differently than scheduled, using {_modalRow?.Amount.ToString("N2")} on {_modalRow?.Date.ToString("MM/dd/yyyy")} for now. It'll be removed from your still-owed list the same way Confirm Paid does.",
+        ModalKind.Override => _modalRow?.SuggestedOverrideAmount is { } suggested
+            ? $"A real transaction for {suggested.ToString("N2")} was found close to this line but didn't auto-match - edit the amount/date below if this isn't it, then apply to mark \"{_modalRow?.Description}\" resolved. It'll be removed from your still-owed list."
+            : $"Marks \"{_modalRow?.Description}\" as resolved with the amount/date below, replacing what was scheduled. It'll be removed from your still-owed list.",
         ModalKind.PayPartial =>
             $"Records a partial payment against \"{_modalRow?.Description}\". The remaining balance stays on the forecast for the rest.",
         ModalKind.RemoveDeferral =>

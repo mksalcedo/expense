@@ -336,6 +336,9 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
 
             var isDeferred = deferralsByAccountAndDate.TryGetValue((line.AccountId, line.Date), out var deferral);
             var appliedPartialPayments = partialPaymentsByAccountAndDate.GetValueOrDefault((line.AccountId, line.Date), []);
+            var nearMissTransaction = line.SourceOneTimeEventId is not null
+                ? FindOneTimeEventNearMissTransaction(line, reconciliationTransactions)
+                : FindNearMissTransaction(line, reconciliationTransactions);
             rows.Add(new ForecastLedgerRow
             {
                 Date = isDeferred ? deferral!.DeferredToDate : line.Date,
@@ -349,7 +352,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     .Select(p => new PartialPaymentSummary { PartialPaymentId = p.Id, Amount = p.Amount, PaidDate = p.PaidDate })
                     .ToList(),
                 IsDeferred = isDeferred,
-                DeferralId = isDeferred ? deferral!.Id : null
+                DeferralId = isDeferred ? deferral!.Id : null,
+                SuggestedOverrideAmount = nearMissTransaction?.Amount
             });
         }
 
@@ -442,5 +446,28 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         return transactions.FirstOrDefault(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate is { } reconciledDate
             && Math.Abs(reconciledDate.DayNumber - line.Date.DayNumber) <= RecurrenceExpander.MaxMatchWindowDays
             && Math.Abs(t.Amount) >= minimumAcceptedAmount);
+    }
+
+    /// <summary>
+    /// Same category+date match as FindReflectingTransaction, deliberately without the
+    /// amount-tolerance floor - a real bill that's genuinely different from what's budgeted
+    /// (not a partial payment) is exactly what the tolerance floor can't safely tell apart on
+    /// its own. Surfaced only as a suggestion for a human to confirm via Override, never used
+    /// to auto-exclude anything - the floor itself stays exactly as strict as before.
+    /// </summary>
+    private static BankTransaction? FindNearMissTransaction(LedgerLine line, IReadOnlyList<BankTransaction> transactions)
+    {
+        if (line.CategoryId is null) return null;
+
+        return transactions.FirstOrDefault(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate == line.Date);
+    }
+
+    /// <summary>Windowed counterpart to FindNearMissTransaction, for a one-time event - same relationship as FindOneTimeEventCoveringTransaction has to FindReflectingTransaction.</summary>
+    private static BankTransaction? FindOneTimeEventNearMissTransaction(LedgerLine line, IReadOnlyList<BankTransaction> transactions)
+    {
+        if (line.CategoryId is null) return null;
+
+        return transactions.FirstOrDefault(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate is { } reconciledDate
+            && Math.Abs(reconciledDate.DayNumber - line.Date.DayNumber) <= RecurrenceExpander.MaxMatchWindowDays);
     }
 }

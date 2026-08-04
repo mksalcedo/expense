@@ -1102,6 +1102,72 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(new DateOnly(2026, 7, 10), row.Date);
     }
 
+    // Real gap this guards (found live 2026-08-04, user-identified): a real Gas bill posted
+    // for $70.97 against a $76.68 budgeted line - close enough to plausibly be the same real
+    // bill, but outside the 5% auto-reconciliation tolerance, so it never got flagged
+    // anywhere at all; the user had to be handed the number by hand. Surfacing it as a
+    // suggestion lets Override pre-fill with it instead.
+    [Fact]
+    public async Task DirectCategory_ANearMissTransaction_IsSurfacedAsASuggestedOverrideAmount()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 24));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var gas = new Category { Name = "Gas (utility)" };
+        Context.Categories.Add(gas);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = gas.Id, Amount = 76.68m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 25), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            // 7.4% below budgeted - outside the 5% tolerance floor, so it can't auto-reconcile.
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 31), PostedDate = new DateOnly(2026, 7, 31),
+            Description = "COWETAFAYETTEEMC PAYMENT", Amount = -70.97m, ImportSource = "Test", CategoryId = gas.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 25), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 26), new DateOnly(2026, 8, 10));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Gas (utility)");
+        Assert.False(row.IsExcluded); // still not auto-reconciled - the tolerance floor is unchanged
+        Assert.Equal(-76.68m, row.Amount); // still the budgeted amount, not silently swapped
+        Assert.Equal(-70.97m, row.SuggestedOverrideAmount);
+    }
+
+    [Fact]
+    public async Task DirectCategory_WithNoMatchingTransactionAtAll_HasNoSuggestedOverrideAmount()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 7, 26));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var gas = new Category { Name = "Gas (utility)" };
+        Context.Categories.Add(gas);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = gas.Id, Amount = 76.68m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 25), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 26), new DateOnly(2026, 8, 10));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Gas (utility)");
+        Assert.Null(row.SuggestedOverrideAmount);
+    }
+
     [Fact]
     public async Task DebtAccountPayment_AlreadyPaidEarly_IsExcludedFromTheForecast_ViaItsLinkedCategory()
     {

@@ -30,6 +30,17 @@ public class ForecastLedgerRow
     /// already subtracted from Amount above (see ForecastEngine); kept here only so the
     /// Forecast page can list/undo each one individually.</summary>
     public List<PartialPaymentSummary> PartialPayments { get; set; } = [];
+
+    /// <summary>
+    /// A real transaction matching this line's category and date, but whose amount fell
+    /// outside the auto-reconciliation tolerance (see ForecastEngine.ReconciliationAmountToleranceFraction)
+    /// - close enough to plausibly be the same real-world bill at a different amount than
+    /// budgeted, not close enough for automation to assume it safely. Surfaced so Override
+    /// can pre-fill with it instead of leaving the user to go look the real number up
+    /// themselves (found live 2026-08-04: a $70.97 real Gas bill against a $76.68 budgeted
+    /// line never got flagged anywhere on its own).
+    /// </summary>
+    public decimal? SuggestedOverrideAmount { get; set; }
 }
 
 public class PartialPaymentSummary

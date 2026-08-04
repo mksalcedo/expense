@@ -511,10 +511,8 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
-    public void ClickingOverride_OpensAModalWithNoEditableFields_JustAnExplanation()
+    public void ClickingOverride_OpensAModalWithEditableAmountAndDate_PreFilledWithTheCurrentValues()
     {
-        // Pure UX pass - Override doesn't gain the ability to enter a new amount yet, it
-        // still just resubmits the row's own current value, same as before this change.
         var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
@@ -522,11 +520,43 @@ public class ForecastTests : BunitContext
         cut.Find("#override-btn-0").Click();
 
         Assert.Equal("Override this payment?", cut.Find("#action-modal-title").TextContent);
-        var explanation = cut.Find("#action-modal-explanation").TextContent;
-        Assert.Contains("Amex Payment", explanation);
-        Assert.Contains("2,000.00", explanation);
-        Assert.Empty(cut.FindAll("#modal-date-input"));
-        Assert.Empty(cut.FindAll("#modal-amount-input"));
+        Assert.Equal("-2000", cut.Find("#modal-amount-input").GetAttribute("value"));
+        Assert.Equal("2026-08-20", cut.Find("#modal-date-input").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void ClickingOverride_WithASuggestedAmount_PreFillsTheModalWithIt_NotTheBudgetedAmount()
+    {
+        // Real case this covers: a $70.97 real Gas bill against a $76.68 budgeted line -
+        // Override should pre-fill with the real number instead of leaving the user to look
+        // it up themselves.
+        var row = AmexRow(amount: -76.68m);
+        row.SuggestedOverrideAmount = -70.97m;
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+
+        Assert.Equal("-70.97", cut.Find("#modal-amount-input").GetAttribute("value"));
+        Assert.Contains("-70.97", cut.Find("#action-modal-explanation").TextContent);
+    }
+
+    [Fact]
+    public void CancellingTheOverrideModal_WithEditedFields_LeavesTheRowUntouched()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("-1.00");
+        cut.Find("#action-modal-cancel").Click();
+
+        Assert.Empty(cut.FindAll("#action-modal"));
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("2,000.00", row!.TextContent);
+        Assert.DoesNotContain("Overridden", row.TextContent);
     }
 
     [Fact]
@@ -543,6 +573,26 @@ public class ForecastTests : BunitContext
         Assert.Contains("Amex Payment", row!.TextContent);
         Assert.Contains("Overridden", row.TextContent);
         Assert.Contains("2,000.00", row.TextContent);
+    }
+
+    [Fact]
+    public void OverridingWithAnEditedAmountAndDate_UsesTheEditedValues_NotTheOriginal()
+    {
+        var row = AmexRow(amount: -76.68m);
+        row.SuggestedOverrideAmount = -70.97m;
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("-70.97");
+        cut.Find("#modal-date-input").Change("2026-07-31");
+        cut.Find("#action-modal-apply").Click();
+
+        var ledgerRow = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("70.97", ledgerRow!.TextContent);
+        Assert.Contains("07/31/2026", ledgerRow.TextContent);
+        Assert.DoesNotContain("76.68", ledgerRow.TextContent);
     }
 
     [Fact]
