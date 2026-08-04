@@ -62,10 +62,11 @@ public class CategoryManagementService
     }
 
     /// <summary>Combined save for the master-detail edit form: name and funding strategy commit together.</summary>
-    public async Task UpdateCategoryAsync(ExpenseDbContext context, int categoryId, string name, string fundingStrategy)
+    public async Task UpdateCategoryAsync(ExpenseDbContext context, int categoryId, string name, string fundingStrategy, bool reconcileByCalendarMonth = false)
     {
         var category = await context.Categories.SingleAsync(c => c.Id == categoryId);
         category.Name = name;
+        category.ReconcileByCalendarMonth = reconcileByCalendarMonth;
         await context.SaveChangesAsync();
 
         await SetFundingStrategyAsync(context, categoryId, fundingStrategy);

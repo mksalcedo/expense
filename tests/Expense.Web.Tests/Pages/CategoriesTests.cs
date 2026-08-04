@@ -21,6 +21,7 @@ public class CategoriesTests : BunitContext
         public int? LastUpdatedId { get; private set; }
         public string? LastUpdatedName { get; private set; }
         public string? LastUpdatedFundingStrategy { get; private set; }
+        public bool? LastUpdatedReconcileByCalendarMonth { get; private set; }
         public BudgetInput? LastUpdatedBudget { get; private set; }
         public AccountPaymentInput? LastUpdatedAccountPayment { get; private set; }
 
@@ -39,11 +40,12 @@ public class CategoriesTests : BunitContext
             return Task.CompletedTask;
         }
 
-        public Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default)
+        public Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, bool reconcileByCalendarMonth = false, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default)
         {
             LastUpdatedId = categoryId;
             LastUpdatedName = name;
             LastUpdatedFundingStrategy = fundingStrategy;
+            LastUpdatedReconcileByCalendarMonth = reconcileByCalendarMonth;
             LastUpdatedBudget = budget;
             LastUpdatedAccountPayment = accountPayment;
             return Task.CompletedTask;
@@ -68,32 +70,32 @@ public class CategoriesTests : BunitContext
         [
             new CategoryRow
             {
-                Id = 1, Name = "Groceries", IsActive = true, FundingStrategy = FundingStrategies.PayInFullAmex,
+                Id = 1, Name = "Groceries", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.PayInFullAmex,
                 BudgetAmount = 450m, BudgetFrequency = Frequency.Weekly, BudgetDirection = Direction.Expense
             },
-            new CategoryRow { Id = 2, Name = "Off-Budget/Misc", IsActive = true, FundingStrategy = FundingStrategies.None },
-            new CategoryRow { Id = 3, Name = "Discontinued Thing", IsActive = false, FundingStrategy = FundingStrategies.None },
+            new CategoryRow { Id = 2, Name = "Off-Budget/Misc", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.None },
+            new CategoryRow { Id = 3, Name = "Discontinued Thing", IsActive = false, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.None },
             new CategoryRow
             {
-                Id = 4, Name = "Truist Mortgage", IsActive = true, FundingStrategy = FundingStrategies.Direct,
+                Id = 4, Name = "Truist Mortgage", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.Direct,
                 BudgetAmount = 2681.22m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense,
                 BudgetAnchor = new DateOnly(2026, 1, 4), BudgetAccountId = 10
             },
             new CategoryRow
             {
-                Id = 5, Name = "Discover Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment,
+                Id = 5, Name = "Discover Payment", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.AccountPayment,
                 LinkedAccountId = 20, LinkedAccountType = AccountType.Debt, LinkedAccountMinPayment = 173m, LinkedAccountPaymentDueDay = 3
             },
             new CategoryRow
             {
-                Id = 6, Name = "Amex Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment,
+                Id = 6, Name = "Amex Payment", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.AccountPayment,
                 LinkedAccountId = 21, LinkedAccountType = AccountType.ActiveSpending, LinkedAccountExtraPayment = 1100m,
                 LinkedAccountPaymentDueDay = 20, LinkedAccountStatementCloseDay = 26
             },
-            new CategoryRow { Id = 7, Name = "New Card Payment", IsActive = true, FundingStrategy = FundingStrategies.AccountPayment },
+            new CategoryRow { Id = 7, Name = "New Card Payment", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.AccountPayment },
             new CategoryRow
             {
-                Id = 8, Name = "Paycheck", IsActive = true, FundingStrategy = FundingStrategies.Direct,
+                Id = 8, Name = "Paycheck", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.Direct,
                 BudgetAmount = 2000m, BudgetFrequency = Frequency.Biweekly, BudgetDirection = Direction.Income,
                 BudgetAnchor = new DateOnly(2026, 1, 2), BudgetAccountId = 10
             }
@@ -400,8 +402,8 @@ public class CategoriesTests : BunitContext
         {
             Rows =
             [
-                new CategoryRow { Id = 1, Name = "Small", IsActive = true, FundingStrategy = FundingStrategies.PayInFullAmex, BudgetAmount = 9m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense },
-                new CategoryRow { Id = 2, Name = "Big", IsActive = true, FundingStrategy = FundingStrategies.PayInFullAmex, BudgetAmount = 80m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense }
+                new CategoryRow { Id = 1, Name = "Small", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.PayInFullAmex, BudgetAmount = 9m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense },
+                new CategoryRow { Id = 2, Name = "Big", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.PayInFullAmex, BudgetAmount = 80m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense }
             ]
         };
         Services.AddSingleton<ICategoriesPageProvider>(provider);
@@ -499,6 +501,46 @@ public class CategoriesTests : BunitContext
         Assert.Equal(Direction.Expense, provider.LastUpdatedBudget.Direction);
         Assert.Equal(new DateOnly(2026, 1, 4), provider.LastUpdatedBudget.Anchor);
         Assert.Equal(10, provider.LastUpdatedBudget.AccountId);
+    }
+
+    [Fact]
+    public void SelectingADirectCategory_ShowsTheReconcileByCalendarMonthCheckbox_Unchecked()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-4").Click(); // Truist Mortgage: Direct, ReconcileByCalendarMonth false in the fixture
+
+        Assert.False(cut.Find("#detail-reconcile-by-calendar-month").HasAttribute("checked"));
+    }
+
+    [Fact]
+    public void SelectingADirectCategory_WithReconcileByCalendarMonthSet_ShowsItChecked()
+    {
+        var provider = MakeProvider();
+        provider.Rows.Single(r => r.Id == 8).ReconcileByCalendarMonth = true; // Paycheck: Direct
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-8").Click();
+
+        Assert.True(cut.Find("#detail-reconcile-by-calendar-month").HasAttribute("checked"));
+    }
+
+    [Fact]
+    public void CheckingReconcileByCalendarMonth_AndSaving_PassesItThrough()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-4").Click();
+        cut.Find("#detail-reconcile-by-calendar-month").Change(true);
+        cut.Find("#detail-save").Click();
+
+        Assert.Equal(4, provider.LastUpdatedId);
+        Assert.True(provider.LastUpdatedReconcileByCalendarMonth);
     }
 
     [Fact]

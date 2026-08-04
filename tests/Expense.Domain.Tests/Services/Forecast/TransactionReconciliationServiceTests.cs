@@ -314,4 +314,117 @@ public class TransactionReconciliationServiceTests : DatabaseTestBase
         var reloaded = await Context.BankTransactions.SingleAsync(t => t.Id == txn.Id);
         Assert.Null(reloaded.ReconciledOccurrenceDate);
     }
+
+    // Real bug this guards (found live 2026-08-04, user-identified): the ±14-day window
+    // around a monthly anchor only covers roughly the first 3 weeks of each month - anything
+    // posted in the back half (here, July 22, 17 days after the July 5 anchor) falls outside
+    // July's window and lands in August's instead, purely because "nearest anchor by date
+    // distance" has an inherent midpoint around day 20 of every month, regardless of window
+    // width. Real Piano income spread across the whole month (several different payers, not
+    // one clustered bill) hits this constantly. ReconcileByCalendarMonth opts a category out
+    // of that by matching its own calendar month first, before falling back to distance.
+    [Fact]
+    public async Task CalendarMonthCategory_LatePostingTransaction_MatchesItsOwnMonth_NotTheNearestAnchor()
+    {
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano", ReconcileByCalendarMonth = true };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 7, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        var txn = new BankTransaction
+        {
+            // 17 days after the July 5 anchor - outside July's own ±14-day window, and
+            // actually closer in raw distance to August 5 (14 days away) than to July 5.
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 22), PostedDate = new DateOnly(2026, 7, 22),
+            Description = "VENMO CASHOUT", Amount = 429m, ImportSource = "Test", CategoryId = piano.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(txn);
+        await Context.SaveChangesAsync();
+
+        await _sut.ReconcileAsync(Context, new DateOnly(2026, 8, 4));
+
+        var reloaded = await Context.BankTransactions.SingleAsync(t => t.Id == txn.Id);
+        Assert.Equal(new DateOnly(2026, 7, 5), reloaded.ReconciledOccurrenceDate);
+    }
+
+    [Fact]
+    public async Task CalendarMonthCategory_WithNoOccurrenceInItsOwnMonth_FallsBackToNearestByDistance()
+    {
+        // Budget didn't exist yet in the transaction's own month - nothing to match by
+        // calendar month, so it must still fall back to the normal window-based match
+        // instead of being left unclassified.
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano", ReconcileByCalendarMonth = true };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            // Budget only starts August 1st - no July occurrence exists at all.
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 8, 1)
+        });
+        var txn = new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 30), PostedDate = new DateOnly(2026, 7, 30),
+            Description = "ZELLE FROM JAKE MAY", Amount = 25m, ImportSource = "Test", CategoryId = piano.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(txn);
+        await Context.SaveChangesAsync();
+
+        await _sut.ReconcileAsync(Context, new DateOnly(2026, 8, 4));
+
+        var reloaded = await Context.BankTransactions.SingleAsync(t => t.Id == txn.Id);
+        Assert.Equal(new DateOnly(2026, 8, 5), reloaded.ReconciledOccurrenceDate);
+    }
+
+    // Regression guard: a category WITHOUT the flag (the default, and every existing bill
+    // category) must keep the exact prior behavior - a bill paid a few days late, crossing
+    // into the next calendar month, must still match the correct (earlier) occurrence by
+    // distance, not get pulled into a same-month occurrence that isn't even due yet.
+    [Fact]
+    public async Task NonCalendarMonthCategory_LatePaymentCrossingAMonthBoundary_StillMatchesByNearestDistance()
+    {
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var mortgage = new Category { Name = "Truist" }; // ReconcileByCalendarMonth defaults false
+        Context.Categories.Add(mortgage);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = mortgage.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = mortgage.Id, Amount = 2681.22m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 6, 28), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        var txn = new BankTransaction
+        {
+            // Paid 4 days late, into July - must still match June's occurrence (28th), not
+            // July's own not-yet-due one, even though both are technically within reach.
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 2), PostedDate = new DateOnly(2026, 7, 2),
+            Description = "TRUIST MORTGAGE", Amount = -2681.22m, ImportSource = "Test", CategoryId = mortgage.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(txn);
+        await Context.SaveChangesAsync();
+
+        await _sut.ReconcileAsync(Context, new DateOnly(2026, 7, 3));
+
+        var reloaded = await Context.BankTransactions.SingleAsync(t => t.Id == txn.Id);
+        Assert.Equal(new DateOnly(2026, 6, 28), reloaded.ReconciledOccurrenceDate);
+    }
 }

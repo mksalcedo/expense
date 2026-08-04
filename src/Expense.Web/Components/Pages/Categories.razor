@@ -146,6 +146,19 @@ else
                                 }
                             </select>
                         </div>
+                        <div style="display: contents">
+                            <label for="detail-reconcile-by-calendar-month">Payments spread across the month?</label>
+                            <input id="detail-reconcile-by-calendar-month" type="checkbox" checked="@_formReconcileByCalendarMonth"
+                                   @onchange="e => _formReconcileByCalendarMonth = (bool)e.Value!" style="justify-self: start;" />
+                        </div>
+                        @if (_formReconcileByCalendarMonth)
+                        {
+                            <p style="grid-column: 1 / -1; margin: 0; color: #666; font-size: 0.9em;">
+                                A real transaction is matched to whichever calendar month it posted in, not the nearest due
+                                date - for a category like Piano lessons with several payers on their own schedules, not one
+                                bill clustered near a single date.
+                            </p>
+                        }
                     }
                     @if (_formFundingStrategy == FundingStrategies.Direct || _formFundingStrategy == FundingStrategies.PayInFullAmex)
                     {
@@ -224,6 +237,7 @@ else
     private Frequency _formFrequency = Frequency.Monthly;
     private DateOnly _formAnchor = DateOnly.FromDateTime(DateTime.Today);
     private int? _formAccountId;
+    private bool _formReconcileByCalendarMonth;
 
     private AccountType? _formLinkedAccountType;
     private decimal? _formMinPayment;
@@ -334,6 +348,7 @@ else
         _formExtraPayment = null;
         _formPaymentDueDay = null;
         _formStatementCloseDay = null;
+        _formReconcileByCalendarMonth = false;
     }
 
     private Task SelectAsync(CategoryRow category)
@@ -353,6 +368,7 @@ else
         _formExtraPayment = category.LinkedAccountExtraPayment;
         _formPaymentDueDay = category.LinkedAccountPaymentDueDay;
         _formStatementCloseDay = category.LinkedAccountStatementCloseDay;
+        _formReconcileByCalendarMonth = category.ReconcileByCalendarMonth;
         return Task.CompletedTask;
     }
 
@@ -379,7 +395,7 @@ else
         }
         else if (_selectedId is { } id)
         {
-            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formFundingStrategy, budget, accountPayment);
+            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formFundingStrategy, _formReconcileByCalendarMonth, budget, accountPayment);
         }
 
         _mode = DetailMode.None;

@@ -131,6 +131,11 @@ public class TransactionReconciliationService(RecurrenceExpander recurrenceExpan
                         && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
             .ToListAsync(cancellationToken);
 
+        var calendarMonthCategoryIds = await context.Categories
+            .Where(c => c.ReconcileByCalendarMonth)
+            .Select(c => c.Id)
+            .ToHashSetAsync(cancellationToken);
+
         var changes = new List<ReconciliationChange>();
         foreach (var txn in transactions)
         {
@@ -139,11 +144,25 @@ public class TransactionReconciliationService(RecurrenceExpander recurrenceExpan
             // authoritative date and this naturally starts using that instead, on the very
             // next reconciliation run (this whole method re-derives fresh every time).
             var effectiveDate = txn.PostedDate ?? txn.TransactionDate;
+            var categoryCandidates = candidates.Where(c => c.CategoryId == txn.CategoryId);
 
-            var best = candidates
-                .Where(c => c.CategoryId == txn.CategoryId
-                            && effectiveDate >= c.Date.AddDays(-c.MatchWindowDays)
-                            && effectiveDate <= c.Date.AddDays(c.MatchWindowDays))
+            // A category's real payments can spread across the whole month (several payers
+            // on their own schedules) rather than cluster near one due date - "nearest anchor
+            // by date distance" has an inherent midpoint around day 20 of every month
+            // regardless of window width, so anything posted in the back half of a month gets
+            // pulled into next month's occurrence. Matching this transaction's own calendar
+            // month first avoids that, falling back to the normal distance-based match only
+            // if no occurrence exists in that exact month. Left off (default) for a genuine
+            // single-payment bill, where nearest-by-distance correctly handles a payment
+            // crossing a month boundary a few days early/late.
+            var best = txn.CategoryId is { } categoryId && calendarMonthCategoryIds.Contains(categoryId)
+                ? categoryCandidates
+                    .Where(c => c.Date.Year == effectiveDate.Year && c.Date.Month == effectiveDate.Month)
+                    .OrderBy(c => Math.Abs(c.Date.DayNumber - effectiveDate.DayNumber))
+                    .FirstOrDefault()
+                : null;
+            best ??= categoryCandidates
+                .Where(c => effectiveDate >= c.Date.AddDays(-c.MatchWindowDays) && effectiveDate <= c.Date.AddDays(c.MatchWindowDays))
                 .OrderBy(c => Math.Abs(c.Date.DayNumber - effectiveDate.DayNumber))
                 .FirstOrDefault();
 

@@ -7,7 +7,7 @@ public interface ICategoriesPageProvider
 
     Task CreateCategoryAsync(string name, string fundingStrategy, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default);
 
-    Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default);
+    Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, bool reconcileByCalendarMonth = false, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default);
 
     Task DeactivateCategoryAsync(int categoryId, CancellationToken cancellationToken = default);
 

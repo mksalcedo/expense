@@ -8,6 +8,7 @@ public class CategoryRow
     public required string Name { get; set; }
     public required bool IsActive { get; set; }
     public required string FundingStrategy { get; set; }
+    public required bool ReconcileByCalendarMonth { get; set; }
 
     // Current BudgetPeriod, if any - only meaningful for FundingStrategy == Direct or PayInFullAmex.
     public decimal? BudgetAmount { get; set; }
