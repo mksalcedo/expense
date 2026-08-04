@@ -14,7 +14,7 @@ namespace Expense.Domain.Services.Forecast;
 public class PartialPaymentService
 {
     public async Task<PartialPayment> CreateAsync(
-        ExpenseDbContext context, int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, CancellationToken cancellationToken = default)
+        ExpenseDbContext context, int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default)
     {
         var account = await context.Accounts.SingleAsync(a => a.Id == accountId, cancellationToken);
 
@@ -22,7 +22,7 @@ public class PartialPaymentService
         {
             Name = $"{account.Name} Payment (partial)",
             Amount = amount,
-            Direction = Direction.Expense,
+            Direction = direction,
             Date = paidDate,
             AccountId = accountId
         };

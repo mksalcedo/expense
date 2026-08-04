@@ -65,10 +65,10 @@ public class ForecastResultProvider(
     }
 
     public async Task PayPartialAmountAsync(
-        int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, CancellationToken cancellationToken = default)
+        int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await partialPayments.CreateAsync(context, accountId, originalDate, paidDate, amount, cancellationToken);
+        await partialPayments.CreateAsync(context, accountId, originalDate, paidDate, amount, direction, cancellationToken);
     }
 
     public async Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default)

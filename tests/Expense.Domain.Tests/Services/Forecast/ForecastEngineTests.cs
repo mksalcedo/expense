@@ -1336,6 +1336,47 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(-1000m, amexRow.Amount);
     }
 
+    // Real bug this guards (found live 2026-08-04, user-identified): the reduction math
+    // (line.Amount + partial.Amount) only works for an expense line, where adding a positive
+    // partial-payment magnitude correctly shrinks a negative budgeted amount toward zero. For
+    // an income line (Piano, budgeted positive), the same addition wrongly inflates the
+    // remaining expected amount instead of shrinking it - a $429 real payment against a $600
+    // budgeted line must show $171 still expected, not $1,029.
+    [Fact]
+    public async Task PartialPayment_AgainstAnIncomeLine_ReducesTheRemainingExpectedAmount_NotInflatesIt()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano" };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        var oneTimeEvent = new OneTimeEvent { Name = "Checking Payment (partial)", Amount = 429m, Direction = Direction.Income, Date = new DateOnly(2026, 7, 22), AccountId = checking.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = checking.Id, OriginalDate = new DateOnly(2026, 8, 5), Amount = 429m, PaidDate = new DateOnly(2026, 7, 22),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 31));
+
+        var pianoRow = Assert.Single(result.Rows, r => r.CategoryId == piano.Id && r.OriginalDate == new DateOnly(2026, 8, 5));
+        Assert.Equal(171m, pianoRow.Amount);
+    }
+
     [Fact]
     public async Task PartialPayment_AppearsAsItsOwnSeparateLedgerLine_OnItsPaidDate()
     {

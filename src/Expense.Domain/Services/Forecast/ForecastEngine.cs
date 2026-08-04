@@ -339,11 +339,18 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             var nearMissTransaction = line.SourceOneTimeEventId is not null
                 ? FindOneTimeEventNearMissTransaction(line, reconciliationTransactions)
                 : FindNearMissTransaction(line, reconciliationTransactions);
+            // PartialPayment.Amount is always a positive magnitude (the UI never makes anyone
+            // type a sign) - for an expense line (budgeted negative) that shrinks the debt
+            // toward zero by adding it; for an income line (budgeted positive) it must instead
+            // shrink the remaining expected amount by subtracting it, or a real partial
+            // payment would wrongly inflate what's still expected (found live 2026-08-04).
+            var partialPaymentTotal = appliedPartialPayments.Sum(p => p.Amount);
+            var adjustedAmount = line.Amount < 0 ? line.Amount + partialPaymentTotal : line.Amount - partialPaymentTotal;
             rows.Add(new ForecastLedgerRow
             {
                 Date = isDeferred ? deferral!.DeferredToDate : line.Date,
                 Description = line.Description,
-                Amount = line.Amount + appliedPartialPayments.Sum(p => p.Amount),
+                Amount = adjustedAmount,
                 RunningBalance = 0m,
                 AccountId = line.AccountId,
                 OriginalDate = line.Date,

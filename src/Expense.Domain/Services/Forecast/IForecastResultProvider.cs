@@ -1,3 +1,5 @@
+using Expense.Domain.Entities;
+
 namespace Expense.Domain.Services.Forecast;
 
 /// <summary>Thin abstraction over ForecastEngine so UI components can be tested against a fake result.</summary>
@@ -15,7 +17,7 @@ public interface IForecastResultProvider
 
     Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default);
 
-    Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, CancellationToken cancellationToken = default);
+    Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default);
 
     Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default);
 }

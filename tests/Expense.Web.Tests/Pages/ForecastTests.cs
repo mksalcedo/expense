@@ -76,10 +76,10 @@ public class ForecastTests : BunitContext
             return Task.CompletedTask;
         }
 
-        public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, CancellationToken cancellationToken = default)
+        public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default)
         {
             var row = result.Rows.Single(r => r.AccountId == accountId && r.OriginalDate == originalDate);
-            row.Amount += amount;
+            row.Amount += direction == Direction.Income ? -amount : amount;
             row.PartialPayments.Add(new PartialPaymentSummary { PartialPaymentId = _nextPartialPaymentId++, Amount = amount, PaidDate = paidDate });
             return Task.CompletedTask;
         }
@@ -98,6 +98,12 @@ public class ForecastTests : BunitContext
     {
         Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = amount, RunningBalance = runningBalance,
         AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20)
+    };
+
+    private static ForecastLedgerRow PianoRow(decimal amount = 600m, decimal runningBalance = 1600m) => new()
+    {
+        Date = new DateOnly(2026, 8, 5), Description = "Piano", Amount = amount, RunningBalance = runningBalance,
+        AccountId = 1, OriginalDate = new DateOnly(2026, 8, 5)
     };
 
     [Fact]
@@ -720,6 +726,81 @@ public class ForecastTests : BunitContext
         Assert.Contains("1,000.00", row!.TextContent);
         Assert.Contains("07/20/2026", row.TextContent);
         Assert.NotNull(cut.Find("#undo-partial-payment-btn-1"));
+    }
+
+    // Real bug this guards (found live 2026-08-04, user-identified): the partial-payment
+    // button/modal/note wording was written only for the expense case ("Pay", "paid") - using
+    // it as-is on an income line like Piano would have been actively misleading, since you're
+    // recording money received, not money paid out.
+    [Fact]
+    public void IncomeRow_ShowsRecordPartialIncomeButtonTitle_NotPayPartialAmount()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [PianoRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Equal("Record partial income", cut.Find("#partial-pay-btn-0").GetAttribute("title"));
+    }
+
+    [Fact]
+    public void ExpenseRow_StillShowsPayPartialAmountButtonTitle()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Equal("Pay partial amount", cut.Find("#partial-pay-btn-0").GetAttribute("title"));
+    }
+
+    [Fact]
+    public void ClickingPartialPayOnAnIncomeRow_ShowsDateReceivedLabel_NotDatePaid()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [PianoRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-pay-btn-0").Click();
+
+        Assert.Equal("Record partial income?", cut.Find("#action-modal-title").TextContent);
+        var modal = cut.Find("#action-modal");
+        Assert.Contains("Date received", modal.TextContent);
+        Assert.DoesNotContain("Date paid", modal.TextContent);
+    }
+
+    [Fact]
+    public void RecordingPartialIncome_ReducesTheRemainingExpectedAmount_NotInflatesIt()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [PianoRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-pay-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("429");
+        cut.Find("#modal-date-input").Change("2026-07-22");
+        cut.Find("#action-modal-apply").Click();
+
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("171.00", row!.TextContent);
+        Assert.DoesNotContain("1,029.00", row.TextContent);
+    }
+
+    [Fact]
+    public void PartialIncomeNote_ShowsReceivedWording_NotPaid()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [PianoRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-pay-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("429");
+        cut.Find("#modal-date-input").Change("2026-07-22");
+        cut.Find("#action-modal-apply").Click();
+
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("Received $429.00 on 07/22/2026", row!.TextContent);
+        Assert.DoesNotContain("Paid $429.00", row.TextContent);
     }
 
     [Fact]

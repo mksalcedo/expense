@@ -1,4 +1,5 @@
 @page "/forecast"
+@using Expense.Domain.Entities
 @using Expense.Domain.Services.Forecast
 @inject IForecastResultProvider ForecastResultProvider
 @inject IJSRuntime JS
@@ -75,7 +76,7 @@ else
                         {
                             <br />
                             <span style="color: #555">
-                                Paid $@partialPayment.Amount.ToString("N2") on @partialPayment.PaidDate.ToString("MM/dd/yyyy")
+                                @(IsIncomeLine(row) ? "Received" : "Paid") $@partialPayment.Amount.ToString("N2") on @partialPayment.PaidDate.ToString("MM/dd/yyyy")
                                 <button id="undo-partial-payment-btn-@partialPayment.PartialPaymentId" @onclick="() => OpenUndoPartialPaymentModal(row, partialPayment)">Undo</button>
                             </span>
                         }
@@ -100,7 +101,7 @@ else
                                 }
                                 <button id="confirm-btn-@index" title="Confirm paid" @onclick="() => OpenConfirmModal(row)">&#10003;</button>
                                 <button id="override-btn-@index" title="Change amount" @onclick="() => OpenOverrideModal(row)">&#8644;</button>
-                                <button id="partial-pay-btn-@index" title="Pay partial amount" @onclick="() => OpenPayPartialModal(row)">&#128176;</button>
+                                <button id="partial-pay-btn-@index" title="@(IsIncomeLine(row) ? "Record partial income" : "Pay partial amount")" @onclick="() => OpenPayPartialModal(row)">&#128176;</button>
                             </div>
                         }
                     </td>
@@ -129,7 +130,7 @@ else
                         <label for="modal-amount-input">Amount</label>
                         <input id="modal-amount-input" type="number" step="0.01" value="@_modalAmount"
                                @onchange="e => _modalAmount = ParseNullableDecimal((string)e.Value!)" />
-                        <label for="modal-date-input">Date paid</label>
+                        <label for="modal-date-input">@(_modalRow is not null && IsIncomeLine(_modalRow) ? "Date received" : "Date paid")</label>
                         <input id="modal-date-input" type="date" value="@_modalDate.ToString("yyyy-MM-dd")"
                                @onchange="e => _modalDate = DateOnly.Parse((string)e.Value!)" />
                     </div>
@@ -194,6 +195,14 @@ else
 
     private static decimal? ParseNullableDecimal(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : decimal.Parse(value);
+
+    // A line's Amount sign already is its direction by construction (RecurrenceExpander
+    // negates every expense line, leaves income positive) - no separate Direction field
+    // needed on the row itself. Used only for wording (button/modal labels) and to tag a new
+    // partial payment's real cash-movement record correctly, never for the reduction math
+    // itself (that anchors on the original budgeted LedgerLine.Amount, not this row's already-
+    // netted display value - see ForecastEngine).
+    private static bool IsIncomeLine(ForecastLedgerRow row) => row.Amount >= 0;
 
     private void OpenDeferModal(ForecastLedgerRow row)
     {
@@ -274,7 +283,7 @@ else
                 break;
             case ModalKind.PayPartial:
                 if (_modalAmount is not { } amount || amount <= 0m) { CloseModal(); return; }
-                await ForecastResultProvider.PayPartialAmountAsync(row.AccountId, row.OriginalDate, _modalDate, amount);
+                await ForecastResultProvider.PayPartialAmountAsync(row.AccountId, row.OriginalDate, _modalDate, amount, IsIncomeLine(row) ? Direction.Income : Direction.Expense);
                 break;
             case ModalKind.RemoveDeferral:
                 if (row.DeferralId is { } deferralId) await ForecastResultProvider.RemoveDeferralAsync(deferralId);
@@ -296,7 +305,7 @@ else
         ModalKind.Defer => "Defer this payment?",
         ModalKind.ConfirmPaid => "Confirm this was paid as scheduled?",
         ModalKind.Override => "Change this amount?",
-        ModalKind.PayPartial => "Record a partial payment?",
+        ModalKind.PayPartial => _modalRow is not null && IsIncomeLine(_modalRow) ? "Record partial income?" : "Record a partial payment?",
         ModalKind.RemoveDeferral => "Remove this deferral?",
         ModalKind.UndoConfirmation => "Undo this confirmation?",
         ModalKind.UndoPartialPayment => "Undo this partial payment?",
@@ -312,8 +321,9 @@ else
         ModalKind.Override => _modalRow?.SuggestedOverrideAmount is { } suggested
             ? $"A transaction for {suggested.ToString("N2")} posted {_modalRow?.SuggestedOverrideDate?.ToString("MM/dd/yyyy")} was found close to this line but didn't auto-match - edit the amount/date below if this isn't it, then apply to mark \"{_modalRow?.Description}\" resolved. It'll be removed from your still-owed list."
             : $"No matching transaction was found - enter what actually happened below to mark \"{_modalRow?.Description}\" resolved, replacing what was scheduled. It'll be removed from your still-owed list.",
-        ModalKind.PayPartial =>
-            $"Records a partial payment against \"{_modalRow?.Description}\". The remaining balance stays on the forecast for the rest.",
+        ModalKind.PayPartial => _modalRow is not null && IsIncomeLine(_modalRow)
+            ? $"Records partial income received toward \"{_modalRow.Description}\". The remaining expected amount stays on the forecast for the rest."
+            : $"Records a partial payment against \"{_modalRow?.Description}\". The remaining balance stays on the forecast for the rest.",
         ModalKind.RemoveDeferral =>
             $"Puts \"{_modalRow?.Description}\" back on its originally scheduled date of {_modalRow?.OriginalDate.ToString("MM/dd/yyyy")}.",
         ModalKind.UndoConfirmation =>
