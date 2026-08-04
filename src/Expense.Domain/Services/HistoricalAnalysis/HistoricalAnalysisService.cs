@@ -225,9 +225,23 @@ public class HistoricalAnalysisService(BudgetProrationService proration)
             .Select(g => new { CategoryId = g.Key, Total = g.Sum(i => i.Price * i.Quantity + i.TaxAllocated - (i.RefundAmount ?? 0m)) })
             .ToDictionaryAsync(g => g.CategoryId, g => g.Total, cancellationToken);
 
-        var actualByCategory = categories.ToDictionary(
-            c => c.Id,
-            c => -bankTotalsByCategory.GetValueOrDefault(c.Id) + amazonTotalsByCategory.GetValueOrDefault(c.Id));
+        // Direction (from the BudgetPeriod in effect at periodStart, same "what was actually
+        // budgeted at the time" rule this class uses everywhere else) decides the sign: an
+        // expense category's bank total is a negative amount (negate it to a positive spend
+        // figure), but an income Direct category's (e.g. Piano) is already positive money in -
+        // negating that would turn real income into a negative "Actual".
+        var effectiveDirectionByCategory = await context.BudgetPeriods
+            .Where(p => qualifyingCategoryIds.Contains(p.CategoryId)
+                        && p.EffectiveFrom <= periodStart && (p.EffectiveThrough == null || p.EffectiveThrough >= periodStart))
+            .ToDictionaryAsync(p => p.CategoryId, p => p.Direction, cancellationToken);
+
+        var actualByCategory = categories.ToDictionary(c => c.Id, c =>
+        {
+            var direction = effectiveDirectionByCategory.GetValueOrDefault(c.Id, Direction.Expense);
+            var bankTotal = bankTotalsByCategory.GetValueOrDefault(c.Id);
+            var bankActual = direction == Direction.Income ? bankTotal : -bankTotal;
+            return bankActual + amazonTotalsByCategory.GetValueOrDefault(c.Id);
+        });
 
         return (categories, actualByCategory);
     }

@@ -85,6 +85,12 @@ public class ForecastTests : BunitContext
         }
     }
 
+    private static ForecastLedgerRow AmexRow(decimal amount = -2000m, decimal runningBalance = -1000m) => new()
+    {
+        Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = amount, RunningBalance = runningBalance,
+        AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20)
+    };
+
     [Fact]
     public void Forecast_RendersStartingBalanceAndLedgerRows()
     {
@@ -241,34 +247,47 @@ public class ForecastTests : BunitContext
     [Fact]
     public void Forecast_ShowsADeferActionOnEachUndeferredRow()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -4442.38m, RunningBalance = -273.64m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
 
-        Assert.NotNull(cut.Find("#defer-date-0"));
         Assert.NotNull(cut.Find("#defer-btn-0"));
         Assert.Empty(cut.FindAll("#remove-deferral-btn-0"));
+        // No inline date input anymore - the modal is the only place a date gets entered.
+        Assert.Empty(cut.FindAll("#defer-date-0"));
+    }
+
+    [Fact]
+    public void ClickingDefer_OpensAModal_WithoutChangingAnythingYet()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#defer-btn-0").Click();
+
+        Assert.NotNull(cut.Find("#action-modal"));
+        Assert.Equal("Defer this payment?", cut.Find("#action-modal-title").TextContent);
+        Assert.Contains("Amex Payment", cut.Find("#action-modal-explanation").TextContent);
+        Assert.NotNull(cut.Find("#modal-date-input"));
+        // Nothing applied yet - row still shows its original date, unstyled.
+        var row = cut.Find("tbody tr");
+        Assert.DoesNotContain("background-color: orange", row.GetAttribute("style") ?? "");
     }
 
     [Fact]
     public void DeferringAPayment_MovesItToTheNewDate_AndHighlightsItWithAWarning()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -4442.38m, RunningBalance = -273.64m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
-        cut.Find("#defer-date-0").Change("2026-08-22");
         cut.Find("#defer-btn-0").Click();
+        cut.Find("#modal-date-input").Change("2026-08-22");
+        cut.Find("#action-modal-apply").Click();
 
+        Assert.Empty(cut.FindAll("#action-modal"));
         Assert.Contains("08/22/2026", cut.Markup);
         Assert.Contains("Originally estimated for 08/20/2026", cut.Markup);
         Assert.Contains("reschedule", cut.Markup);
@@ -279,19 +298,56 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
-    public void RemovingADeferral_RevertsToTheOriginalDate_AndClearsTheHighlight()
+    public void CancellingTheDeferModal_ClosesItAndChangesNothing()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -4442.38m, RunningBalance = -273.64m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
-        cut.Find("#defer-date-0").Change("2026-08-22");
         cut.Find("#defer-btn-0").Click();
+        cut.Find("#modal-date-input").Change("2026-08-22");
+        cut.Find("#action-modal-cancel").Click();
+
+        Assert.Empty(cut.FindAll("#action-modal"));
+        Assert.Contains("08/20/2026", cut.Markup);
+        Assert.DoesNotContain("08/22/2026", cut.Markup);
+        var row = cut.Find("tbody tr");
+        Assert.DoesNotContain("background-color: orange", row.GetAttribute("style") ?? "");
+        Assert.NotNull(cut.Find("#defer-btn-0"));
+    }
+
+    [Fact]
+    public void ClickingRemoveDeferral_OpensAConfirmationModal_NotAnInstantUndo()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#defer-btn-0").Click();
+        cut.Find("#modal-date-input").Change("2026-08-22");
+        cut.Find("#action-modal-apply").Click();
+
         cut.Find("#remove-deferral-btn-0").Click();
+
+        Assert.NotNull(cut.Find("#action-modal"));
+        Assert.Equal("Remove this deferral?", cut.Find("#action-modal-title").TextContent);
+        Assert.Contains("08/20/2026", cut.Find("#action-modal-explanation").TextContent);
+        // Still deferred - nothing has actually been undone yet, just prompted.
+        Assert.Contains("08/22/2026", cut.Markup);
+    }
+
+    [Fact]
+    public void RemovingADeferral_RevertsToTheOriginalDate_AndClearsTheHighlight()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#defer-btn-0").Click();
+        cut.Find("#modal-date-input").Change("2026-08-22");
+        cut.Find("#action-modal-apply").Click();
+        cut.Find("#remove-deferral-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
 
         Assert.Contains("08/20/2026", cut.Markup);
         Assert.DoesNotContain("Originally estimated for", cut.Markup);
@@ -316,7 +372,7 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
-    public void ConfirmingAPayment_MarksItExcludedInPlace_WithAnUndoButton()
+    public void ClickingConfirmPaid_OpensAModalWithNoEditableFields_JustAnExplanation()
     {
         var result = new ForecastResult
         {
@@ -328,12 +384,75 @@ public class ForecastTests : BunitContext
         var cut = Render<Forecast>();
         cut.Find("#confirm-btn-0").Click();
 
+        Assert.Equal("Confirm this was paid as scheduled?", cut.Find("#action-modal-title").TextContent);
+        var explanation = cut.Find("#action-modal-explanation").TextContent;
+        Assert.Contains("Chase Amazon Prime Visa Payment", explanation);
+        Assert.Contains("357.00", explanation);
+        Assert.Contains("08/20/2026", explanation);
+        Assert.Empty(cut.FindAll("#modal-date-input"));
+        Assert.Empty(cut.FindAll("#modal-amount-input"));
+    }
+
+    [Fact]
+    public void ConfirmingAPayment_MarksItExcludedInPlace_WithAnUndoButton()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m, AccountId = 5, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#confirm-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
+
         var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
         Assert.Contains("Chase Amazon Prime Visa Payment", row!.TextContent);
         Assert.Contains("08/20/2026", row.TextContent);
         Assert.Contains("357.00", row.TextContent); // the amount stays visible, not just the date
         Assert.NotNull(cut.Find("#undo-confirmation-btn-1"));
         Assert.Empty(cut.FindAll("#confirm-btn-0")); // action icons replaced by Undo, not left alongside it
+    }
+
+    [Fact]
+    public void CancellingTheConfirmModal_LeavesTheRowUntouched()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m, AccountId = 5, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#confirm-btn-0").Click();
+        cut.Find("#action-modal-cancel").Click();
+
+        Assert.Empty(cut.FindAll("#action-modal"));
+        Assert.NotNull(cut.Find("#confirm-btn-0"));
+        Assert.Empty(cut.FindAll("#undo-confirmation-btn-1"));
+    }
+
+    [Fact]
+    public void ClickingUndoConfirmation_OpensAConfirmationModal_NotAnInstantUndo()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m, AccountId = 5, OriginalDate = new DateOnly(2026, 8, 20) }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#confirm-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
+        cut.Find("#undo-confirmation-btn-1").Click();
+
+        Assert.NotNull(cut.Find("#action-modal"));
+        Assert.Equal("Undo this confirmation?", cut.Find("#action-modal-title").TextContent);
+        // Still confirmed/excluded - nothing undone yet, just prompted.
+        Assert.NotNull(cut.Find("#undo-confirmation-btn-1"));
     }
 
     [Fact]
@@ -348,7 +467,9 @@ public class ForecastTests : BunitContext
 
         var cut = Render<Forecast>();
         cut.Find("#confirm-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
         cut.Find("#undo-confirmation-btn-1").Click();
+        cut.Find("#action-modal-apply").Click();
 
         Assert.Single(cut.FindAll("tbody tr"));
         Assert.NotNull(cut.Find("#confirm-btn-0"));
@@ -358,15 +479,12 @@ public class ForecastTests : BunitContext
     [Fact]
     public void ExcludedRow_IsStyledDistinctly_NotJustRemoved()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
         cut.Find("#override-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
 
         var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
         Assert.Contains("line-through", row!.GetAttribute("style") ?? "");
@@ -375,11 +493,7 @@ public class ForecastTests : BunitContext
     [Fact]
     public void Forecast_ShowsAnOverrideActionOnEachUndeferredRow()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
@@ -388,17 +502,33 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
-    public void OverridingAPayment_MarksItExcludedInPlace_WithAnOverriddenReason()
+    public void ClickingOverride_OpensAModalWithNoEditableFields_JustAnExplanation()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        // Pure UX pass - Override doesn't gain the ability to enter a new amount yet, it
+        // still just resubmits the row's own current value, same as before this change.
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
         cut.Find("#override-btn-0").Click();
+
+        Assert.Equal("Override this payment?", cut.Find("#action-modal-title").TextContent);
+        var explanation = cut.Find("#action-modal-explanation").TextContent;
+        Assert.Contains("Amex Payment", explanation);
+        Assert.Contains("2,000.00", explanation);
+        Assert.Empty(cut.FindAll("#modal-date-input"));
+        Assert.Empty(cut.FindAll("#modal-amount-input"));
+    }
+
+    [Fact]
+    public void OverridingAPayment_MarksItExcludedInPlace_WithAnOverriddenReason()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
 
         var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
         Assert.Contains("Amex Payment", row!.TextContent);
@@ -418,6 +548,7 @@ public class ForecastTests : BunitContext
 
         var cut = Render<Forecast>();
         cut.Find("#confirm-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
 
         var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
         Assert.Contains("AlreadyPaid", row!.TextContent);
@@ -426,16 +557,13 @@ public class ForecastTests : BunitContext
     [Fact]
     public void ConfirmAndOverrideActions_AreAvailableEvenOnADeferredRow()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
-        cut.Find("#defer-date-0").Change("2026-08-22");
         cut.Find("#defer-btn-0").Click();
+        cut.Find("#modal-date-input").Change("2026-08-22");
+        cut.Find("#action-modal-apply").Click();
 
         Assert.NotNull(cut.Find("#remove-deferral-btn-0"));
         Assert.NotNull(cut.Find("#confirm-btn-0"));
@@ -445,33 +573,42 @@ public class ForecastTests : BunitContext
     [Fact]
     public void Forecast_ShowsAPayPartialAmountAction_OnEachUndeferredRow()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
 
-        Assert.NotNull(cut.Find("#partial-amount-0"));
-        Assert.NotNull(cut.Find("#partial-date-0"));
         Assert.NotNull(cut.Find("#partial-pay-btn-0"));
+        // No inline amount/date inputs anymore - both live in the modal now.
+        Assert.Empty(cut.FindAll("#partial-amount-0"));
+        Assert.Empty(cut.FindAll("#partial-date-0"));
+    }
+
+    [Fact]
+    public void ClickingPayPartialAmount_OpensAModal_WithAmountAndDateFields()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-pay-btn-0").Click();
+
+        Assert.Equal("Record a partial payment?", cut.Find("#action-modal-title").TextContent);
+        Assert.Contains("Amex Payment", cut.Find("#action-modal-explanation").TextContent);
+        Assert.NotNull(cut.Find("#modal-amount-input"));
+        Assert.NotNull(cut.Find("#modal-date-input"));
     }
 
     [Fact]
     public void PartialPaymentAction_IsAvailableEvenOnADeferredRow()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
-        cut.Find("#defer-date-0").Change("2026-08-22");
         cut.Find("#defer-btn-0").Click();
+        cut.Find("#modal-date-input").Change("2026-08-22");
+        cut.Find("#action-modal-apply").Click();
 
         Assert.NotNull(cut.Find("#partial-pay-btn-0"));
     }
@@ -479,17 +616,14 @@ public class ForecastTests : BunitContext
     [Fact]
     public void PayingAPartialAmount_ReducesTheRowAndListsItWithAnUndoButton()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
-        cut.Find("#partial-amount-0").Change("1000");
-        cut.Find("#partial-date-0").Change("2026-07-20");
         cut.Find("#partial-pay-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("1000");
+        cut.Find("#modal-date-input").Change("2026-07-20");
+        cut.Find("#action-modal-apply").Click();
 
         var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
         Assert.Contains("1,000.00", row!.TextContent);
@@ -498,20 +632,59 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
-    public void UndoingAPartialPayment_RestoresTheOriginalAmount()
+    public void CancellingThePartialPaymentModal_LeavesTheRowUntouched()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
-        cut.Find("#partial-amount-0").Change("1000");
-        cut.Find("#partial-date-0").Change("2026-07-20");
         cut.Find("#partial-pay-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("1000");
+        cut.Find("#action-modal-cancel").Click();
+
+        Assert.Empty(cut.FindAll("#action-modal"));
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("2,000.00", row!.TextContent);
+        Assert.Empty(cut.FindAll("#undo-partial-payment-btn-1"));
+    }
+
+    [Fact]
+    public void ClickingUndoPartialPayment_OpensAConfirmationModal_NotAnInstantUndo()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-pay-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("1000");
+        cut.Find("#modal-date-input").Change("2026-07-20");
+        cut.Find("#action-modal-apply").Click();
+
         cut.Find("#undo-partial-payment-btn-1").Click();
+
+        Assert.NotNull(cut.Find("#action-modal"));
+        Assert.Equal("Undo this partial payment?", cut.Find("#action-modal-title").TextContent);
+        var explanation = cut.Find("#action-modal-explanation").TextContent;
+        Assert.Contains("1,000.00", explanation);
+        Assert.Contains("07/20/2026", explanation);
+        // Still applied - nothing undone yet, just prompted.
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("1,000.00", row!.TextContent);
+    }
+
+    [Fact]
+    public void UndoingAPartialPayment_RestoresTheOriginalAmount()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-pay-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("1000");
+        cut.Find("#modal-date-input").Change("2026-07-20");
+        cut.Find("#action-modal-apply").Click();
+        cut.Find("#undo-partial-payment-btn-1").Click();
+        cut.Find("#action-modal-apply").Click();
 
         var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
         Assert.Contains("2,000.00", row!.TextContent);
@@ -521,27 +694,36 @@ public class ForecastTests : BunitContext
     [Fact]
     public void PartialPaymentAction_IsNotShownOnAnExcludedRow()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
         cut.Find("#override-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
 
         Assert.Empty(cut.FindAll("#partial-pay-btn-0"));
     }
 
     [Fact]
+    public void EnteringNoAmount_AndApplyingPayPartial_DoesNothing()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-pay-btn-0").Click();
+        cut.Find("#action-modal-apply").Click();
+
+        Assert.Empty(cut.FindAll("#action-modal"));
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("2,000.00", row!.TextContent);
+        Assert.Empty(cut.FindAll("#undo-partial-payment-btn-1"));
+    }
+
+    [Fact]
     public void ActionButtons_AreIconsWithADescriptiveTooltip_NotFullText()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
@@ -562,16 +744,13 @@ public class ForecastTests : BunitContext
     [Fact]
     public void RemoveDeferralButton_IsAnIconWithADescriptiveTooltip()
     {
-        var result = new ForecastResult
-        {
-            StartingBalance = 1000m,
-            Rows = [new ForecastLedgerRow { Date = new DateOnly(2026, 8, 20), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m, AccountId = 2, OriginalDate = new DateOnly(2026, 8, 20) }]
-        };
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
         var cut = Render<Forecast>();
-        cut.Find("#defer-date-0").Change("2026-08-22");
         cut.Find("#defer-btn-0").Click();
+        cut.Find("#modal-date-input").Change("2026-08-22");
+        cut.Find("#action-modal-apply").Click();
 
         var removeBtn = cut.Find("#remove-deferral-btn-0");
         Assert.Equal("Remove deferral", removeBtn.GetAttribute("title"));

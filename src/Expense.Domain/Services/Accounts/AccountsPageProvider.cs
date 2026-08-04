@@ -11,6 +11,12 @@ public class AccountsPageProvider(IDbContextFactory<ExpenseDbContext> contextFac
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
 
+        // Small, hand-entered table (no automatic sync writes to it currently) - loading it
+        // whole and grouping in memory avoids relying on GroupBy+First() translating cleanly.
+        var latestByAccount = (await context.DebtBalanceSnapshots.ToListAsync(cancellationToken))
+            .GroupBy(s => s.AccountId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.AsOfDate).First());
+
         var rows = await context.Accounts
             .OrderBy(a => a.Name)
             .Select(a => new AccountRow
@@ -22,27 +28,42 @@ public class AccountsPageProvider(IDbContextFactory<ExpenseDbContext> contextFac
                 MinPayment = a.MinPayment,
                 ExtraPayment = a.ExtraPayment,
                 PaymentDueDay = a.PaymentDueDay,
-                StatementCloseDay = a.StatementCloseDay
+                StatementCloseDay = a.StatementCloseDay,
+                Apr = a.Apr
             })
             .ToListAsync(cancellationToken);
+
+        foreach (var row in rows)
+        {
+            if (!latestByAccount.TryGetValue(row.Id, out var snapshot)) continue;
+            row.LatestBalance = snapshot.Balance;
+            row.LatestBalanceAsOfDate = snapshot.AsOfDate;
+        }
 
         return new AccountsPageData { Accounts = rows };
     }
 
-    public async Task CreateAccountAsync(
+    public async Task<int> CreateAccountAsync(
         string name, AccountType type, decimal? minPayment, decimal? extraPayment,
-        int? paymentDueDay, int? statementCloseDay, CancellationToken cancellationToken = default)
+        int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await accounts.CreateAccountAsync(context, name, type, minPayment, extraPayment, paymentDueDay, statementCloseDay);
+        var account = await accounts.CreateAccountAsync(context, name, type, minPayment, extraPayment, paymentDueDay, statementCloseDay, apr: apr);
+        return account.Id;
     }
 
     public async Task UpdateAccountAsync(
         int accountId, string name, decimal? minPayment, decimal? extraPayment,
-        int? paymentDueDay, int? statementCloseDay, CancellationToken cancellationToken = default)
+        int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await accounts.UpdateAccountAsync(context, accountId, name, minPayment, extraPayment, paymentDueDay, statementCloseDay);
+        await accounts.UpdateAccountAsync(context, accountId, name, minPayment, extraPayment, paymentDueDay, statementCloseDay, apr);
+    }
+
+    public async Task UpdateBalanceAsync(int accountId, DateOnly asOfDate, decimal balance, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await accounts.AddOrUpdateBalanceSnapshotAsync(context, accountId, asOfDate, balance);
     }
 
     public async Task DeactivateAccountAsync(int accountId, CancellationToken cancellationToken = default)

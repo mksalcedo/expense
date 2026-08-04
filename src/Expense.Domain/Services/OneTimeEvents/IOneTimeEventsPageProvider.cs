@@ -7,9 +7,9 @@ public interface IOneTimeEventsPageProvider
 {
     Task<OneTimeEventsPageData> GetEventsAsync(CancellationToken cancellationToken = default);
 
-    Task CreateEventAsync(string name, decimal amount, Direction direction, DateOnly date, int accountId, CancellationToken cancellationToken = default);
+    Task CreateEventAsync(string name, decimal amount, Direction direction, DateOnly date, int accountId, int? categoryId, CancellationToken cancellationToken = default);
 
-    Task UpdateEventAsync(int eventId, string name, decimal amount, Direction direction, DateOnly date, int accountId, CancellationToken cancellationToken = default);
+    Task UpdateEventAsync(int eventId, string name, decimal amount, Direction direction, DateOnly date, int accountId, int? categoryId, CancellationToken cancellationToken = default);
 
     Task DeleteEventAsync(int eventId, CancellationToken cancellationToken = default);
 }

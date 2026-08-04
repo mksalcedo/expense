@@ -51,6 +51,32 @@ public class AccountManagementServiceTests : DatabaseTestBase
         Assert.Equal("%AMERICAN EXPRESS%", merchantRule.MerchantPattern);
     }
 
+    // A savings account has no "payment" concept - it's a manually-tracked asset balance shown
+    // alongside the forecast, not a bill the forecast pays. Unlike Debt/ActiveSpending, creating
+    // one must not spawn a "{name} Payment" category/funding rule/merchant rule, since none of
+    // that machinery has any meaning here and would just clutter Categories with an unusable row.
+    [Fact]
+    public async Task CreateAccountAsync_ForASavingsAccount_CreatesNoCategoryFundingRuleOrMerchantRule()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "Emergency Fund", type: AccountType.Savings);
+
+        Assert.Equal(AccountType.Savings, account.Type);
+        Assert.False(await Context.Categories.AnyAsync(c => c.Name == "Emergency Fund Payment"));
+        Assert.Empty(await Context.FundingRules.ToListAsync());
+        Assert.Empty(await Context.MerchantRules.ToListAsync());
+    }
+
+    [Fact]
+    public async Task AddOrUpdateBalanceSnapshotAsync_WorksForASavingsAccount_JustLikeAnyOtherAccount()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "Emergency Fund", type: AccountType.Savings);
+
+        await _sut.AddOrUpdateBalanceSnapshotAsync(Context, account.Id, new DateOnly(2026, 8, 3), 1500m);
+
+        var snapshot = await Context.DebtBalanceSnapshots.SingleAsync(s => s.AccountId == account.Id);
+        Assert.Equal(1500m, snapshot.Balance);
+    }
+
     [Fact]
     public async Task DeactivateAccountAsync_SoftDeletes_AndLeavesHistoricalTransactionsUntouched()
     {
@@ -126,5 +152,50 @@ public class AccountManagementServiceTests : DatabaseTestBase
         Assert.Equal(180m, reloaded.MinPayment);
         Assert.Equal(20m, reloaded.ExtraPayment);
         Assert.Equal(5, reloaded.PaymentDueDay);
+    }
+
+    [Fact]
+    public async Task CreateAccountAsync_CanSetApr()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "SoFi", type: AccountType.Debt, apr: 9.99m);
+
+        Assert.Equal(9.99m, account.Apr);
+    }
+
+    [Fact]
+    public async Task UpdateAccountAsync_CanUpdateApr()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "SoFi", type: AccountType.Debt, apr: 9.99m);
+
+        await _sut.UpdateAccountAsync(Context, account.Id, "SoFi", minPayment: null, extraPayment: null,
+            paymentDueDay: null, statementCloseDay: null, apr: 10.49m);
+
+        var reloaded = await Context.Accounts.SingleAsync(a => a.Id == account.Id);
+        Assert.Equal(10.49m, reloaded.Apr);
+    }
+
+    [Fact]
+    public async Task AddOrUpdateBalanceSnapshotAsync_InsertsANewSnapshot_WhenNoneExistsForThatDate()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "SoFi", type: AccountType.Debt);
+
+        await _sut.AddOrUpdateBalanceSnapshotAsync(Context, account.Id, new DateOnly(2026, 7, 31), 45876.50m);
+
+        var snapshot = await Context.DebtBalanceSnapshots.SingleAsync(s => s.AccountId == account.Id);
+        Assert.Equal(new DateOnly(2026, 7, 31), snapshot.AsOfDate);
+        Assert.Equal(45876.50m, snapshot.Balance);
+    }
+
+    [Fact]
+    public async Task AddOrUpdateBalanceSnapshotAsync_UpdatesTheExistingSnapshot_WhenOneAlreadyExistsForThatDate()
+    {
+        var account = await _sut.CreateAccountAsync(Context, name: "SoFi", type: AccountType.Debt);
+        await _sut.AddOrUpdateBalanceSnapshotAsync(Context, account.Id, new DateOnly(2026, 7, 31), 45876.50m);
+
+        // Correcting a same-day entry (e.g. a typo) shouldn't create a second row for the same date.
+        await _sut.AddOrUpdateBalanceSnapshotAsync(Context, account.Id, new DateOnly(2026, 7, 31), 45000.00m);
+
+        var snapshot = await Context.DebtBalanceSnapshots.SingleAsync(s => s.AccountId == account.Id);
+        Assert.Equal(45000.00m, snapshot.Balance);
     }
 }

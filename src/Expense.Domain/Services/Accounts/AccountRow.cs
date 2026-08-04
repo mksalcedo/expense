@@ -12,4 +12,7 @@ public class AccountRow
     public decimal? ExtraPayment { get; set; }
     public int? PaymentDueDay { get; set; }
     public int? StatementCloseDay { get; set; }
+    public decimal? Apr { get; set; }
+    public decimal? LatestBalance { get; set; }
+    public DateOnly? LatestBalanceAsOfDate { get; set; }
 }

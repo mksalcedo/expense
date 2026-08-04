@@ -186,6 +186,31 @@ public class AmazonImportServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ImportOrder_PlaceholderItem_NeverMatchesAgainstAProductPattern_EvenIfOneAccidentallyEqualsThePlaceholderText()
+    {
+        // Real bug found live: a NeedsReview placeholder's title is the fixed generic
+        // "(Item details unavailable...)" string, not a real item description - if a product
+        // rule ever ends up using that exact text as its pattern (e.g. created by
+        // bulk-categorizing a placeholder before its title was corrected by hand), every
+        // future unresolved placeholder would silently self-match and inherit that stale
+        // category, despite being a completely unknown, unrelated real item.
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+        Context.Products.Add(new Product
+        {
+            ProductPattern = "(Item details unavailable in email - check Amazon order page)", CategoryId = supplements.Id
+        });
+        await Context.SaveChangesAsync();
+
+        await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 7, 14));
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Null(item.ProductId);
+        Assert.Null(item.CategoryId);
+    }
+
+    [Fact]
     public async Task ImportRefund_ProductMatch_CreatesItsOwnNegativeCategorizedEntry()
     {
         var officeSupplies = new Category { Name = "Office Supplies" };

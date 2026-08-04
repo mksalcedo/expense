@@ -442,6 +442,133 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal("HVAC repair", row.Description);
     }
 
+    // Real scenario this guards: a "top-up" one-time event alongside an existing recurring
+    // bill in the same category (e.g. Water $193/mo budgeted, but the real bill came in at
+    // $378.20, modeled as the recurring $193 line plus a separate $185.20 one-time top-up).
+    // The SAME real payment satisfies both, but a BankTransaction can only ever record one
+    // ReconciledOccurrenceDate - it reconciles to the recurring line's date, not the top-up's.
+    // "This category already reconciled to a date near the top-up's own date" is treated as
+    // evidence the same payment covered the top-up too, rather than requiring an exact match.
+    [Fact]
+    public async Task CategorizedOneTimeEvent_IsExcluded_WhenItsCategoryHasANearbyReconciledTransaction()
+    {
+        await SeedCheckingBalanceAsync(5000m, new DateOnly(2026, 8, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var water = new Category { Name = "Water" };
+        Context.Categories.Add(water);
+        await Context.SaveChangesAsync();
+
+        Context.OneTimeEvents.Add(new OneTimeEvent
+        {
+            Name = "Water additional", Amount = 185.20m, Direction = Direction.Expense,
+            Date = new DateOnly(2026, 7, 30), AccountId = checking.Id, CategoryId = water.Id
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 31), PostedDate = new DateOnly(2026, 7, 31),
+            Description = "GWINNETT CTY WATER", Amount = -378.20m, ImportSource = "Test", CategoryId = water.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 20), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 2), new DateOnly(2026, 8, 31));
+
+        Assert.DoesNotContain(result.Rows, r => r.Description == "Water additional");
+    }
+
+    [Fact]
+    public async Task CategorizedOneTimeEvent_StaysProjected_WhenTheNearestReconciledTransactionIsTooFarInDate()
+    {
+        await SeedCheckingBalanceAsync(5000m, new DateOnly(2026, 8, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var water = new Category { Name = "Water" };
+        Context.Categories.Add(water);
+        await Context.SaveChangesAsync();
+
+        Context.OneTimeEvents.Add(new OneTimeEvent
+        {
+            Name = "Water additional", Amount = 185.20m, Direction = Direction.Expense,
+            Date = new DateOnly(2026, 7, 30), AccountId = checking.Id, CategoryId = water.Id
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 6, 1), PostedDate = new DateOnly(2026, 6, 1),
+            Description = "GWINNETT CTY WATER", Amount = -193.00m, ImportSource = "Test", CategoryId = water.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 6, 1), CreatedAt = DateTimeOffset.UtcNow // far outside the 14-day window
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 2), new DateOnly(2026, 8, 31));
+
+        Assert.Contains(result.Rows, r => r.Description == "Water additional");
+    }
+
+    [Fact]
+    public async Task CategorizedOneTimeEvent_StaysProjected_WhenTheReconciledTransactionIsADifferentCategory()
+    {
+        await SeedCheckingBalanceAsync(5000m, new DateOnly(2026, 8, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var water = new Category { Name = "Water" };
+        var gas = new Category { Name = "Gas" };
+        Context.Categories.AddRange(water, gas);
+        await Context.SaveChangesAsync();
+
+        Context.OneTimeEvents.Add(new OneTimeEvent
+        {
+            Name = "Water additional", Amount = 185.20m, Direction = Direction.Expense,
+            Date = new DateOnly(2026, 7, 30), AccountId = checking.Id, CategoryId = water.Id
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 31), PostedDate = new DateOnly(2026, 7, 31),
+            Description = "GAS BILL", Amount = -378.20m, ImportSource = "Test", CategoryId = gas.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 20), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 2), new DateOnly(2026, 8, 31));
+
+        Assert.Contains(result.Rows, r => r.Description == "Water additional");
+    }
+
+    [Fact]
+    public async Task CategorizedOneTimeEvent_StaysProjected_WhenTheReconciledTransactionsAmountIsTooSmall()
+    {
+        // A real payment must actually be large enough to plausibly cover the top-up too, not
+        // just any reconciled transaction nearby - same "floor, not a band" tolerance the
+        // recurring-line check uses.
+        await SeedCheckingBalanceAsync(5000m, new DateOnly(2026, 8, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+        var water = new Category { Name = "Water" };
+        Context.Categories.Add(water);
+        await Context.SaveChangesAsync();
+
+        Context.OneTimeEvents.Add(new OneTimeEvent
+        {
+            Name = "Water additional", Amount = 185.20m, Direction = Direction.Expense,
+            Date = new DateOnly(2026, 7, 30), AccountId = checking.Id, CategoryId = water.Id
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 31), PostedDate = new DateOnly(2026, 7, 31),
+            Description = "GWINNETT CTY WATER", Amount = -50.00m, ImportSource = "Test", CategoryId = water.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 7, 20), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 2), new DateOnly(2026, 8, 31));
+
+        Assert.Contains(result.Rows, r => r.Description == "Water additional");
+    }
+
     [Fact]
     public async Task AmexCycle_AutoReconciles_WhenARealAmexPaymentTransactionHasPosted()
     {

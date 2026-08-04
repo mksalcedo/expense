@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services.Accounts;
 using Expense.Domain.Services.Dashboard;
 using Expense.Domain.Services.Forecast;
 using Expense.Domain.Services.Ingestion.Amazon;
@@ -35,7 +36,36 @@ public class DashboardTests : BunitContext
     private class FakeSpendingTrackerPageProvider(SpendingTrackerPageData data) : ISpendingTrackerPageProvider
     {
         public SpendingTrackerPageData Data { get; set; } = data;
+        public DateOnly? LastWeekReferenceDate { get; private set; }
+        public DateOnly? LastMonthReferenceDate { get; private set; }
+
         public Task<SpendingTrackerPageData> GetSpendingTrackerAsync(CancellationToken cancellationToken = default) => Task.FromResult(Data);
+
+        public Task<SpendingTrackerResult> GetWeekAsync(DateOnly referenceDate, CancellationToken cancellationToken = default)
+        {
+            LastWeekReferenceDate = referenceDate;
+            var start = referenceDate.AddDays(-(int)referenceDate.DayOfWeek);
+            return Task.FromResult(new SpendingTrackerResult { PeriodStart = start, PeriodEnd = start.AddDays(6), Categories = [], PendingAmount = 0m });
+        }
+
+        public Task<SpendingTrackerResult> GetMonthAsync(DateOnly referenceDate, CancellationToken cancellationToken = default)
+        {
+            LastMonthReferenceDate = referenceDate;
+            var start = new DateOnly(referenceDate.Year, referenceDate.Month, 1);
+            return Task.FromResult(new SpendingTrackerResult { PeriodStart = start, PeriodEnd = start.AddMonths(1).AddDays(-1), Categories = [], PendingAmount = 0m });
+        }
+    }
+
+    // Only Dashboard.razor's narrow "sum the active Savings accounts' latest balance" read is
+    // exercised here - full account management lives on Accounts.razor and is tested there.
+    private class FakeAccountsPageProvider(List<AccountRow> rows) : IAccountsPageProvider
+    {
+        public Task<AccountsPageData> GetAccountsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new AccountsPageData { Accounts = rows });
+        public Task<int> CreateAccountAsync(string name, AccountType type, decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task UpdateAccountAsync(int accountId, string name, decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task DeactivateAccountAsync(int accountId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task ReactivateAccountAsync(int accountId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task UpdateBalanceAsync(int accountId, DateOnly asOfDate, decimal balance, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     // Only Dashboard.razor's narrow "did the last sync fail" read is exercised here - the
@@ -84,11 +114,16 @@ public class DashboardTests : BunitContext
         }
     };
 
-    private void RegisterFakes(ForecastResult? forecast = null, ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null)
+    private FakeSpendingTrackerPageProvider RegisterFakes(
+        ForecastResult? forecast = null, ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null,
+        List<AccountRow>? savingsAccounts = null)
     {
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(forecast ?? MakeForecast()));
-        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeSpendingTracker()));
+        var spendingTracker = new FakeSpendingTrackerPageProvider(MakeSpendingTracker());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(spendingTracker);
         Services.AddSingleton<ISyncStatusProvider>(new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun, lastPlaidRun));
+        Services.AddSingleton<IAccountsPageProvider>(new FakeAccountsPageProvider(savingsAccounts ?? []));
+        return spendingTracker;
     }
 
     [Fact]
@@ -154,6 +189,174 @@ public class DashboardTests : BunitContext
         var cut = Render<Dashboard>();
 
         Assert.Contains("Occurs on 07/20/2026", cut.Markup);
+    }
+
+    // Purely informational context next to the scariest number on the page - the lowest
+    // projected balance can read as alarming on its own when real savings exist as a buffer
+    // the forecast never accounts for (savings is deliberately excluded from forecast math).
+    [Fact]
+    public void Dashboard_ShowsTheSavingsBalance_AlongsideTheLowestProjectedBalance()
+    {
+        RegisterFakes(savingsAccounts:
+        [
+            new AccountRow { Id = 6, Name = "Emergency Fund", Type = AccountType.Savings, IsActive = true, LatestBalance = 1500m }
+        ]);
+
+        var cut = Render<Dashboard>();
+
+        Assert.Contains("1,500.00", cut.Markup);
+        Assert.Contains("savings", cut.Markup, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Dashboard_SumsMultipleActiveSavingsAccounts_AndExcludesInactiveOnes()
+    {
+        RegisterFakes(savingsAccounts:
+        [
+            new AccountRow { Id = 6, Name = "Emergency Fund", Type = AccountType.Savings, IsActive = true, LatestBalance = 1500m },
+            new AccountRow { Id = 7, Name = "Vacation Fund", Type = AccountType.Savings, IsActive = true, LatestBalance = 250m },
+            new AccountRow { Id = 8, Name = "Old Savings", Type = AccountType.Savings, IsActive = false, LatestBalance = 9999m }
+        ]);
+
+        var cut = Render<Dashboard>();
+
+        Assert.Contains("1,750.00", cut.Markup);
+        Assert.DoesNotContain("9,999.00", cut.Markup);
+    }
+
+    [Fact]
+    public void Dashboard_WithNoSavingsAccounts_ShowsNoSavingsLine()
+    {
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        Assert.DoesNotContain("savings", cut.Markup, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Spreadsheet-style summary table (label column, amount column) rather than loose
+    // paragraphs, per the user's direct request - and the new computed row is the actual
+    // point of tracking savings at all: what the lowest point looks like once the buffer
+    // that isn't part of forecast math gets folded in.
+    [Fact]
+    public void Dashboard_CashFlowSummary_IsATwoColumnTable_WithALowestBalancePlusSavingsRow()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 4209.21m,
+            Rows =
+            [
+                new ForecastLedgerRow { Date = new DateOnly(2026, 7, 30), Description = "Apple Card Payment", Amount = -25.00m, RunningBalance = 4184.21m },
+                new ForecastLedgerRow { Date = new DateOnly(2027, 7, 7), Description = "Water", Amount = -193m, RunningBalance = -109.58m }
+            ]
+        };
+        RegisterFakes(forecast: forecast, savingsAccounts:
+        [
+            new AccountRow { Id = 6, Name = "Emergency Fund", Type = AccountType.Savings, IsActive = true, LatestBalance = 1545.56m }
+        ]);
+
+        var cut = Render<Dashboard>();
+
+        Assert.Equal("4,209.21", cut.Find("#starting-balance-row td:last-child").TextContent.Trim());
+        Assert.Equal("-109.58", cut.Find("#lowest-balance-row td:last-child").TextContent.Trim());
+        Assert.Equal("1,545.56", cut.Find("#savings-row td:last-child").TextContent.Trim());
+        Assert.Equal("1,435.98", cut.Find("#lowest-balance-plus-savings-row td:last-child").TextContent.Trim());
+    }
+
+    [Fact]
+    public void SpendingTables_ShowDatedTitles_NotGenericOnes()
+    {
+        // Fixture's Week is 2026-07-12 (Sun) - 2026-07-18 (Sat); Month is July 2026.
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        Assert.Contains("Spending for Week Ending 07/18/2026", cut.Markup);
+        Assert.Contains("Spending for July, 2026", cut.Markup);
+    }
+
+    [Fact]
+    public void ClickingPreviousOnWeek_FetchesTheWeekBefore_AndUpdatesTheTitle()
+    {
+        var fake = RegisterFakes();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#spending-week-previous").Click();
+
+        Assert.Equal(new DateOnly(2026, 7, 5), fake.LastWeekReferenceDate);
+        Assert.Contains("Spending for Week Ending 07/11/2026", cut.Markup);
+    }
+
+    [Fact]
+    public void ClickingNextOnWeek_FetchesTheWeekAfter_AndUpdatesTheTitle()
+    {
+        var fake = RegisterFakes();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#spending-week-next").Click();
+
+        Assert.Equal(new DateOnly(2026, 7, 19), fake.LastWeekReferenceDate);
+        Assert.Contains("Spending for Week Ending 07/25/2026", cut.Markup);
+    }
+
+    [Fact]
+    public void ClickingPreviousTwiceThenCurrentOnWeek_ReturnsToTodaysRealWeek()
+    {
+        var fake = RegisterFakes();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#spending-week-previous").Click();
+        cut.Find("#spending-week-previous").Click();
+        cut.Find("#spending-week-current").Click();
+
+        Assert.Equal(DateOnly.FromDateTime(DateTime.Today), fake.LastWeekReferenceDate);
+    }
+
+    [Fact]
+    public void ClickingPreviousOnMonth_FetchesTheMonthBefore_AndUpdatesTheTitle()
+    {
+        var fake = RegisterFakes();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#spending-month-previous").Click();
+
+        Assert.Equal(new DateOnly(2026, 6, 1), fake.LastMonthReferenceDate);
+        Assert.Contains("Spending for June, 2026", cut.Markup);
+    }
+
+    [Fact]
+    public void ClickingNextOnMonth_FetchesTheMonthAfter_AndUpdatesTheTitle()
+    {
+        var fake = RegisterFakes();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#spending-month-next").Click();
+
+        Assert.Equal(new DateOnly(2026, 8, 1), fake.LastMonthReferenceDate);
+        Assert.Contains("Spending for August, 2026", cut.Markup);
+    }
+
+    [Fact]
+    public void ClickingCurrentOnMonth_ReturnsToTodaysRealMonth()
+    {
+        var fake = RegisterFakes();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#spending-month-next").Click();
+        cut.Find("#spending-month-current").Click();
+
+        Assert.Equal(DateOnly.FromDateTime(DateTime.Today), fake.LastMonthReferenceDate);
+    }
+
+    [Fact]
+    public void NavigatingWeekAndMonth_AreIndependentOfEachOther()
+    {
+        var fake = RegisterFakes();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#spending-week-next").Click();
+
+        Assert.Null(fake.LastMonthReferenceDate);
     }
 
     [Fact]
@@ -233,7 +436,7 @@ public class DashboardTests : BunitContext
 
         var cut = Render<Dashboard>();
 
-        Assert.Contains("This Month's Spending", cut.Markup);
+        Assert.Contains("Spending for July, 2026", cut.Markup);
         var pendingRow = cut.Find("#spending-month-pending-row");
         Assert.Contains("60.00", pendingRow.TextContent);
         var totalsRow = cut.Find("#spending-month-totals-row");

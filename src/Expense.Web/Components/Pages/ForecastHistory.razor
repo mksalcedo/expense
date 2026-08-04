@@ -58,6 +58,34 @@ else
                 Starting balance: @balanceChange.OldBalance.ToString("N2") -&gt; @balanceChange.NewBalance.ToString("N2")
                 (@(balanceChange.Delta >= 0 ? "+" : "")@balanceChange.Delta.ToString("N2"))
             </p>
+            @if (balanceChange.Transactions.Count > 0)
+            {
+                <table id="starting-balance-transactions">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Description</th>
+                            <th class="text-right">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var txn in balanceChange.Transactions)
+                        {
+                            <tr>
+                                <td>@txn.Date.ToString("MM/dd/yyyy")</td>
+                                <td>@txn.Description</td>
+                                <td class="text-right">@txn.Amount.ToString("N2")</td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="2"><strong>Total</strong></td>
+                            <td class="text-right"><strong>@balanceChange.Transactions.Sum(t => t.Amount).ToString("N2")</strong></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            }
         }
         @if (_diff.Changed.Count > 0)
         {

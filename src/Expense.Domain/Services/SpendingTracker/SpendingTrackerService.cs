@@ -47,8 +47,12 @@ public class SpendingTrackerService(BudgetProrationService proration)
             .OrderBy(c => c.Name)
             .ToListAsync(cancellationToken);
 
-        var currentBudgets = await context.BudgetPeriods
-            .Where(p => p.EffectiveThrough == null && qualifyingCategoryIds.Contains(p.CategoryId))
+        // Period-correct, not "whatever's open today" - matters once a past period becomes
+        // browsable (Dashboard week/month navigation), since a since-changed budget would
+        // otherwise misreport what was actually budgeted back then.
+        var budgetsAtPeriodStart = await context.BudgetPeriods
+            .Where(p => qualifyingCategoryIds.Contains(p.CategoryId)
+                        && p.EffectiveFrom <= periodStart && (p.EffectiveThrough == null || p.EffectiveThrough >= periodStart))
             .ToDictionaryAsync(p => p.CategoryId, cancellationToken);
 
         // Still-unposted, self-reported (screenshot-derived) charges count using the date
@@ -71,7 +75,7 @@ public class SpendingTrackerService(BudgetProrationService proration)
 
         var summaries = categories.Select(category =>
         {
-            var budget = currentBudgets.TryGetValue(category.Id, out var period)
+            var budget = budgetsAtPeriodStart.TryGetValue(category.Id, out var period)
                 ? proration.Convert(period.Amount, period.Frequency, periodFrequency)
                 : 0m;
 

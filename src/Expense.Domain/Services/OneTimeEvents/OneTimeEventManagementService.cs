@@ -11,16 +11,16 @@ namespace Expense.Domain.Services.OneTimeEvents;
 public class OneTimeEventManagementService
 {
     public async Task<OneTimeEvent> CreateEventAsync(
-        ExpenseDbContext context, string name, decimal amount, Direction direction, DateOnly date, int accountId)
+        ExpenseDbContext context, string name, decimal amount, Direction direction, DateOnly date, int accountId, int? categoryId)
     {
-        var evt = new OneTimeEvent { Name = name, Amount = amount, Direction = direction, Date = date, AccountId = accountId };
+        var evt = new OneTimeEvent { Name = name, Amount = amount, Direction = direction, Date = date, AccountId = accountId, CategoryId = categoryId };
         context.OneTimeEvents.Add(evt);
         await context.SaveChangesAsync();
         return evt;
     }
 
     public async Task UpdateEventAsync(
-        ExpenseDbContext context, int eventId, string name, decimal amount, Direction direction, DateOnly date, int accountId)
+        ExpenseDbContext context, int eventId, string name, decimal amount, Direction direction, DateOnly date, int accountId, int? categoryId)
     {
         var evt = await context.OneTimeEvents.SingleAsync(e => e.Id == eventId);
         evt.Name = name;
@@ -28,6 +28,7 @@ public class OneTimeEventManagementService
         evt.Direction = direction;
         evt.Date = date;
         evt.AccountId = accountId;
+        evt.CategoryId = categoryId;
         await context.SaveChangesAsync();
     }
 

@@ -50,7 +50,15 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
                 continue;
             }
 
-            var match = products.FirstOrDefault(p => MerchantPatternMatcher.Matches(item.ItemTitle, p.ProductPattern));
+            // A NeedsReview placeholder's title is the fixed generic "(Item details
+            // unavailable...)" string, not real item text - matching against it is
+            // meaningless (and dangerous, if a product pattern ever ends up equal to that
+            // exact placeholder text, e.g. from bulk-categorizing a placeholder before its
+            // title was corrected - every future unresolved placeholder would then silently
+            // self-match and inherit that stale category regardless of what it actually is).
+            var match = item.NeedsReview
+                ? null
+                : products.FirstOrDefault(p => MerchantPatternMatcher.Matches(item.ItemTitle, p.ProductPattern));
             if (match is not null)
             {
                 item.ProductId = match.Id;

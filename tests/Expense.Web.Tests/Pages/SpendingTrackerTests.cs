@@ -10,6 +10,8 @@ public class SpendingTrackerTests : BunitContext
     private class FakeSpendingTrackerPageProvider(SpendingTrackerPageData data) : ISpendingTrackerPageProvider
     {
         public Task<SpendingTrackerPageData> GetSpendingTrackerAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
+        public Task<SpendingTrackerResult> GetWeekAsync(DateOnly referenceDate, CancellationToken cancellationToken = default) => Task.FromResult(data.Week);
+        public Task<SpendingTrackerResult> GetMonthAsync(DateOnly referenceDate, CancellationToken cancellationToken = default) => Task.FromResult(data.Month);
     }
 
     private static SpendingTrackerPageData MakeData() => new()

@@ -1,11 +1,14 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
+using Expense.Domain.Services.Ingestion.ManualCharges;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Forecast;
 
 /// <summary>
-/// Classifies each categorized, posted BankTransaction against the nearest occurrence in
+/// Classifies each categorized BankTransaction - posted, or still pending via Plaid/a manual
+/// Amex screenshot (same carve-out already used by ForecastEngine/ForecastAccuracyService/
+/// SpendingTrackerService for "does this count yet") - against the nearest occurrence in
 /// its category's real recurring schedule, once - durably recording the answer on the
 /// transaction itself (ReconciledOccurrenceDate) instead of ForecastEngine re-deriving it
 /// via a date-window search relative to "today" on every render. See
@@ -92,7 +95,11 @@ public class TransactionReconciliationService(RecurrenceExpander recurrenceExpan
             });
         }
 
-        var candidates = recurrenceExpander.Expand(recurringRules, [], earliestRelevantDate, asOfDate)
+        // Widened forward by MaxMatchWindowDays, mirroring ForecastEngine's own backward
+        // widening - a real transaction can post before its occurrence's own anchor date
+        // (e.g. income that trickles in ahead of a monthly anchor), and that occurrence must
+        // already exist as a candidate for such a transaction to have anything to match.
+        var candidates = recurrenceExpander.Expand(recurringRules, [], earliestRelevantDate, asOfDate.AddDays(RecurrenceExpander.MaxMatchWindowDays))
             .Where(l => l.CategoryId is not null)
             .ToList();
 
@@ -120,17 +127,24 @@ public class TransactionReconciliationService(RecurrenceExpander recurrenceExpan
         }
 
         var transactions = await context.BankTransactions
-            .Where(t => t.CategoryId != null && t.PostedDate != null)
+            .Where(t => t.CategoryId != null
+                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
             .ToListAsync(cancellationToken);
 
         var changes = new List<ReconciliationChange>();
         foreach (var txn in transactions)
         {
+            // Falls back to TransactionDate for a still-pending row (PostedDate null) - once
+            // Plaid merges the real posting into this same row, PostedDate becomes the
+            // authoritative date and this naturally starts using that instead, on the very
+            // next reconciliation run (this whole method re-derives fresh every time).
+            var effectiveDate = txn.PostedDate ?? txn.TransactionDate;
+
             var best = candidates
                 .Where(c => c.CategoryId == txn.CategoryId
-                            && txn.PostedDate >= c.Date.AddDays(-c.MatchWindowDays)
-                            && txn.PostedDate <= c.Date.AddDays(c.MatchWindowDays))
-                .OrderBy(c => Math.Abs(c.Date.DayNumber - txn.PostedDate!.Value.DayNumber))
+                            && effectiveDate >= c.Date.AddDays(-c.MatchWindowDays)
+                            && effectiveDate <= c.Date.AddDays(c.MatchWindowDays))
+                .OrderBy(c => Math.Abs(c.Date.DayNumber - effectiveDate.DayNumber))
                 .FirstOrDefault();
 
             var newValue = best?.Date;

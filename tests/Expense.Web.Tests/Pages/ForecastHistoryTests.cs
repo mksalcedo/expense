@@ -128,6 +128,46 @@ public class ForecastHistoryTests : BunitContext
     }
 
     [Fact]
+    public void StartingBalanceChange_WithTransactions_ListsThemWithARunningTotal()
+    {
+        var diff = new ForecastSnapshotDiff
+        {
+            StartingBalanceChange = new StartingBalanceChange
+            {
+                OldBalance = 4649.18m, NewBalance = 4209.21m,
+                Transactions =
+                [
+                    new StartingBalanceTransaction { Date = new DateOnly(2026, 7, 31), Description = "GWINNETT CTY WATER", Amount = -378.20m },
+                    new StartingBalanceTransaction { Date = new DateOnly(2026, 8, 2), Description = "ZELLE FROM GABRIEL NAVA", Amount = 95.00m }
+                ]
+            }
+        };
+        RegisterFakes(diff: diff);
+
+        var cut = Render<ForecastHistory>();
+
+        Assert.Contains("GWINNETT CTY WATER", cut.Markup);
+        Assert.Contains("-378.20", cut.Markup);
+        Assert.Contains("ZELLE FROM GABRIEL NAVA", cut.Markup);
+        var total = cut.Find("#starting-balance-transactions tfoot").TextContent;
+        Assert.Contains("-283.20", total);
+    }
+
+    [Fact]
+    public void StartingBalanceChange_WithNoTransactions_ShowsNoBreakdownTable()
+    {
+        var diff = new ForecastSnapshotDiff
+        {
+            StartingBalanceChange = new StartingBalanceChange { OldBalance = 4488.63m, NewBalance = 4418.31m }
+        };
+        RegisterFakes(diff: diff);
+
+        var cut = Render<ForecastHistory>();
+
+        Assert.Empty(cut.FindAll("#starting-balance-transactions"));
+    }
+
+    [Fact]
     public void StartingBalanceChangeAlone_WithNoLineChanges_DoesNotShowTheNothingChangedMessage()
     {
         var diff = new ForecastSnapshotDiff

@@ -48,8 +48,16 @@ public class ForecastSnapshotServiceTests : DatabaseTestBase
         Assert.Equal(1200m, snapshots[1].StartingBalance);
     }
 
+    // Real gap this guards (user-identified, found live 2026-08-03): a near-term-only window
+    // meant Forecast History could never explain a swing in the lowest projected balance
+    // whenever that minimum fell outside the window (confirmed for real: a minimum a year
+    // out, while only ~4 months of lines were ever captured) - the diff had nothing on
+    // either side to compare near the date that actually mattered. The diff itself only ever
+    // reports lines that genuinely differ between two snapshots (see
+    // ForecastSnapshotDifferTests), so persisting the full horizon doesn't mean showing more
+    // - it means having the data to notice a far-future change *when one actually happens*.
     [Fact]
-    public async Task CaptureAsync_OnlyPersistsLinesWithinTheNearTermWindow()
+    public async Task CaptureAsync_PersistsAllLines_NotJustANearTermWindow()
     {
         var forecast = MakeForecast(1000m,
             new ForecastLedgerRow { Date = new DateOnly(2026, 7, 25), Description = "Near", Amount = -100m, RunningBalance = 900m, AccountId = 1 },
@@ -59,6 +67,6 @@ public class ForecastSnapshotServiceTests : DatabaseTestBase
 
         var reloaded = await Context.ForecastSnapshots.Include(s => s.Lines).SingleAsync(s => s.AsOfDate == new DateOnly(2026, 7, 23));
         Assert.Contains(reloaded.Lines, l => l.Description == "Near");
-        Assert.DoesNotContain(reloaded.Lines, l => l.Description == "Far");
+        Assert.Contains(reloaded.Lines, l => l.Description == "Far");
     }
 }

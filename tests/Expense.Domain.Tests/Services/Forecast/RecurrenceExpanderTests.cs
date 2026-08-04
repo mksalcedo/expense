@@ -190,7 +190,7 @@ public class RecurrenceExpanderTests
     }
 
     [Fact]
-    public void Expand_OneTimeEvent_AlwaysHasNullCategoryId()
+    public void Expand_OneTimeEventWithNoCategoryId_ProducesLinesWithNullCategoryId()
     {
         var evt = new OneTimeEvent { Name = "HVAC repair", Amount = 850m, Direction = Direction.Expense, Date = new DateOnly(2026, 3, 5), AccountId = 1 };
 
@@ -198,6 +198,20 @@ public class RecurrenceExpanderTests
 
         var line = Assert.Single(lines);
         Assert.Null(line.CategoryId);
+    }
+
+    [Fact]
+    public void Expand_OneTimeEventWithACategoryId_PropagatesItOntoTheLine()
+    {
+        // Lets a categorized one-time event (e.g. a top-up alongside an existing recurring
+        // bill in the same category) participate in ForecastEngine's reconciliation the same
+        // way a recurring occurrence's line does.
+        var evt = new OneTimeEvent { Name = "Water additional", Amount = 185.20m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 30), AccountId = 1, CategoryId = 27 };
+
+        var lines = _sut.Expand([], [evt], new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31));
+
+        var line = Assert.Single(lines);
+        Assert.Equal(27, line.CategoryId);
     }
 
     [Theory]

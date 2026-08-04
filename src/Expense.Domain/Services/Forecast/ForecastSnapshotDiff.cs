@@ -40,6 +40,18 @@ public class StartingBalanceChange
     public required decimal OldBalance { get; set; }
     public required decimal NewBalance { get; set; }
     public decimal Delta => NewBalance - OldBalance;
+
+    /// <summary>The real checking-account transactions that explain Delta - see
+    /// ForecastSnapshotDiffer.Diff. Empty (not null) when none were supplied, so callers can
+    /// always iterate it directly.</summary>
+    public List<StartingBalanceTransaction> Transactions { get; set; } = [];
+}
+
+public class StartingBalanceTransaction
+{
+    public required DateOnly Date { get; set; }
+    public required string Description { get; set; }
+    public required decimal Amount { get; set; }
 }
 
 public class ForecastLineChange

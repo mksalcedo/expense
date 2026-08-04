@@ -177,6 +177,113 @@ public class TransactionReconciliationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task PendingPlaidTransaction_IsClassified_UsingTransactionDateAsTheEffectiveDate()
+    {
+        // Real bug this guards: a pending Plaid transaction (no PostedDate yet) was invisible
+        // to reconciliation entirely, so a correctly-categorized real transaction still left
+        // its forecast occurrence showing as projected until the bank finished posting it.
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var mas = new Category { Name = "MAS" };
+        Context.Categories.Add(mas);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = mas.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = mas.Id, Amount = 230m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 7, 30), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        var txn = new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 31), PostedDate = null,
+            Description = "METRO ATLANTA SE PAYROLL", Amount = 230.87m, ImportSource = "Plaid",
+            CategoryId = mas.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(txn);
+        await Context.SaveChangesAsync();
+
+        await _sut.ReconcileAsync(Context, new DateOnly(2026, 7, 31));
+
+        var reloaded = await Context.BankTransactions.SingleAsync(t => t.Id == txn.Id);
+        Assert.Equal(new DateOnly(2026, 7, 30), reloaded.ReconciledOccurrenceDate);
+    }
+
+    [Fact]
+    public async Task PendingTransaction_FromAnOrdinarySource_IsLeftUnclassified()
+    {
+        // Contrast with the Plaid case above - an ordinary pending/unposted row (e.g. a stale
+        // test fixture, or any future source without Plaid's own pending-then-merge lifecycle)
+        // must not be swept into reconciliation just because it has a category.
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var mas = new Category { Name = "MAS" };
+        Context.Categories.Add(mas);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = mas.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = mas.Id, Amount = 230m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 7, 30), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        var txn = new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 7, 31), PostedDate = null,
+            Description = "METRO ATLANTA SE PAYROLL", Amount = 230.87m, ImportSource = "SomeOtherSource",
+            CategoryId = mas.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(txn);
+        await Context.SaveChangesAsync();
+
+        await _sut.ReconcileAsync(Context, new DateOnly(2026, 7, 31));
+
+        var reloaded = await Context.BankTransactions.SingleAsync(t => t.Id == txn.Id);
+        Assert.Null(reloaded.ReconciledOccurrenceDate);
+    }
+
+    [Fact]
+    public async Task TransactionPostedShortlyBeforeAnUpcomingOccurrence_StillClassifiesToIt()
+    {
+        // Real bug this guards: reconciliation candidates were only ever generated through
+        // asOfDate, so an occurrence a few days in the future had nothing to reconcile
+        // against yet - broke income that trickles in ahead of its own anchor date (e.g. real
+        // piano lesson payments arriving days before the monthly $600 anchor).
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano" };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        var txn = new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 2), PostedDate = new DateOnly(2026, 8, 2),
+            Description = "ZELLE FROM GABRIEL NAVA", Amount = 95m, ImportSource = "Test", CategoryId = piano.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(txn);
+        await Context.SaveChangesAsync();
+
+        // asOfDate (today) is before the occurrence itself - the upcoming Aug 5 occurrence
+        // must still be a valid reconciliation target for a transaction that arrived early.
+        await _sut.ReconcileAsync(Context, new DateOnly(2026, 8, 2));
+
+        var reloaded = await Context.BankTransactions.SingleAsync(t => t.Id == txn.Id);
+        Assert.Equal(new DateOnly(2026, 8, 5), reloaded.ReconciledOccurrenceDate);
+    }
+
+    [Fact]
     public async Task DryRun_ReportsChanges_ButDoesNotPersistThem()
     {
         var checking = new Account { Name = "Checking", Type = AccountType.Checking };

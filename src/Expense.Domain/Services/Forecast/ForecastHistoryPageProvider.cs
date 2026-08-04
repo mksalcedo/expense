@@ -45,6 +45,12 @@ public class ForecastHistoryPageProvider(IDbContextFactory<ExpenseDbContext> con
             .Where(t => t.CategoryId != null && t.ReconciledOccurrenceDate != null)
             .ToListAsync(cancellationToken);
 
-        return ForecastSnapshotDiffer.Diff(older, newer, reconciledTransactions);
+        // Explains a StartingBalanceChange - see ForecastSnapshotDiffer.Diff. Only checking
+        // accounts feed the starting balance at all, so only their transactions are relevant.
+        var checkingTransactions = await context.BankTransactions
+            .Where(t => t.Account.Type == AccountType.Checking)
+            .ToListAsync(cancellationToken);
+
+        return ForecastSnapshotDiffer.Diff(older, newer, reconciledTransactions, checkingTransactions);
     }
 }

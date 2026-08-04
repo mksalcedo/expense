@@ -111,7 +111,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         // date can end up in the past relative to asOfDate, and it must not vanish just
         // because of that.
         var oneTimeEvents = await context.OneTimeEvents.ToListAsync(cancellationToken);
-        lines.AddRange(recurrenceExpander.Expand([], oneTimeEvents, asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays), windowEnd));
+        var oneTimeEventLines = recurrenceExpander.Expand([], oneTimeEvents, asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays), windowEnd);
+        lines.AddRange(oneTimeEventLines.Where(l => !IsOneTimeEventAlreadyCoveredByARelatedPayment(l, reconciliationTransactions)));
 
         var activeSpendingAccounts = await context.Accounts
             .Where(a => a.Type == AccountType.ActiveSpending && a.IsActive
@@ -385,6 +386,28 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         var minimumAcceptedAmount = expectedAmount * (1m - ReconciliationAmountToleranceFraction);
 
         return transactions.Any(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate == line.Date
+            && Math.Abs(t.Amount) >= minimumAcceptedAmount);
+    }
+
+    /// <summary>
+    /// A categorized one-time event (e.g. a top-up alongside an existing recurring bill in the
+    /// same category - see CategorizedOneTimeEvent_IsExcluded_WhenItsCategoryHasANearbyReconciledTransaction)
+    /// can't reuse IsAlreadyReflectedInAnActualTransaction's exact-date match: the real payment
+    /// that covers it is the SAME one that already satisfied the recurring occurrence, and a
+    /// BankTransaction can only ever record one ReconciledOccurrenceDate. Instead, treat "this
+    /// category already reconciled to a date within the usual match window of this event's own
+    /// date" as evidence the same payment covered the top-up too - still gated by the same
+    /// amount floor so an unrelated, too-small reconciled transaction can't count.
+    /// </summary>
+    private static bool IsOneTimeEventAlreadyCoveredByARelatedPayment(LedgerLine line, IReadOnlyList<BankTransaction> transactions)
+    {
+        if (line.CategoryId is null) return false;
+
+        var expectedAmount = Math.Abs(line.Amount);
+        var minimumAcceptedAmount = expectedAmount * (1m - ReconciliationAmountToleranceFraction);
+
+        return transactions.Any(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate is { } reconciledDate
+            && Math.Abs(reconciledDate.DayNumber - line.Date.DayNumber) <= RecurrenceExpander.MaxMatchWindowDays
             && Math.Abs(t.Amount) >= minimumAcceptedAmount);
     }
 }

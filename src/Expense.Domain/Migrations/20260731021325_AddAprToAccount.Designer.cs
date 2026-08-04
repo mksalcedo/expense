@@ -3,6 +3,7 @@ using System;
 using Expense.Domain.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Expense.Domain.Migrations
 {
     [DbContext(typeof(ExpenseDbContext))]
-    partial class ExpenseDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260731021325_AddAprToAccount")]
+    partial class AddAprToAccount
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -706,10 +709,6 @@ namespace Expense.Domain.Migrations
                         .HasColumnType("numeric(12,2)")
                         .HasColumnName("amount");
 
-                    b.Property<int?>("CategoryId")
-                        .HasColumnType("integer")
-                        .HasColumnName("category_id");
-
                     b.Property<DateOnly>("Date")
                         .HasColumnType("date")
                         .HasColumnName("date");
@@ -731,9 +730,6 @@ namespace Expense.Domain.Migrations
 
                     b.HasIndex("AccountId")
                         .HasDatabaseName("ix_one_time_events_account_id");
-
-                    b.HasIndex("CategoryId")
-                        .HasDatabaseName("ix_one_time_events_category_id");
 
                     b.HasIndex("Date")
                         .HasDatabaseName("ix_one_time_events_date");
@@ -1094,15 +1090,7 @@ namespace Expense.Domain.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_one_time_events_accounts_account_id");
 
-                    b.HasOne("Expense.Domain.Entities.Category", "Category")
-                        .WithMany()
-                        .HasForeignKey("CategoryId")
-                        .OnDelete(DeleteBehavior.SetNull)
-                        .HasConstraintName("fk_one_time_events_categories_category_id");
-
                     b.Navigation("Account");
-
-                    b.Navigation("Category");
                 });
 
             modelBuilder.Entity("Expense.Domain.Entities.PartialPayment", b =>

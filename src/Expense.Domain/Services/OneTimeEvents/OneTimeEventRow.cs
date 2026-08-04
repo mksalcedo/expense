@@ -11,4 +11,6 @@ public class OneTimeEventRow
     public required DateOnly Date { get; set; }
     public required int AccountId { get; set; }
     public required string AccountName { get; set; }
+    public int? CategoryId { get; set; }
+    public string? CategoryName { get; set; }
 }

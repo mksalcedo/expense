@@ -69,7 +69,11 @@ public class RecurrenceExpander
             if (evt.Date < windowStart || evt.Date > windowEnd) continue;
 
             var signedAmount = evt.Direction == Direction.Income ? evt.Amount : -evt.Amount;
-            lines.Add(new LedgerLine { Date = evt.Date, Description = evt.Name, Amount = signedAmount, AccountId = evt.AccountId, SourceOneTimeEventId = evt.Id });
+            lines.Add(new LedgerLine
+            {
+                Date = evt.Date, Description = evt.Name, Amount = signedAmount, AccountId = evt.AccountId,
+                CategoryId = evt.CategoryId, SourceOneTimeEventId = evt.Id
+            });
         }
 
         return lines.OrderBy(l => l.Date).ToList();

@@ -14,6 +14,7 @@ public class OneTimeEventConfiguration : IEntityTypeConfiguration<OneTimeEvent>
         builder.Property(e => e.Direction).HasConversion<string>().HasMaxLength(20);
         builder.Property(e => e.Amount).HasColumnType("numeric(12,2)");
         builder.HasOne(e => e.Account).WithMany().HasForeignKey(e => e.AccountId);
+        builder.HasOne(e => e.Category).WithMany().HasForeignKey(e => e.CategoryId).OnDelete(DeleteBehavior.SetNull);
         builder.HasIndex(e => e.Date);
     }
 }

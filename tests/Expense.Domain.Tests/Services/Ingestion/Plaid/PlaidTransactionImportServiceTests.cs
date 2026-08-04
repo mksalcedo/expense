@@ -46,6 +46,14 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         return account;
     }
 
+    private async Task<Account> CreateDebtAccountAsync()
+    {
+        var account = new Account { Name = "Discover", Type = AccountType.Debt };
+        Context.Accounts.Add(account);
+        await Context.SaveChangesAsync();
+        return account;
+    }
+
     [Fact]
     public async Task ImportAsync_ParsesThePayloadLine_IgnoringTheDiagnosticLine()
     {
@@ -441,6 +449,61 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         Assert.Equal(1, summary.TransactionsAdded); // only the payroll deposit is genuinely new
         Assert.Equal(1, summary.DuplicatesSkipped); // the pending Chipotle re-report is recognized as already resolved
         Assert.Equal(2, await Context.BankTransactions.CountAsync()); // pre-seeded Chipotle + payroll, not 3
+    }
+
+    // Real bug this guards (found live 2026-07-31): SimpleFinImportService always checked the
+    // description for "AMAZON" and set IsAmazonMerchant so the transaction gets quarantined
+    // for matching against real Amazon order data instead of an ordinary merchant-rule
+    // category - this importer never had that check at all, so every Amazon purchase on a
+    // Plaid-covered account (e.g. Amex) fell into the plain Review Queue with no link back to
+    // its real Amazon order items, even though those items had already imported correctly.
+    private const string AmazonCliOutput = """
+    {"diagnostic":{"code":"FETCHING_TRANSACTIONS","end_date":"2026-07-31","level":"info","message":"Fetching transactions...","start_date":"2026-07-25"}}
+    {"accounts":[{"account_id":"plaid-checking-1","balances":{"available":5092.71,"current":5136.49}}],"total_transactions":1,"transactions":[{"transaction_id":"txn-amazon-1","account_id":"plaid-checking-1","amount":21.19,"date":"2026-07-31","name":"AMAZON MARKEPLACE NA","merchant_name":null,"pending":false}]}
+    """;
+
+    [Fact]
+    public async Task ImportAsync_AmazonTransaction_IsFlaggedAsAmazonMerchant()
+    {
+        var account = await CreateCheckingAccountAsync();
+
+        await CreateSut().ImportAsync(Context, AmazonCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 31, 12, 0, 0, TimeSpan.Zero));
+
+        var txn = await Context.BankTransactions.SingleAsync();
+        Assert.True(txn.IsAmazonMerchant);
+    }
+
+    [Fact]
+    public async Task ImportAsync_AmazonTransaction_IsNotAutoCategorized_EvenIfAMerchantRuleWouldOtherwiseMatch()
+    {
+        var account = await CreateCheckingAccountAsync();
+        var shopping = new Category { Name = "Shopping" };
+        Context.Categories.Add(shopping);
+        await Context.SaveChangesAsync();
+        Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "%AMAZON%", CategoryId = shopping.Id });
+        await Context.SaveChangesAsync();
+
+        await CreateSut().ImportAsync(Context, AmazonCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 7, 31, 12, 0, 0, TimeSpan.Zero));
+
+        var txn = await Context.BankTransactions.SingleAsync();
+        Assert.Null(txn.CategoryId);
+    }
+
+    // Real gap this guards: SimpleFinImportService explicitly discards transaction-level data
+    // for Debt-type accounts (they only ever get a balance snapshot, "since debt accounts were
+    // never meant to feed the Spending Tracker") - this importer had no equivalent check, so a
+    // Debt-type account added to the Plaid map would have its transactions imported and
+    // categorized like any ordinary spending account.
+    [Fact]
+    public async Task ImportAsync_DebtAccount_TransactionsAreDiscarded_LikeSimpleFin()
+    {
+        var discover = await CreateDebtAccountAsync();
+        var accountMap = BuildAccountMap(discover);
+
+        var summary = await CreateSut().ImportAsync(Context, SampleCliOutput, accountMap, new DateTimeOffset(2026, 7, 25, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(0, summary.TransactionsAdded);
+        Assert.Empty(await Context.BankTransactions.ToListAsync());
     }
 
     [Fact]

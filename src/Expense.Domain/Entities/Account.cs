@@ -10,6 +10,9 @@ public class Account
     public decimal? MinPayment { get; set; }
     public decimal? ExtraPayment { get; set; }
 
+    // Debt and ActiveSpending (e.g. Amex) - purely informational reference data, not read by the forecast.
+    public decimal? Apr { get; set; }
+
     // Every debt account (day of month the payment happens)
     public int? PaymentDueDay { get; set; }
 

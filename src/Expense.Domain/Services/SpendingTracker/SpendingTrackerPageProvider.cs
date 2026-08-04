@@ -20,4 +20,16 @@ public class SpendingTrackerPageProvider(IDbContextFactory<ExpenseDbContext> con
 
         return new SpendingTrackerPageData { Week = week, Month = month };
     }
+
+    public async Task<SpendingTrackerResult> GetWeekAsync(DateOnly referenceDate, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await tracker.GetCurrentWeekAsync(context, referenceDate, cancellationToken);
+    }
+
+    public async Task<SpendingTrackerResult> GetMonthAsync(DateOnly referenceDate, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await tracker.GetCurrentMonthAsync(context, referenceDate, cancellationToken);
+    }
 }

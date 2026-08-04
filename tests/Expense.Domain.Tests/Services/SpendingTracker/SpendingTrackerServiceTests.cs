@@ -72,6 +72,40 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
         Assert.Equal(new DateOnly(2026, 7, 31), result.PeriodEnd);
     }
 
+    // Real gap this guards (found during the Dashboard week/month navigation work, 2026-08-03):
+    // this service only ever queried the currently-open budget period (EffectiveThrough IS
+    // NULL) - fine for "current week/month" (today always falls inside the open period by
+    // construction) but wrong the moment a past period becomes browsable, since a since-changed
+    // budget would silently misreport what was actually budgeted back then. HistoricalAnalysis
+    // already gets this right (looks up the period whose EffectiveFrom/Through actually covers
+    // the period being asked about) - same fix here.
+    [Fact]
+    public async Task AskingForAPastPeriod_UsesTheBudgetThatWasActuallyInEffectThen_NotTodays()
+    {
+        var category = new Category { Name = "Groceries" };
+        Context.Categories.Add(category);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.AddRange(
+            new BudgetPeriod
+            {
+                CategoryId = category.Id, Amount = 400m, Frequency = Frequency.Weekly,
+                EffectiveFrom = new DateOnly(2026, 1, 1), EffectiveThrough = new DateOnly(2026, 6, 30)
+            },
+            new BudgetPeriod
+            {
+                CategoryId = category.Id, Amount = 450m, Frequency = Frequency.Weekly,
+                EffectiveFrom = new DateOnly(2026, 7, 1)
+            });
+        await Context.SaveChangesAsync();
+
+        // A week entirely within the old $400 budget's effective range.
+        var result = await _sut.GetCurrentWeekAsync(Context, new DateOnly(2026, 3, 4));
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(400m, summary.Budget);
+    }
+
     [Fact]
     public async Task TransactionsOutsideTheCurrentWeek_AreExcluded_NoCarryover()
     {

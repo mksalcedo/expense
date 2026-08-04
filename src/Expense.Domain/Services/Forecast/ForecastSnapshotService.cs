@@ -16,13 +16,16 @@ namespace Expense.Domain.Services.Forecast;
 /// </summary>
 public class ForecastSnapshotService
 {
-    // The far tail of a 12-month forecast is both less actionable and would bloat storage
-    // for no real diffing benefit - only the near-term window is worth persisting daily.
-    private const int SnapshotWindowDays = 120;
-
+    // Persists the full forecast, not just a near-term window - a diff only ever reports
+    // lines that genuinely differ between two snapshots (see ForecastSnapshotDiffer), so
+    // this doesn't mean showing more, it means having the data to notice a change wherever
+    // it actually falls, including the far tail (confirmed real: a lowest-balance date a
+    // year out, with only a ~4-month window previously captured, left nothing on either
+    // side to diff near the date that actually mattered). forecast.Rows is already bounded
+    // by the app's real forecast horizon (AppSettings.ForecastHorizonMonths), so no separate
+    // cutoff is needed here.
     public async Task CaptureAsync(ExpenseDbContext context, ForecastResult forecast, DateOnly asOfDate, CancellationToken cancellationToken = default)
     {
-        var windowEnd = asOfDate.AddDays(SnapshotWindowDays);
         var snapshot = new ForecastSnapshot
         {
             AsOfDate = asOfDate,
@@ -31,7 +34,6 @@ public class ForecastSnapshotService
             LowestProjectedBalanceDate = forecast.LowestProjectedBalanceDate,
             CapturedAt = DateTimeOffset.UtcNow,
             Lines = forecast.Rows
-                .Where(r => r.Date <= windowEnd)
                 .Select(r => new ForecastSnapshotLine
                 {
                     Date = r.Date, Description = r.Description, Amount = r.Amount, RunningBalance = r.RunningBalance,

@@ -59,6 +59,16 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
                 continue;
             }
 
+            // Debt accounts only ever get a balance snapshot (see the Accounts page's manual
+            // balance entry for those) - transaction-level data is discarded here, same as
+            // SimpleFinImportService, since debt accounts were never meant to feed the
+            // Spending Tracker.
+            var localAccount = await context.Accounts.SingleAsync(a => a.Id == localAccountId, cancellationToken);
+            if (localAccount.Type == AccountType.Debt)
+            {
+                continue;
+            }
+
             // Plaid reports positive = money out, negative = money in - the opposite of
             // this app's convention (a deposit is positive) - confirmed directly against
             // real data (a real payroll deposit came back as -4492.86).
@@ -123,6 +133,10 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
                 continue;
             }
 
+            // Matches SimpleFinImportService's own check - quarantines the transaction from
+            // ordinary merchant-rule categorization so it gets matched against real Amazon
+            // order data (Review Queue's "Amazon Items" section) instead.
+            var isAmazon = txn.Name.Contains("AMAZON", StringComparison.OrdinalIgnoreCase);
             var bankTransaction = new BankTransaction
             {
                 AccountId = localAccountId,
@@ -133,10 +147,14 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
                 Amount = amount,
                 ExternalId = txn.TransactionId,
                 ImportSource = "Plaid",
+                IsAmazonMerchant = isAmazon,
                 CreatedAt = DateTimeOffset.UtcNow
             };
 
-            await categorization.ApplyMerchantRuleAsync(context, bankTransaction);
+            if (!isAmazon)
+            {
+                await categorization.ApplyMerchantRuleAsync(context, bankTransaction);
+            }
 
             context.BankTransactions.Add(bankTransaction);
             summary.TransactionsAdded++;

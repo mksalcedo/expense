@@ -13,41 +13,46 @@ public class OneTimeEventsTests : BunitContext
     {
         public List<OneTimeEventRow> Rows { get; set; } = [];
         public List<AccountOption> Accounts { get; set; } = [];
+        public List<CategoryOption> Categories { get; set; } = [];
 
         public string? LastCreatedName { get; private set; }
         public decimal? LastCreatedAmount { get; private set; }
         public Direction? LastCreatedDirection { get; private set; }
         public DateOnly? LastCreatedDate { get; private set; }
         public int? LastCreatedAccountId { get; private set; }
+        public int? LastCreatedCategoryId { get; private set; }
 
         public int? LastUpdatedId { get; private set; }
         public string? LastUpdatedName { get; private set; }
         public decimal? LastUpdatedAmount { get; private set; }
         public DateOnly? LastUpdatedDate { get; private set; }
         public int? LastUpdatedAccountId { get; private set; }
+        public int? LastUpdatedCategoryId { get; private set; }
 
         public int? LastDeletedId { get; private set; }
 
         public Task<OneTimeEventsPageData> GetEventsAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new OneTimeEventsPageData { Events = Rows, Accounts = Accounts });
+            Task.FromResult(new OneTimeEventsPageData { Events = Rows, Accounts = Accounts, Categories = Categories });
 
-        public Task CreateEventAsync(string name, decimal amount, Direction direction, DateOnly date, int accountId, CancellationToken cancellationToken = default)
+        public Task CreateEventAsync(string name, decimal amount, Direction direction, DateOnly date, int accountId, int? categoryId, CancellationToken cancellationToken = default)
         {
             LastCreatedName = name;
             LastCreatedAmount = amount;
             LastCreatedDirection = direction;
             LastCreatedDate = date;
             LastCreatedAccountId = accountId;
+            LastCreatedCategoryId = categoryId;
             return Task.CompletedTask;
         }
 
-        public Task UpdateEventAsync(int eventId, string name, decimal amount, Direction direction, DateOnly date, int accountId, CancellationToken cancellationToken = default)
+        public Task UpdateEventAsync(int eventId, string name, decimal amount, Direction direction, DateOnly date, int accountId, int? categoryId, CancellationToken cancellationToken = default)
         {
             LastUpdatedId = eventId;
             LastUpdatedName = name;
             LastUpdatedAmount = amount;
             LastUpdatedDate = date;
             LastUpdatedAccountId = accountId;
+            LastUpdatedCategoryId = categoryId;
             return Task.CompletedTask;
         }
 
@@ -63,9 +68,14 @@ public class OneTimeEventsTests : BunitContext
         Rows =
         [
             new OneTimeEventRow { Id = 1, Name = "HVAC repair", Amount = 850m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 20), AccountId = 1, AccountName = "Wells Fargo Checking" },
-            new OneTimeEventRow { Id = 2, Name = "Tax refund", Amount = 600m, Direction = Direction.Income, Date = new DateOnly(2026, 4, 15), AccountId = 1, AccountName = "Wells Fargo Checking" }
+            new OneTimeEventRow
+            {
+                Id = 2, Name = "Water additional", Amount = 185.20m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 30),
+                AccountId = 1, AccountName = "Wells Fargo Checking", CategoryId = 5, CategoryName = "Water"
+            }
         ],
-        Accounts = [new AccountOption { Id = 1, Name = "Wells Fargo Checking" }]
+        Accounts = [new AccountOption { Id = 1, Name = "Wells Fargo Checking" }],
+        Categories = [new CategoryOption { Id = 5, Name = "Water" }]
     };
 
     [Fact]
@@ -77,7 +87,7 @@ public class OneTimeEventsTests : BunitContext
         var cut = Render<OneTimeEvents>();
 
         Assert.Contains("HVAC repair", cut.Markup);
-        Assert.Contains("Tax refund", cut.Markup);
+        Assert.Contains("Water additional", cut.Markup);
         Assert.DoesNotContain("id=\"detail-name\"", cut.Markup);
     }
 
@@ -97,6 +107,74 @@ public class OneTimeEventsTests : BunitContext
     }
 
     [Fact]
+    public void ClickingARowWithACategory_PopulatesTheCategoryDropdown()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IOneTimeEventsPageProvider>(provider);
+
+        var cut = Render<OneTimeEvents>();
+        cut.Find("#event-row-2").Click();
+
+        Assert.Equal("5", cut.Find("#detail-category option[selected]").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void ClickingARowWithNoCategory_LeavesTheCategoryDropdownOnNone()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IOneTimeEventsPageProvider>(provider);
+
+        var cut = Render<OneTimeEvents>();
+        cut.Find("#event-row-1").Click();
+
+        Assert.Equal("", cut.Find("#detail-category option[selected]").GetAttribute("value"));
+    }
+
+    // Category is deliberately still optional (not every event maps to one - an Amex partial
+    // payment top-up has no single category), but leaving it blank had been silently easy to
+    // miss (user-identified real gap, 2026-08-03 audit: a real Water top-up event went
+    // un-reconciled because its category was never set). A visible warning makes skipping it a
+    // conscious choice instead of an invisible default.
+    [Fact]
+    public void NoCategorySelected_ShowsAWarning()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IOneTimeEventsPageProvider>(provider);
+
+        var cut = Render<OneTimeEvents>();
+        cut.Find("#event-row-1").Click(); // HVAC repair - no category in the fixture
+
+        Assert.NotEmpty(cut.FindAll("#category-warning"));
+    }
+
+    [Fact]
+    public void SelectingACategory_HidesTheWarning()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IOneTimeEventsPageProvider>(provider);
+
+        var cut = Render<OneTimeEvents>();
+        cut.Find("#event-row-1").Click();
+        Assert.NotEmpty(cut.FindAll("#category-warning"));
+
+        cut.Find("#detail-category").Change("5");
+
+        Assert.Empty(cut.FindAll("#category-warning"));
+    }
+
+    [Fact]
+    public void ClickingARowWithACategoryAlreadySet_ShowsNoWarning()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IOneTimeEventsPageProvider>(provider);
+
+        var cut = Render<OneTimeEvents>();
+        cut.Find("#event-row-2").Click(); // has CategoryId = 5 in the fixture
+
+        Assert.Empty(cut.FindAll("#category-warning"));
+    }
+
+    [Fact]
     public void EditingAndSaving_CallsUpdateWithAllFieldsTogether()
     {
         var provider = MakeProvider();
@@ -113,6 +191,21 @@ public class OneTimeEventsTests : BunitContext
         Assert.Equal(900m, provider.LastUpdatedAmount);
         Assert.Equal(new DateOnly(2026, 7, 20), provider.LastUpdatedDate);
         Assert.Equal(1, provider.LastUpdatedAccountId);
+        Assert.Null(provider.LastUpdatedCategoryId);
+    }
+
+    [Fact]
+    public void SettingACategoryAndSaving_CallsUpdateWithTheCategoryId()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IOneTimeEventsPageProvider>(provider);
+
+        var cut = Render<OneTimeEvents>();
+        cut.Find("#event-row-1").Click();
+        cut.Find("#detail-category").Change("5");
+        cut.Find("#detail-save").Click();
+
+        Assert.Equal(5, provider.LastUpdatedCategoryId);
     }
 
     [Fact]
@@ -135,6 +228,7 @@ public class OneTimeEventsTests : BunitContext
         Assert.Equal(Direction.Expense, provider.LastCreatedDirection);
         Assert.Equal(new DateOnly(2026, 11, 1), provider.LastCreatedDate);
         Assert.Equal(1, provider.LastCreatedAccountId);
+        Assert.Null(provider.LastCreatedCategoryId);
     }
 
     [Fact]
@@ -160,6 +254,6 @@ public class OneTimeEventsTests : BunitContext
         cut.Find("#event-filter").Input("hvac");
 
         Assert.Contains("HVAC repair", cut.Markup);
-        Assert.DoesNotContain("Tax refund", cut.Markup);
+        Assert.DoesNotContain("Water additional", cut.Markup);
     }
 }

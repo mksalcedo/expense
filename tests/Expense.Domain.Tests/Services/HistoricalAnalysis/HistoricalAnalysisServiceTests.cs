@@ -79,6 +79,36 @@ public class HistoricalAnalysisServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task WeeklyReport_ForAnIncomeCategory_ComputesActualAsPositive_NotNegated()
+    {
+        // Real bug found live: Actual unconditionally negated the bank total, which is
+        // correct for expense categories (spend posts as a negative amount) but wrong for an
+        // income Direct category like Piano - a real $95 deposit was showing as Actual =
+        // -95.00 instead of +95.00.
+        var piano = new Category { Name = "Piano" };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+        var checking = await CreateAccountAsync("Wells Fargo Checking", AccountType.Checking);
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 6, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 6, 10), PostedDate = new DateOnly(2026, 6, 10),
+            Description = "ZELLE FROM A STUDENT", Amount = 95m, ImportSource = "Test", CategoryId = piano.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var report = await _sut.GetWeeklyReportAsync(Context, new DateOnly(2026, 6, 7));
+
+        var summary = Assert.Single(report, s => s.CategoryId == piano.Id);
+        Assert.Equal(95m, summary.Actual);
+    }
+
+    [Fact]
     public async Task WeeklyReport_IncludesDirectCategories_NotJustPayInFullAmex()
     {
         var truist = new Category { Name = "Truist" };

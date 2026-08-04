@@ -28,6 +28,7 @@ else
                         <th @onclick='() => Sort("Amount")' style="cursor:pointer;">Amount</th>
                         <th @onclick='() => Sort("Date")' style="cursor:pointer;">Date</th>
                         <th>Account</th>
+                        <th>Category</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -40,6 +41,7 @@ else
                             <td>@evt.Amount.ToString("N2")</td>
                             <td>@evt.Date.ToString("yyyy-MM-dd")</td>
                             <td>@evt.AccountName</td>
+                            <td>@(evt.CategoryName ?? "-")</td>
                         </tr>
                     }
                 </tbody>
@@ -90,6 +92,24 @@ else
                         </select>
                     </label>
                 </div>
+                <div>
+                    <label>Category
+                        <select id="detail-category" @onchange="e => _formCategoryId = ParseNullableInt((string)e.Value!)">
+                            <option value="" selected="@(_formCategoryId is null)">-- none --</option>
+                            @foreach (var category in _data!.Categories)
+                            {
+                                <option value="@category.Id" selected="@(_formCategoryId == category.Id)">@category.Name</option>
+                            }
+                        </select>
+                    </label>
+                    @if (_formCategoryId is null)
+                    {
+                        <p id="category-warning" style="color: #9a6700; margin: 0.25em 0 0;">
+                            &#9888; No category selected - this event won't be able to auto-match against a real payment later.
+                            Only leave this blank for things that don't map to one category (e.g. an Amex top-up).
+                        </p>
+                    }
+                </div>
                 <button id="detail-save" @onclick="SaveAsync">Save</button>
                 @if (_mode == DetailMode.Editing)
                 {
@@ -115,11 +135,15 @@ else
     private decimal _formAmount;
     private DateOnly _formDate = DateOnly.FromDateTime(DateTime.Today);
     private int? _formAccountId;
+    private int? _formCategoryId;
 
     protected override async Task OnInitializedAsync()
     {
         _data = await EventsProvider.GetEventsAsync();
     }
+
+    private static int? ParseNullableInt(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : int.Parse(value);
 
     private List<OneTimeEventRow> VisibleEvents()
     {
@@ -160,6 +184,7 @@ else
         _formAmount = 0m;
         _formDate = DateOnly.FromDateTime(DateTime.Today);
         _formAccountId = null;
+        _formCategoryId = null;
     }
 
     private Task SelectAsync(OneTimeEventRow evt)
@@ -171,6 +196,7 @@ else
         _formAmount = evt.Amount;
         _formDate = evt.Date;
         _formAccountId = evt.AccountId;
+        _formCategoryId = evt.CategoryId;
         return Task.CompletedTask;
     }
 
@@ -180,11 +206,11 @@ else
 
         if (_mode == DetailMode.Creating)
         {
-            await EventsProvider.CreateEventAsync(_formName, _formAmount, _formDirection, _formDate, accountId);
+            await EventsProvider.CreateEventAsync(_formName, _formAmount, _formDirection, _formDate, accountId, _formCategoryId);
         }
         else if (_selectedId is { } id)
         {
-            await EventsProvider.UpdateEventAsync(id, _formName, _formAmount, _formDirection, _formDate, accountId);
+            await EventsProvider.UpdateEventAsync(id, _formName, _formAmount, _formDirection, _formDate, accountId, _formCategoryId);
         }
 
         _mode = DetailMode.None;

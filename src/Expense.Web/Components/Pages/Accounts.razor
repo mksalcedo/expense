@@ -14,107 +14,173 @@
 else
 {
     <div style="display:flex; gap:2rem; align-items:flex-start;">
-        <div style="flex:1;">
-            <div>
+        <div style="flex: 3;">
+            <div style="margin-bottom: 10px;">
                 <input id="account-filter" placeholder="Filter by name..." value="@_filterText"
                        @oninput="e => _filterText = (string)e.Value!" />
                 <button id="new-account-button" @onclick="StartCreating">+ New Account</button>
             </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th @onclick='() => Sort("Name")' style="cursor:pointer;">Name</th>
-                        <th @onclick='() => Sort("Type")' style="cursor:pointer;">Type</th>
-                        <th @onclick='() => Sort("Status")' style="cursor:pointer;">Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var account in VisibleAccounts())
-                    {
-                        <tr @key="account.Id" id="account-row-@account.Id" @onclick="() => SelectAsync(account)"
-                            style="cursor:pointer; @(account.Id == _selectedId ? "font-weight:bold;" : "")">
-                            <td>@account.Name</td>
-                            <td>@account.Type</td>
-                            <td>@(account.IsActive ? "Active" : "Inactive")</td>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-radius: 8px; overflow: hidden;">
+                    <thead>
+                        <tr>
+                            <th @onclick='() => Sort("Name")' style="cursor:pointer;">Name</th>
+                            <th @onclick='() => Sort("Type")' style="cursor:pointer;">Type</th>
+                            <th @onclick='() => Sort("Status")' style="cursor:pointer;">Status</th>
+                            <th @onclick='() => Sort("MinPayment")' style="cursor:pointer;" class="text-right">Min Payment</th>
+                            <th @onclick='() => Sort("PaymentDueDay")' style="cursor:pointer;" class="text-right">Payment Due Day</th>
+                            <th @onclick='() => Sort("Apr")' style="cursor:pointer;" class="text-right">APR</th>
+                            <th @onclick='() => Sort("Balance")' style="cursor:pointer;" class="text-right">Balance</th>
+                            <th @onclick='() => Sort("AsOf")' style="cursor:pointer;" class="text-right">As of</th>
                         </tr>
-                    }
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        @foreach (var account in VisibleAccounts())
+                        {
+                            <tr @key="account.Id" id="account-row-@account.Id" @onclick="() => SelectAsync(account)"
+                                style="cursor:pointer; @(account.Id == _selectedId ? "font-weight:bold;" : "")">
+                                <td>@account.Name</td>
+                                <td>@account.Type</td>
+                                <td>@(account.IsActive ? "Active" : "Inactive")</td>
+                                <td class="text-right">@(account.MinPayment?.ToString("N2") ?? "-")</td>
+                                <td class="text-right">@(account.PaymentDueDay?.ToString() ?? "-")</td>
+                                <td class="text-right">@(account.Apr.HasValue ? account.Apr.Value.ToString("N2") + "%" : "-")</td>
+                                <td class="text-right">@FormatBalance(account.LatestBalance, account.Type)</td>
+                                <td class="text-right">@(account.LatestBalanceAsOfDate?.ToString("MM/dd/yyyy") ?? "-")</td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="3"><strong>Total (active accounts)</strong></td>
+                            <td id="total-min-payment" class="text-right"><strong>@TotalMinPayment().ToString("N2")</strong></td>
+                            <td></td>
+                            <td></td>
+                            <td id="total-balance" class="text-right"><strong>@FormatBalance(TotalBalance())</strong></td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
         </div>
 
-        <div style="flex:1;">
+        <div style="flex: 2;">
             @if (_mode == DetailMode.None)
             {
                 <p>Select an account on the left to edit it, or click "New Account" to create one.</p>
             }
             else
             {
-                <h2>@(_mode == DetailMode.Creating ? "New account" : "Edit account")</h2>
-                <div style="display: grid; grid-template-columns: max-content max-content; gap: 10px 12px; align-items: center;">
-                    <div style="display: contents">
-                        <label for="detail-name">Name</label>
-                        <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" />
-                    </div>
-                    @if (_mode == DetailMode.Creating)
+                <div class="detail-panel">
+                    <h2>@(_mode == DetailMode.Creating ? "New account" : "Edit account")</h2>
+                    @if (_saveConfirmationVisible)
                     {
+                        <p id="save-confirmation" style="color: #1a7f37; font-weight: 500;">Saved.</p>
+                    }
+                    <div class="detail-form">
                         <div style="display: contents">
-                            <label for="detail-type">Type</label>
-                            <select id="detail-type" @onchange="e => _formType = Enum.Parse<AccountType>((string)e.Value!)">
-                                @foreach (var type in Enum.GetValues<AccountType>())
-                                {
-                                    <option value="@type" selected="@(_formType == type)">@type</option>
-                                }
-                            </select>
+                            <label for="detail-name">Name</label>
+                            <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" />
                         </div>
-                    }
-                    else
-                    {
-                        <label>Type</label>
-                        <p style="margin: 0;">@_formType</p>
-                    }
-                    @if (_formType == AccountType.Debt || _formType == AccountType.ActiveSpending)
-                    {
-                        @if (_formType == AccountType.Debt)
+                        @if (_mode == DetailMode.Creating)
+                        {
+                            <div style="display: contents">
+                                <label for="detail-type">Type</label>
+                                <select id="detail-type" @onchange="e => _formType = Enum.Parse<AccountType>((string)e.Value!)">
+                                    @foreach (var type in Enum.GetValues<AccountType>())
+                                    {
+                                        <option value="@type" selected="@(_formType == type)">@type</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                        else
+                        {
+                            <label>Type</label>
+                            <p style="margin: 0;">@_formType</p>
+                        }
+                        @if (_formType == AccountType.Debt || _formType == AccountType.ActiveSpending)
                         {
                             <div style="display: contents">
                                 <label for="detail-min-payment">Min payment</label>
                                 <input id="detail-min-payment" type="number" step="0.01" value="@_formMinPayment"
                                        @onchange="e => _formMinPayment = ParseNullableDecimal((string)e.Value!)" />
                             </div>
-                        }
-                        <div style="display: contents">
-                            <label for="detail-extra-payment">Extra payment</label>
-                            <input id="detail-extra-payment" type="number" step="0.01" value="@_formExtraPayment"
-                                   @onchange="e => _formExtraPayment = ParseNullableDecimal((string)e.Value!)" />
-                        </div>
-                        <div style="display: contents">
-                            <label for="detail-payment-due-day">Payment due day</label>
-                            <input id="detail-payment-due-day" type="number" value="@_formPaymentDueDay"
-                                   @onchange="e => _formPaymentDueDay = ParseNullableInt((string)e.Value!)" />
-                        </div>
-                        @if (_formType == AccountType.ActiveSpending)
-                        {
                             <div style="display: contents">
-                                <label for="detail-statement-close-day">Statement close day</label>
-                                <input id="detail-statement-close-day" type="number" value="@_formStatementCloseDay"
-                                       @onchange="e => _formStatementCloseDay = ParseNullableInt((string)e.Value!)" />
+                                <label for="detail-extra-payment">Extra payment</label>
+                                <input id="detail-extra-payment" type="number" step="0.01" value="@_formExtraPayment"
+                                       @onchange="e => _formExtraPayment = ParseNullableDecimal((string)e.Value!)" />
+                            </div>
+                            <div style="display: contents">
+                                <label for="detail-payment-due-day">Payment due day</label>
+                                <input id="detail-payment-due-day" type="number" value="@_formPaymentDueDay"
+                                       @onchange="e => _formPaymentDueDay = ParseNullableInt((string)e.Value!)" />
+                            </div>
+                            @if (_formType == AccountType.ActiveSpending)
+                            {
+                                <div style="display: contents">
+                                    <label for="detail-statement-close-day">Statement close day</label>
+                                    <input id="detail-statement-close-day" type="number" value="@_formStatementCloseDay"
+                                           @onchange="e => _formStatementCloseDay = ParseNullableInt((string)e.Value!)" />
+                                </div>
+                            }
+                            <div style="display: contents">
+                                <label for="detail-apr">APR %</label>
+                                <input id="detail-apr" type="number" step="0.01" value="@_formApr"
+                                       @onchange="e => _formApr = ParseNullableDecimal((string)e.Value!)" />
                             </div>
                         }
-                    }
-                </div>
-                <div style="margin-top: 24px;">
-                    <button id="detail-save" @onclick="SaveAsync">Save</button>
-                    @if (_mode == DetailMode.Editing)
+                    </div>
+
+                    @if (_formType == AccountType.Debt || _formType == AccountType.ActiveSpending || _formType == AccountType.Savings)
                     {
-                        @if (_selectedIsActive)
-                        {
-                            <button id="detail-deactivate" @onclick="DeactivateAsync">Deactivate</button>
-                        }
-                        else
-                        {
-                            <button id="detail-reactivate" @onclick="ReactivateAsync">Reactivate</button>
-                        }
+                        <div class="detail-section">
+                            <h3>Balance</h3>
+                            @if (_selectedLatestBalance is { } balance)
+                            {
+                                <p>Latest: @FormatBalance(balance, _formType) as of @_selectedLatestBalanceAsOfDate!.Value.ToString("MM/dd/yyyy")</p>
+                            }
+                            else
+                            {
+                                <p><em>No balance recorded yet.</em></p>
+                            }
+                            <div class="detail-form">
+                                <div style="display: contents">
+                                    <label for="detail-balance-date">As of</label>
+                                    <input id="detail-balance-date" type="date" value="@_formBalanceAsOfDate.ToString("yyyy-MM-dd")"
+                                           @onchange="e => _formBalanceAsOfDate = DateOnly.Parse((string)e.Value!)" />
+                                </div>
+                                <div style="display: contents">
+                                    <label for="detail-balance-amount">@(_formType == AccountType.Savings ? "Balance" : "Balance owed")</label>
+                                    <input id="detail-balance-amount" type="number" step="0.01" value="@_formBalanceAmount"
+                                           @onchange="e => _formBalanceAmount = ParseNullableDecimal((string)e.Value!)" />
+                                </div>
+                                @if (_formType != AccountType.Savings)
+                                {
+                                    <div style="display: contents">
+                                        <label for="detail-balance-is-credit">Credit balance?</label>
+                                        <input id="detail-balance-is-credit" type="checkbox" checked="@_formBalanceIsCredit"
+                                               @onchange="e => _formBalanceIsCredit = (bool)e.Value!" style="justify-self: start;" />
+                                    </div>
+                                }
+                            </div>
+                        </div>
                     }
+
+                    <div class="button-row">
+                        <button id="detail-save" @onclick="SaveAsync">Save</button>
+                        @if (_mode == DetailMode.Editing)
+                        {
+                            @if (_selectedIsActive)
+                            {
+                                <button id="detail-deactivate" class="button-secondary" @onclick="DeactivateAsync">Deactivate</button>
+                            }
+                            else
+                            {
+                                <button id="detail-reactivate" class="button-secondary" @onclick="ReactivateAsync">Reactivate</button>
+                            }
+                        }
+                    </div>
                 </div>
             }
         </div>
@@ -138,6 +204,19 @@ else
     private decimal? _formExtraPayment;
     private int? _formPaymentDueDay;
     private int? _formStatementCloseDay;
+    private decimal? _formApr;
+
+    private decimal? _selectedLatestBalance;
+    private DateOnly? _selectedLatestBalanceAsOfDate;
+    private DateOnly _formBalanceAsOfDate = DateOnly.FromDateTime(DateTime.Today);
+
+    // Always a positive magnitude in the UI, regardless of how it's stored - see FormatBalance
+    // and SaveAsync for the sign translation. Nobody should have to type a minus sign to record
+    // an everyday "I owe this much" balance.
+    private decimal? _formBalanceAmount;
+    private bool _formBalanceIsCredit;
+
+    private bool _saveConfirmationVisible;
 
     protected override async Task OnInitializedAsync()
     {
@@ -150,21 +229,46 @@ else
     private static int? ParseNullableInt(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : int.Parse(value);
 
+    // Storage convention (matches the accounting/SimpleFin data already in the database):
+    // negative = amount owed, positive = credit balance. Display always shows a positive
+    // magnitude - a credit gets a "CR" suffix instead of a bare positive number, so it reads
+    // unambiguously rather than looking like an ordinary (larger) debt. Savings has no
+    // owed/credit distinction at all (always a plain positive asset amount), so it never gets
+    // the "CR" suffix - that word implies a debt account that's overpaid, not a savings balance.
+    private static string FormatBalance(decimal? balance, AccountType? type = null) => balance switch
+    {
+        null => "-",
+        < 0 => Math.Abs(balance.Value).ToString("N2"),
+        > 0 when type == AccountType.Savings => balance.Value.ToString("N2"),
+        > 0 => balance.Value.ToString("N2") + " CR",
+        _ => "0.00"
+    };
+
     private List<AccountRow> VisibleAccounts()
     {
         var filtered = _data!.Accounts
             .Where(a => string.IsNullOrWhiteSpace(_filterText) || a.Name.Contains(_filterText, StringComparison.OrdinalIgnoreCase));
 
-        Func<AccountRow, object> keySelector = _sortColumn switch
+        Func<AccountRow, IComparable> keySelector = _sortColumn switch
         {
             "Type" => a => a.Type,
             "Status" => a => a.IsActive,
+            "MinPayment" => a => a.MinPayment ?? decimal.MinValue,
+            "PaymentDueDay" => a => a.PaymentDueDay ?? int.MinValue,
+            "Apr" => a => a.Apr ?? decimal.MinValue,
+            "Balance" => a => a.LatestBalance ?? decimal.MinValue,
+            "AsOf" => a => a.LatestBalanceAsOfDate ?? DateOnly.MinValue,
             _ => a => a.Name
         };
 
         var sorted = _sortAscending ? filtered.OrderBy(keySelector) : filtered.OrderByDescending(keySelector);
         return sorted.ToList();
     }
+
+    // Only active accounts - a closed/inactive account's stale MinPayment/Balance shouldn't
+    // inflate what's meant to read as "what I currently owe/pay across real accounts".
+    private decimal TotalMinPayment() => VisibleAccounts().Where(a => a.IsActive).Sum(a => a.MinPayment ?? 0m);
+    private decimal TotalBalance() => VisibleAccounts().Where(a => a.IsActive).Sum(a => a.LatestBalance ?? 0m);
 
     private void Sort(string column)
     {
@@ -189,11 +293,17 @@ else
         _formExtraPayment = null;
         _formPaymentDueDay = null;
         _formStatementCloseDay = null;
+        _formApr = null;
+        _selectedLatestBalance = null;
+        _selectedLatestBalanceAsOfDate = null;
+        _formBalanceAsOfDate = DateOnly.FromDateTime(DateTime.Today);
+        _formBalanceAmount = null;
+        _formBalanceIsCredit = false;
+        _saveConfirmationVisible = false;
     }
 
-    private Task SelectAsync(AccountRow account)
+    private void LoadIntoForm(AccountRow account)
     {
-        _mode = DetailMode.Editing;
         _selectedId = account.Id;
         _selectedIsActive = account.IsActive;
         _formName = account.Name;
@@ -202,27 +312,61 @@ else
         _formExtraPayment = account.ExtraPayment;
         _formPaymentDueDay = account.PaymentDueDay;
         _formStatementCloseDay = account.StatementCloseDay;
+        _formApr = account.Apr;
+        _selectedLatestBalance = account.LatestBalance;
+        _selectedLatestBalanceAsOfDate = account.LatestBalanceAsOfDate;
+        _formBalanceAsOfDate = DateOnly.FromDateTime(DateTime.Today);
+        _formBalanceAmount = account.LatestBalance.HasValue ? Math.Abs(account.LatestBalance.Value) : null;
+        _formBalanceIsCredit = account.LatestBalance is > 0;
+    }
+
+    private Task SelectAsync(AccountRow account)
+    {
+        _mode = DetailMode.Editing;
+        _saveConfirmationVisible = false;
+        LoadIntoForm(account);
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// One Save button commits everything together - name/payment/APR fields plus, if a
+    /// balance was entered, a dated balance snapshot - rather than a separate "Update Balance"
+    /// action. Stays in Editing mode afterward (switching a fresh Create straight into Editing
+    /// the new row) instead of closing the form, so a "Saved" confirmation can show without the
+    /// user having to reselect the row to see it worked.
+    /// </summary>
     private async Task SaveAsync()
     {
         if (string.IsNullOrWhiteSpace(_formName)) return;
 
+        int accountId;
         if (_mode == DetailMode.Creating)
         {
-            await AccountsProvider.CreateAccountAsync(
-                _formName, _formType, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay);
+            accountId = await AccountsProvider.CreateAccountAsync(
+                _formName, _formType, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay, _formApr);
         }
         else if (_selectedId is { } id)
         {
+            accountId = id;
             await AccountsProvider.UpdateAccountAsync(
-                id, _formName, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay);
+                id, _formName, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay, _formApr);
+        }
+        else
+        {
+            return;
         }
 
-        _mode = DetailMode.None;
-        _selectedId = null;
+        if ((_formType == AccountType.Debt || _formType == AccountType.ActiveSpending || _formType == AccountType.Savings) && _formBalanceAmount is { } enteredBalance)
+        {
+            // Savings is always a plain asset amount - no owed-vs-credit distinction, so no sign flip.
+            var storedBalance = _formType == AccountType.Savings ? enteredBalance : _formBalanceIsCredit ? enteredBalance : -enteredBalance;
+            await AccountsProvider.UpdateBalanceAsync(accountId, _formBalanceAsOfDate, storedBalance);
+        }
+
         _data = await AccountsProvider.GetAccountsAsync();
+        _mode = DetailMode.Editing;
+        LoadIntoForm(_data.Accounts.Single(a => a.Id == accountId));
+        _saveConfirmationVisible = true;
     }
 
     private async Task DeactivateAsync()

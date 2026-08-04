@@ -1,5 +1,6 @@
 @page "/"
 @using Expense.Domain.Entities
+@using Expense.Domain.Services.Accounts
 @using Expense.Domain.Services.Dashboard
 @using Expense.Domain.Services.Forecast
 @using Expense.Domain.Services.SpendingTracker
@@ -7,6 +8,7 @@
 @inject IForecastResultProvider ForecastProvider
 @inject ISpendingTrackerPageProvider SpendingTrackerProvider
 @inject ISyncStatusProvider SyncStatusProvider
+@inject IAccountsPageProvider AccountsProvider
 
 <PageTitle>Dashboard - @DateTime.Today.ToString("MMMM d, yyyy")</PageTitle>
 
@@ -41,14 +43,41 @@ else
     <div style="display:flex; gap:3rem; align-items:flex-start; flex-wrap:wrap;">
         <div>
             <h2>Cash Flow</h2>
-            <p>Starting balance: @_forecast.StartingBalance.ToString("N2")</p>
-            <p>
-                Lowest projected balance: @_forecast.LowestProjectedBalance.ToString("N2")
-                @if (_forecast.LowestProjectedBalanceDate is { } lowestDate)
-                {
-                    <text> (Occurs on @lowestDate.ToString("MM/dd/yyyy"))</text>
-                }
-            </p>
+            <table style="margin-bottom: 1.5em;">
+                <thead>
+                    <tr>
+                        <th>Summary</th>
+                        <th class="text-right">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr id="starting-balance-row">
+                        <td>Starting balance</td>
+                        <td class="text-right">@_forecast.StartingBalance.ToString("N2")</td>
+                    </tr>
+                    <tr id="lowest-balance-row">
+                        <td>
+                            Lowest projected balance
+                            @if (_forecast.LowestProjectedBalanceDate is { } lowestDate)
+                            {
+                                <br /><span style="color:#666; font-size:0.9em;">Occurs on @lowestDate.ToString("MM/dd/yyyy")</span>
+                            }
+                        </td>
+                        <td class="text-right">@_forecast.LowestProjectedBalance.ToString("N2")</td>
+                    </tr>
+                    @if (_savingsBalance is { } savings)
+                    {
+                        <tr id="savings-row">
+                            <td>Savings</td>
+                            <td class="text-right">@savings.ToString("N2")</td>
+                        </tr>
+                        <tr id="lowest-balance-plus-savings-row" style="font-weight: 600;">
+                            <td>Lowest projected balance + savings</td>
+                            <td class="text-right">@((_forecast.LowestProjectedBalance + savings).ToString("N2"))</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
             <table>
                 <thead>
                     <tr>
@@ -86,8 +115,8 @@ else
         </div>
 
         <div>
-            @RenderSpendingTable("This Week's Spending", "spending-week", _spendingTracker.Week)
-            @RenderSpendingTable("This Month's Spending", "spending-month", _spendingTracker.Month)
+            @RenderSpendingTable("spending-week", _spendingTracker.Week, WeekTitle(_spendingTracker.Week), PreviousWeekAsync, NextWeekAsync, CurrentWeekAsync)
+            @RenderSpendingTable("spending-month", _spendingTracker.Month, MonthTitle(_spendingTracker.Month), PreviousMonthAsync, NextMonthAsync, CurrentMonthAsync)
             <p><a href="/spending-tracker">View spending tracker</a></p>
         </div>
     </div>
@@ -102,6 +131,9 @@ else
     private ForecastResult? _forecast;
     private ForecastLedgerRow? _lowestForecastRow;
     private SpendingTrackerPageData? _spendingTracker;
+    private decimal? _savingsBalance;
+    private DateOnly _weekReferenceDate;
+    private DateOnly _monthReferenceDate;
     private ImportRun? _lastSimpleFinRun;
     private ImportRun? _lastAmazonRun;
     private ImportRun? _lastPlaidRun;
@@ -119,9 +151,15 @@ else
         _forecast = await ForecastProvider.GetForecastAsync();
         _lowestForecastRow = _forecast.Rows.FirstOrDefault(r => !r.IsExcluded && r.RunningBalance == _forecast.LowestProjectedBalance);
         _spendingTracker = await SpendingTrackerProvider.GetSpendingTrackerAsync();
+        _weekReferenceDate = _spendingTracker.Week.PeriodStart;
+        _monthReferenceDate = _spendingTracker.Month.PeriodStart;
         _lastSimpleFinRun = await SyncStatusProvider.GetLastSimpleFinRunAsync();
         _lastAmazonRun = await SyncStatusProvider.GetLastAmazonGmailRunAsync();
         _lastPlaidRun = await SyncStatusProvider.GetLastPlaidRunAsync();
+
+        var accounts = await AccountsProvider.GetAccountsAsync();
+        var savingsAccounts = accounts.Accounts.Where(a => a.Type == AccountType.Savings && a.IsActive && a.LatestBalance.HasValue).ToList();
+        _savingsBalance = savingsAccounts.Count > 0 ? savingsAccounts.Sum(a => a.LatestBalance!.Value) : null;
     }
 
     // Mirrors Forecast.razor's own row styling, so a deferred/excluded payment looks the
@@ -132,11 +170,59 @@ else
         : row == _lowestForecastRow ? "background-color: yellow"
         : "";
 
+    private static string WeekTitle(SpendingTrackerResult result) => $"Spending for Week Ending {result.PeriodEnd:MM/dd/yyyy}";
+    private static string MonthTitle(SpendingTrackerResult result) => $"Spending for {result.PeriodStart:MMMM, yyyy}";
+
+    // Navigation always shifts relative to whatever period is currently displayed (its own
+    // PeriodStart), not an independently-tracked "today" - keeps repeated Previous/Next clicks
+    // consistent with what's actually on screen. Current jumps back to the real today instead.
+    private async Task PreviousWeekAsync()
+    {
+        _weekReferenceDate = _weekReferenceDate.AddDays(-7);
+        _spendingTracker!.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
+    }
+
+    private async Task NextWeekAsync()
+    {
+        _weekReferenceDate = _weekReferenceDate.AddDays(7);
+        _spendingTracker!.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
+    }
+
+    private async Task CurrentWeekAsync()
+    {
+        _weekReferenceDate = DateOnly.FromDateTime(DateTime.Today);
+        _spendingTracker!.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
+    }
+
+    private async Task PreviousMonthAsync()
+    {
+        _monthReferenceDate = _monthReferenceDate.AddMonths(-1);
+        _spendingTracker!.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
+    }
+
+    private async Task NextMonthAsync()
+    {
+        _monthReferenceDate = _monthReferenceDate.AddMonths(1);
+        _spendingTracker!.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
+    }
+
+    private async Task CurrentMonthAsync()
+    {
+        _monthReferenceDate = DateOnly.FromDateTime(DateTime.Today);
+        _spendingTracker!.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
+    }
+
     // Same table shape (category rows + Pending row + Totals row folding Pending into
     // Actual/Remaining) as the Spending Tracker page itself - kept in sync deliberately,
     // since this is meant to be a faithful at-a-glance copy, not a simplified one.
-    private static RenderFragment RenderSpendingTable(string title, string idPrefix, SpendingTrackerResult result) => @<div style="margin-bottom: 3.5em;">
-        <h2>@title</h2>
+    private RenderFragment RenderSpendingTable(
+        string idPrefix, SpendingTrackerResult result, string title, Func<Task> onPrevious, Func<Task> onNext, Func<Task> onCurrent) => @<div style="margin-bottom: 3.5em;">
+        <h2 id="@(idPrefix)-title" style="margin-bottom: 0.3em;">@title</h2>
+        <div style="margin-bottom: 0.5em;">
+            <button id="@(idPrefix)-previous" @onclick="onPrevious">&laquo; Previous</button>
+            <button id="@(idPrefix)-current" @onclick="onCurrent">Current</button>
+            <button id="@(idPrefix)-next" @onclick="onNext">Next &raquo;</button>
+        </div>
         <table>
             <thead>
                 <tr>

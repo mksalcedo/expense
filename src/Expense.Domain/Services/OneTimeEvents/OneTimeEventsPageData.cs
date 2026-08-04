@@ -6,4 +6,5 @@ public class OneTimeEventsPageData
 {
     public required List<OneTimeEventRow> Events { get; set; }
     public required List<AccountOption> Accounts { get; set; }
+    public required List<CategoryOption> Categories { get; set; }
 }
