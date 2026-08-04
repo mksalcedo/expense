@@ -353,7 +353,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     .ToList(),
                 IsDeferred = isDeferred,
                 DeferralId = isDeferred ? deferral!.Id : null,
-                SuggestedOverrideAmount = nearMissTransaction?.Amount
+                SuggestedOverrideAmount = nearMissTransaction?.Amount,
+                SuggestedOverrideDate = nearMissTransaction is null ? null : nearMissTransaction.PostedDate ?? nearMissTransaction.TransactionDate
             });
         }
 

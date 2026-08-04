@@ -52,13 +52,24 @@ else
                             <br />
                             <span style="color: #666">(@row.ExclusionReason)</span>
                         }
-                        else if (row.IsDeferred)
+                        else
                         {
-                            <br />
-                            <span style="color: red">
-                                &#9888; Originally estimated for @row.OriginalDate.ToString("MM/dd/yyyy") - remember to manually
-                                reschedule this payment for real.
-                            </span>
+                            @if (row.IsDeferred)
+                            {
+                                <br />
+                                <span style="color: red">
+                                    &#9888; Originally estimated for @row.OriginalDate.ToString("MM/dd/yyyy") - remember to manually
+                                    reschedule this payment for real.
+                                </span>
+                            }
+                            @if (row.SuggestedOverrideAmount is { } suggestedAmount)
+                            {
+                                <br />
+                                <span id="near-miss-note-@index" style="color: #0969da">
+                                    A @suggestedAmount.ToString("N2") transaction was found nearby (posted @row.SuggestedOverrideDate!.Value.ToString("MM/dd/yyyy")) -
+                                    review with Change Amount.
+                                </span>
+                            }
                         }
                         @foreach (var partialPayment in row.PartialPayments)
                         {
@@ -88,7 +99,7 @@ else
                                     <button id="defer-btn-@index" title="Defer..." @onclick="() => OpenDeferModal(row)">&#128337;</button>
                                 }
                                 <button id="confirm-btn-@index" title="Confirm paid" @onclick="() => OpenConfirmModal(row)">&#10003;</button>
-                                <button id="override-btn-@index" title="Override" @onclick="() => OpenOverrideModal(row)">&#8644;</button>
+                                <button id="override-btn-@index" title="Change amount" @onclick="() => OpenOverrideModal(row)">&#8644;</button>
                                 <button id="partial-pay-btn-@index" title="Pay partial amount" @onclick="() => OpenPayPartialModal(row)">&#128176;</button>
                             </div>
                         }
@@ -202,7 +213,7 @@ else
         _activeModal = ModalKind.Override;
         _modalRow = row;
         _modalAmount = row.SuggestedOverrideAmount ?? row.Amount;
-        _modalDate = row.Date;
+        _modalDate = row.SuggestedOverrideDate ?? row.Date;
     }
 
     private void OpenPayPartialModal(ForecastLedgerRow row)
@@ -284,7 +295,7 @@ else
     {
         ModalKind.Defer => "Defer this payment?",
         ModalKind.ConfirmPaid => "Confirm this was paid as scheduled?",
-        ModalKind.Override => "Override this payment?",
+        ModalKind.Override => "Change this amount?",
         ModalKind.PayPartial => "Record a partial payment?",
         ModalKind.RemoveDeferral => "Remove this deferral?",
         ModalKind.UndoConfirmation => "Undo this confirmation?",
@@ -299,8 +310,8 @@ else
         ModalKind.ConfirmPaid =>
             $"Marks \"{_modalRow?.Description}\" as paid on {_modalRow?.Date.ToString("MM/dd/yyyy")} for {_modalRow?.Amount.ToString("N2")}, exactly as scheduled. It'll be removed from your still-owed list since it's already happened.",
         ModalKind.Override => _modalRow?.SuggestedOverrideAmount is { } suggested
-            ? $"A real transaction for {suggested.ToString("N2")} was found close to this line but didn't auto-match - edit the amount/date below if this isn't it, then apply to mark \"{_modalRow?.Description}\" resolved. It'll be removed from your still-owed list."
-            : $"Marks \"{_modalRow?.Description}\" as resolved with the amount/date below, replacing what was scheduled. It'll be removed from your still-owed list.",
+            ? $"A transaction for {suggested.ToString("N2")} posted {_modalRow?.SuggestedOverrideDate?.ToString("MM/dd/yyyy")} was found close to this line but didn't auto-match - edit the amount/date below if this isn't it, then apply to mark \"{_modalRow?.Description}\" resolved. It'll be removed from your still-owed list."
+            : $"No matching transaction was found - enter what actually happened below to mark \"{_modalRow?.Description}\" resolved, replacing what was scheduled. It'll be removed from your still-owed list.",
         ModalKind.PayPartial =>
             $"Records a partial payment against \"{_modalRow?.Description}\". The remaining balance stays on the forecast for the rest.",
         ModalKind.RemoveDeferral =>

@@ -41,6 +41,12 @@ public class ForecastLedgerRow
     /// line never got flagged anywhere on its own).
     /// </summary>
     public decimal? SuggestedOverrideAmount { get; set; }
+
+    /// <summary>The near-miss transaction's own real posted date (PostedDate ?? TransactionDate)
+    /// - not necessarily this line's own date, since the transaction's ReconciledOccurrenceDate
+    /// (which category+date matching uses) records which bill it was assigned to, not when it
+    /// actually happened.</summary>
+    public DateOnly? SuggestedOverrideDate { get; set; }
 }
 
 public class PartialPaymentSummary

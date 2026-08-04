@@ -519,7 +519,7 @@ public class ForecastTests : BunitContext
         var cut = Render<Forecast>();
         cut.Find("#override-btn-0").Click();
 
-        Assert.Equal("Override this payment?", cut.Find("#action-modal-title").TextContent);
+        Assert.Equal("Change this amount?", cut.Find("#action-modal-title").TextContent);
         Assert.Equal("-2000", cut.Find("#modal-amount-input").GetAttribute("value"));
         Assert.Equal("2026-08-20", cut.Find("#modal-date-input").GetAttribute("value"));
     }
@@ -532,6 +532,7 @@ public class ForecastTests : BunitContext
         // it up themselves.
         var row = AmexRow(amount: -76.68m);
         row.SuggestedOverrideAmount = -70.97m;
+        row.SuggestedOverrideDate = new DateOnly(2026, 7, 31);
         var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
@@ -539,7 +540,37 @@ public class ForecastTests : BunitContext
         cut.Find("#override-btn-0").Click();
 
         Assert.Equal("-70.97", cut.Find("#modal-amount-input").GetAttribute("value"));
-        Assert.Contains("-70.97", cut.Find("#action-modal-explanation").TextContent);
+        Assert.Equal("2026-07-31", cut.Find("#modal-date-input").GetAttribute("value"));
+        var explanation = cut.Find("#action-modal-explanation").TextContent;
+        Assert.Contains("-70.97", explanation);
+        Assert.Contains("07/31/2026", explanation);
+    }
+
+    [Fact]
+    public void RowWithASuggestedOverrideAmount_ShowsAnInlineNote_WithoutOpeningTheModal()
+    {
+        var row = AmexRow(amount: -76.68m);
+        row.SuggestedOverrideAmount = -70.97m;
+        row.SuggestedOverrideDate = new DateOnly(2026, 7, 31);
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var note = cut.Find("#near-miss-note-0").TextContent;
+        Assert.Contains("70.97", note);
+        Assert.Contains("07/31/2026", note);
+    }
+
+    [Fact]
+    public void RowWithNoSuggestedOverrideAmount_ShowsNoInlineNote()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Empty(cut.FindAll("#near-miss-note-0"));
     }
 
     [Fact]
@@ -580,6 +611,7 @@ public class ForecastTests : BunitContext
     {
         var row = AmexRow(amount: -76.68m);
         row.SuggestedOverrideAmount = -70.97m;
+        row.SuggestedOverrideDate = new DateOnly(2026, 7, 31);
         var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
         Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
 
@@ -796,8 +828,8 @@ public class ForecastTests : BunitContext
         Assert.NotEqual("Confirm paid", confirmBtn.TextContent.Trim());
 
         var overrideBtn = cut.Find("#override-btn-0");
-        Assert.Equal("Override", overrideBtn.GetAttribute("title"));
-        Assert.NotEqual("Override", overrideBtn.TextContent.Trim());
+        Assert.Equal("Change amount", overrideBtn.GetAttribute("title"));
+        Assert.NotEqual("Change amount", overrideBtn.TextContent.Trim());
     }
 
     [Fact]

@@ -1140,6 +1140,9 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.False(row.IsExcluded); // still not auto-reconciled - the tolerance floor is unchanged
         Assert.Equal(-76.68m, row.Amount); // still the budgeted amount, not silently swapped
         Assert.Equal(-70.97m, row.SuggestedOverrideAmount);
+        // The real transaction's own posted date, not the (possibly different) occurrence
+        // date it reconciled against - here they happen to differ (occurrence 7/25, posted 7/31).
+        Assert.Equal(new DateOnly(2026, 7, 31), row.SuggestedOverrideDate);
     }
 
     [Fact]
@@ -1166,6 +1169,7 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var row = Assert.Single(result.Rows, r => r.Description == "Gas (utility)");
         Assert.Null(row.SuggestedOverrideAmount);
+        Assert.Null(row.SuggestedOverrideDate);
     }
 
     [Fact]
