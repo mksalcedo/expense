@@ -2,12 +2,21 @@ using Bunit;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Categorization;
 using Expense.Web.Components.Pages;
+using Expense.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Expense.Web.Tests.Pages;
 
 public class ReviewQueueTests : BunitContext
 {
+    public ReviewQueueTests()
+    {
+        // The real (dependency-free) implementation is fine here - tests that care about
+        // NavMenu's badge updating live register their own shared instance instead (see
+        // NavMenuTests.cs), which overrides this one (last registration wins).
+        Services.AddSingleton<IReviewQueueChangeNotifier>(new ReviewQueueChangeNotifier());
+    }
+
     // Stateful fake: CategorizeTransactionAsync/CategorizeAmazonItemAsync actually
     // remove the resolved group from the data, mirroring what the real backend does -
     // needed to reproduce the "stale dropdown state leaks onto a different remaining

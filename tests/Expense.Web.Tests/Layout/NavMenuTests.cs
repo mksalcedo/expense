@@ -4,17 +4,35 @@ using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Dashboard;
 using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Web.Components.Layout;
+using Expense.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Expense.Web.Tests.Layout;
 
 public class NavMenuTests : BunitContext
 {
+    public NavMenuTests()
+    {
+        Services.AddSingleton<IReviewQueueChangeNotifier>(new ReviewQueueChangeNotifier());
+    }
+
     private class FakeReviewQueueProvider(ReviewQueueData data) : IReviewQueueProvider
     {
         public ReviewQueueData Data { get; set; } = data;
         public Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default) => Task.FromResult(Data);
-        public Task<int> CategorizeTransactionAsync(int transactionId, int categoryId, string? merchantPatternToCreate, CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+        // Mutates Data (mirroring what the real backend does) so a test can drive
+        // ReviewQueue.razor's categorize action and observe NavMenu's badge react live.
+        public Task<int> CategorizeTransactionAsync(int transactionId, int categoryId, string? merchantPatternToCreate, CancellationToken cancellationToken = default)
+        {
+            Data = new ReviewQueueData
+            {
+                TransactionGroups = Data.TransactionGroups.Where(g => !g.TransactionIds.Contains(transactionId)).ToList(),
+                AmazonItemGroups = Data.AmazonItemGroups,
+                Categories = Data.Categories
+            };
+            return Task.FromResult(0);
+        }
         public Task<int> CategorizeAmazonItemAsync(int itemId, int categoryId, string? productPatternToCreate, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<ReapplyRulesResult> ReapplyRulesAsync(CancellationToken cancellationToken = default) => Task.FromResult(new ReapplyRulesResult());
         public Task<int> BulkCategorizeTransactionsAsync(IReadOnlyList<int> transactionIds, int categoryId, CancellationToken cancellationToken = default) => Task.FromResult(0);
@@ -205,5 +223,43 @@ public class NavMenuTests : BunitContext
         var link = cut.Find("#nav-backup-data-link");
         Assert.Equal("backup-data", link.GetAttribute("href"));
         Assert.Equal("Backup Data", link.TextContent.Trim());
+    }
+
+    [Fact]
+    public void NavMenu_ShowsForecastThenTransactionsThenReviewQueue_FollowedByADivider()
+    {
+        RegisterFakes();
+
+        var cut = Render<NavMenu>();
+
+        var children = cut.Find("nav").Children;
+        var markers = children.Select(e => e.ClassList.Contains("nav-divider") ? "DIVIDER" : e.GetAttribute("href")).ToList();
+
+        var forecastIndex = markers.IndexOf("forecast");
+        var transactionsIndex = markers.IndexOf("transactions");
+        var reviewQueueIndex = markers.IndexOf("review-queue");
+
+        Assert.True(forecastIndex < transactionsIndex, "Forecast should come before Transactions");
+        Assert.True(transactionsIndex < reviewQueueIndex, "Transactions should come before Review Queue");
+        Assert.Equal("DIVIDER", markers[reviewQueueIndex + 1]);
+    }
+
+    [Fact]
+    public void ResolvingAnItemOnTheReviewQueuePage_UpdatesTheNavMenuBadge_WithoutNavigating()
+    {
+        RegisterFakes(new ReviewQueueData
+        {
+            TransactionGroups = [new PendingTransactionGroup { SuggestedPattern = "ACME STORE", SampleDescription = "ACME STORE #1", SampleDate = new DateOnly(2026, 7, 1), TransactionIds = [1], TotalAmount = -10m, AccountName = "Amex" }],
+            AmazonItemGroups = [],
+            Categories = [new Category { Id = 1, Name = "Groceries" }]
+        });
+
+        var navCut = Render<NavMenu>();
+        Assert.Equal("Review Queue (1 item needs review)", navCut.Find("#nav-review-queue-link").TextContent.Trim());
+
+        var reviewQueueCut = Render<Expense.Web.Components.Pages.ReviewQueue>();
+        reviewQueueCut.Find("#txn-category-1").Change("1");
+
+        navCut.WaitForAssertion(() => Assert.Equal("Review Queue", navCut.Find("#nav-review-queue-link").TextContent.Trim()));
     }
 }

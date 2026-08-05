@@ -18,6 +18,7 @@ using Expense.Domain.Services.SpendingTracker;
 using Expense.Domain.Services.Transactions;
 using Expense.Domain.Settings;
 using Expense.Web.Components;
+using Expense.Web.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -53,6 +54,7 @@ builder.Services.AddScoped<IConfirmedPaymentsPageProvider, ConfirmedPaymentsPage
 
 builder.Services.AddScoped<CategorizationService>();
 builder.Services.AddScoped<IReviewQueueProvider, ReviewQueueProvider>();
+builder.Services.AddScoped<IReviewQueueChangeNotifier, ReviewQueueChangeNotifier>();
 
 builder.Services.AddScoped<CategoryManagementService>();
 builder.Services.AddScoped<ICategoriesPageProvider, CategoriesPageProvider>();

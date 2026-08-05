@@ -1,9 +1,11 @@
 @using Microsoft.AspNetCore.Components.Routing
 @using Expense.Domain.Services.Categorization
 @using Expense.Domain.Services.Dashboard
+@using Expense.Web.Services
 @inject IJSRuntime JS
 @inject IReviewQueueProvider ReviewQueueProvider
 @inject ISyncStatusProvider SyncStatusProvider
+@inject IReviewQueueChangeNotifier ReviewQueueChangeNotifier
 @inject NavigationManager Navigation
 @implements IDisposable
 
@@ -11,14 +13,15 @@
     <div class="nav-brand">Expense</div>
     <NavLink href="" Match="NavLinkMatch.All" class="nav-link">Dashboard</NavLink>
     <NavLink href="forecast" class="nav-link">Forecast</NavLink>
+    <NavLink href="transactions" class="nav-link">Transactions</NavLink>
+    <NavLink href="review-queue" id="nav-review-queue-link" class="nav-link">Review Queue@_reviewQueueCountFragment</NavLink>
+    <div class="nav-divider"></div>
     <NavLink href="forecast-accuracy" class="nav-link">Forecast Accuracy</NavLink>
     <NavLink href="forecast-history" class="nav-link">Forecast History</NavLink>
     <NavLink href="confirmed-payments" class="nav-link">Confirmed Payments</NavLink>
     <NavLink href="add-pending-charges" class="nav-link">Add Pending Charges</NavLink>
     <NavLink href="pending-charges" class="nav-link">Manually Entered Pending Charges</NavLink>
     <NavLink href="spending-tracker" class="nav-link">Spending Tracker</NavLink>
-    <NavLink href="review-queue" id="nav-review-queue-link" class="nav-link">Review Queue@_reviewQueueCountFragment</NavLink>
-    <NavLink href="transactions" class="nav-link">Transactions</NavLink>
     <NavLink href="historical-analysis" class="nav-link">Historical Analysis</NavLink>
     <NavLink href="import-data" id="nav-import-data-link" class="nav-link">Import Data@_syncFailureSuffix</NavLink>
     <NavLink href="backup-data" id="nav-backup-data-link" class="nav-link">Backup Data</NavLink>
@@ -71,6 +74,7 @@
         await RefreshPendingReviewCountAsync();
         await RefreshSyncFailureCountAsync();
         Navigation.LocationChanged += OnLocationChanged;
+        ReviewQueueChangeNotifier.Changed += OnReviewQueueChanged;
     }
 
     // The nav bar is part of the persistent layout, not a routable page, so it's only ever
@@ -83,6 +87,15 @@
     {
         await RefreshPendingReviewCountAsync();
         await RefreshSyncFailureCountAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // Lets the count update the instant an item is resolved on the Review Queue page
+    // itself, without waiting for a navigation away from it (see OnLocationChanged above,
+    // which only covers that case).
+    private async void OnReviewQueueChanged()
+    {
+        await RefreshPendingReviewCountAsync();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -116,5 +129,6 @@
     public void Dispose()
     {
         Navigation.LocationChanged -= OnLocationChanged;
+        ReviewQueueChangeNotifier.Changed -= OnReviewQueueChanged;
     }
 }

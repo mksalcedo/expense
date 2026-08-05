@@ -1,6 +1,8 @@
 @page "/review-queue"
 @using Expense.Domain.Services.Categorization
+@using Expense.Web.Services
 @inject IReviewQueueProvider ReviewQueueProvider
+@inject IReviewQueueChangeNotifier ReviewQueueChangeNotifier
 
 <PageTitle>Review Queue</PageTitle>
 
@@ -289,6 +291,14 @@ else
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
     }
 
+    // Every action that can change which items are pending reloads through here, which also
+    // tells NavMenu's badge to recount - keeps the two in sync without a page navigation.
+    private async Task ReloadDataAsync()
+    {
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        ReviewQueueChangeNotifier.NotifyChanged();
+    }
+
     private async Task ReapplyRulesAsync()
     {
         _reapplyingRules = true;
@@ -300,7 +310,7 @@ else
             _reapplyMessage = total > 0
                 ? $"Re-categorized {total} previously pending row(s)."
                 : "Nothing else matched the current rules.";
-            _data = await ReviewQueueProvider.GetReviewQueueAsync();
+            await ReloadDataAsync();
         }
         finally
         {
@@ -330,7 +340,7 @@ else
     private async Task CommitTransactionCategorizationAsync(int representativeId, int categoryId, string? pattern)
     {
         await ReviewQueueProvider.CategorizeTransactionAsync(representativeId, categoryId, pattern);
-        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        await ReloadDataAsync();
     }
 
     private async Task CategorizeAmazonItemGroupAsync(PendingAmazonItemGroup group, int categoryId)
@@ -355,7 +365,7 @@ else
     private async Task CommitAmazonItemCategorizationAsync(int representativeId, int categoryId, string? pattern)
     {
         await ReviewQueueProvider.CategorizeAmazonItemAsync(representativeId, categoryId, pattern);
-        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        await ReloadDataAsync();
     }
 
     private async Task ConfirmSingleWordPatternAsync()
@@ -419,7 +429,7 @@ else
         // actually changes - keeping the value lets the Apply button alone drive repeats.
         _selectedTransactionIndexes.Clear();
         _lastClickedTransactionIndex = null;
-        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        await ReloadDataAsync();
     }
 
     private async Task DismissTransactionsAsync()
@@ -431,7 +441,7 @@ else
 
         _selectedTransactionIndexes.Clear();
         _lastClickedTransactionIndex = null;
-        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        await ReloadDataAsync();
     }
 
     private void ToggleItemSelection(int index, bool shiftKey)
@@ -471,7 +481,7 @@ else
 
         _selectedItemIndexes.Clear();
         _lastClickedItemIndex = null;
-        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        await ReloadDataAsync();
     }
 
     private async Task DismissAmazonItemsAsync()
@@ -483,7 +493,7 @@ else
 
         _selectedItemIndexes.Clear();
         _lastClickedItemIndex = null;
-        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        await ReloadDataAsync();
     }
 
     // A NeedsReview placeholder is always a singleton row with Quantity=1 (see
@@ -549,6 +559,6 @@ else
 
         _newItemForms.Remove(representativeId);
         _addingAnotherItemFor.Remove(representativeId);
-        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        await ReloadDataAsync();
     }
 }
