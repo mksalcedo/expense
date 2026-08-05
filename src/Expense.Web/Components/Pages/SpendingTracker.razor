@@ -34,16 +34,17 @@ else
         _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
     }
 
-    private RenderFragment RenderPeriod(string title, string idPrefix, SpendingTrackerResult result) => @<div>
+    private RenderFragment RenderPeriod(string title, string idPrefix, SpendingTrackerResult result) => @<div style="min-width: 520px;">
         <h2>@title</h2>
         <p>@result.PeriodStart.ToString("yyyy-MM-dd") to @result.PeriodEnd.ToString("yyyy-MM-dd")</p>
-        <table>
+        <table style="width: 100%;">
             <thead>
                 <tr>
                     <th>Category</th>
                     <th class="text-right">Budget</th>
                     <th class="text-right">Actual</th>
                     <th class="text-right">Remaining</th>
+                    <th>Carryover</th>
                 </tr>
             </thead>
             <tbody>
@@ -55,24 +56,24 @@ else
                         <td class="text-right">@category.Actual.ToString("N2")</td>
                         <td class="text-right">
                             @((category.RollingBalance ?? category.Remaining).ToString("N2"))
+                            @if (category.IsCarryoverTracked && category.CarriedIn != 0)
+                            {
+                                <br />
+                                <span id="carried-in-note-@category.CategoryId" style="color:#666; font-size:0.85em;">
+                                    @(category.CarriedIn > 0 ? "+" : "")@category.CarriedIn.ToString("N2") carried in
+                                    @if (category.CarryoverCap is { } cap)
+                                    {
+                                        <text> (capped at &plusmn;@cap.ToString("N2"))</text>
+                                    }
+                                </span>
+                            }
+                        </td>
+                        <td style="white-space: nowrap;">
                             @if (category.IsCarryoverTracked)
                             {
-                                @if (category.CarriedIn != 0)
-                                {
-                                    <br />
-                                    <span id="carried-in-note-@category.CategoryId" style="color:#666; font-size:0.85em;">
-                                        @(category.CarriedIn > 0 ? "+" : "")@category.CarriedIn.ToString("N2") carried in
-                                        @if (category.CarryoverCap is { } cap)
-                                        {
-                                            <text> (capped at &plusmn;@cap.ToString("N2"))</text>
-                                        }
-                                    </span>
-                                }
-                                <br />
                                 @if (_resettingCategoryId == category.CategoryId)
                                 {
                                     <span id="reset-options-@category.CategoryId" style="font-size:0.85em;">
-                                        Reset carryover:
                                         <button id="reset-this-period-btn-@category.CategoryId" @onclick="() => ResetCarryoverAsync(category.CategoryId, startingNextPeriod: false)">This period</button>
                                         <button id="reset-next-period-btn-@category.CategoryId" @onclick="() => ResetCarryoverAsync(category.CategoryId, startingNextPeriod: true)">Next period</button>
                                         <button id="cancel-reset-btn-@category.CategoryId" @onclick="() => _resettingCategoryId = null">Cancel</button>
@@ -90,6 +91,7 @@ else
                     <td>Pending / Uncategorized</td>
                     <td></td>
                     <td class="text-right">@result.PendingAmount.ToString("N2")</td>
+                    <td></td>
                     <td></td>
                 </tr>
             </tbody>
@@ -112,6 +114,7 @@ else
                     <td class="text-right">@budgetTotal.ToString("N2")</td>
                     <td class="text-right">@actualTotal.ToString("N2")</td>
                     <td class="text-right">@remainingTotal.ToString("N2")</td>
+                    <td></td>
                 </tr>
             </tfoot>
         </table>
