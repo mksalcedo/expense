@@ -1,7 +1,9 @@
 @page "/forecast"
 @using Expense.Domain.Entities
+@using Expense.Domain.Services.Accounts
 @using Expense.Domain.Services.Forecast
 @inject IForecastResultProvider ForecastResultProvider
+@inject IAccountsPageProvider AccountsProvider
 @inject IJSRuntime JS
 
 <PageTitle>Forecast</PageTitle>
@@ -14,14 +16,41 @@
 }
 else
 {
-    <p>Starting balance: @_result.StartingBalance.ToString("N2")</p>
-    <p>
-        Lowest projected balance: @_result.LowestProjectedBalance.ToString("N2")
-        @if (_result.LowestProjectedBalanceDate is { } lowestDate)
-        {
-            <text> (Occurs on @lowestDate.ToString("MM/dd/yyyy"))</text>
-        }
-    </p>
+    <table style="margin-bottom: 1.5em;">
+        <thead>
+            <tr>
+                <th>Summary</th>
+                <th class="text-right">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr id="starting-balance-row">
+                <td>Starting balance</td>
+                <td class="text-right">@_result.StartingBalance.ToString("N2")</td>
+            </tr>
+            <tr id="lowest-balance-row">
+                <td>
+                    Lowest projected balance
+                    @if (_result.LowestProjectedBalanceDate is { } lowestDate)
+                    {
+                        <br /><span style="color:#666; font-size:0.9em;">Occurs on @lowestDate.ToString("MM/dd/yyyy")</span>
+                    }
+                </td>
+                <td class="text-right">@_result.LowestProjectedBalance.ToString("N2")</td>
+            </tr>
+            @if (_savingsBalance is { } savings)
+            {
+                <tr id="savings-row">
+                    <td>Savings</td>
+                    <td class="text-right">@savings.ToString("N2")</td>
+                </tr>
+                <tr id="lowest-balance-plus-savings-row" style="font-weight: 600;">
+                    <td>Lowest projected balance + savings</td>
+                    <td class="text-right">@((_result.LowestProjectedBalance + savings).ToString("N2"))</td>
+                </tr>
+            }
+        </tbody>
+    </table>
     <p><a id="export-excel-link" href="/export/forecast.xlsx" target="_blank">Export to Excel</a></p>
 
     <p>
@@ -189,6 +218,7 @@ else
     private ForecastResult? _result;
     private ForecastLedgerRow? _lowestRow;
     private bool _showResolved = true;
+    private decimal? _savingsBalance;
 
     private ModalKind _activeModal = ModalKind.None;
     private ForecastLedgerRow? _modalRow;
@@ -363,6 +393,10 @@ else
     {
         _result = await ForecastResultProvider.GetForecastAsync();
         _lowestRow = _result.Rows.FirstOrDefault(r => !r.IsExcluded && r.RunningBalance == _result.LowestProjectedBalance);
+
+        var accounts = await AccountsProvider.GetAccountsAsync();
+        var savingsAccounts = accounts.Accounts.Where(a => a.Type == AccountType.Savings && a.IsActive && a.LatestBalance.HasValue).ToList();
+        _savingsBalance = savingsAccounts.Count > 0 ? savingsAccounts.Sum(a => a.LatestBalance!.Value) : null;
     }
 
     private string RowStyle(ForecastLedgerRow row) =>

@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services.Accounts;
 using Expense.Domain.Services.Forecast;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,21 @@ public class ForecastTests : BunitContext
         // auto-returns default values for any JS call not explicitly configured, so existing
         // tests that don't care about persistence don't all need their own JSInterop setup.
         JSInterop.Mode = JSRuntimeMode.Loose;
+
+        // Default: no savings accounts - matches every existing test's expectations (no
+        // savings row). A test that cares about the savings row registers its own instance,
+        // which overrides this one (last registration wins when resolving a single service).
+        Services.AddSingleton<IAccountsPageProvider>(new FakeAccountsPageProvider([]));
+    }
+
+    private class FakeAccountsPageProvider(List<AccountRow> rows) : IAccountsPageProvider
+    {
+        public Task<AccountsPageData> GetAccountsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new AccountsPageData { Accounts = rows });
+        public Task<int> CreateAccountAsync(string name, AccountType type, decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task UpdateAccountAsync(int accountId, string name, decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task DeactivateAccountAsync(int accountId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task ReactivateAccountAsync(int accountId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task UpdateBalanceAsync(int accountId, DateOnly asOfDate, decimal balance, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
 
@@ -168,6 +184,41 @@ public class ForecastTests : BunitContext
         Assert.Contains("100.00", cut.Markup);
     }
 
+    // Same spreadsheet-style summary table as the Dashboard's Cash Flow section, for
+    // consistency wherever the lowest projected balance is reviewed - including the savings
+    // buffer and the computed "lowest + savings" row.
+    [Fact]
+    public void Forecast_ShowsTheSavingsBalance_AndTheComputedLowestPlusSavingsRow()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 4209.21m,
+            Rows = [new ForecastLedgerRow { Date = new DateOnly(2027, 7, 7), Description = "Water", Amount = -193m, RunningBalance = -109.58m }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+        Services.AddSingleton<IAccountsPageProvider>(new FakeAccountsPageProvider(
+            [new AccountRow { Id = 6, Name = "Emergency Fund", Type = AccountType.Savings, IsActive = true, LatestBalance = 1545.56m }]));
+
+        var cut = Render<Forecast>();
+
+        Assert.Equal("4,209.21", cut.Find("#starting-balance-row td:last-child").TextContent.Trim());
+        Assert.Equal("-109.58", cut.Find("#lowest-balance-row td:last-child").TextContent.Trim());
+        Assert.Equal("1,545.56", cut.Find("#savings-row td:last-child").TextContent.Trim());
+        Assert.Equal("1,435.98", cut.Find("#lowest-balance-plus-savings-row td:last-child").TextContent.Trim());
+    }
+
+    [Fact]
+    public void Forecast_WithNoSavingsAccounts_ShowsNoSavingsRow()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Empty(cut.FindAll("#savings-row"));
+        Assert.Empty(cut.FindAll("#lowest-balance-plus-savings-row"));
+    }
+
     [Fact]
     public void Forecast_ShowsWhenTheLowestProjectedBalanceOccurs()
     {
@@ -204,7 +255,7 @@ public class ForecastTests : BunitContext
 
         var cut = Render<Forecast>();
 
-        var rows = cut.FindAll("tbody tr");
+        var rows = cut.Find("#ledger-table").QuerySelectorAll("tbody tr");
         Assert.Contains("background-color: yellow", rows[1].GetAttribute("style"));
         Assert.DoesNotContain("background-color: yellow", rows[0].GetAttribute("style") ?? "");
         Assert.DoesNotContain("background-color: yellow", rows[2].GetAttribute("style") ?? "");
@@ -234,7 +285,7 @@ public class ForecastTests : BunitContext
 
         var cut = Render<Forecast>();
 
-        var headers = cut.FindAll("th");
+        var headers = cut.Find("#ledger-table").QuerySelectorAll("th");
         Assert.Equal("Amount", headers[2].TextContent);
         Assert.Equal("Running balance", headers[3].TextContent);
         Assert.Contains("text-align: right", headers[2].GetAttribute("style"));
@@ -253,7 +304,7 @@ public class ForecastTests : BunitContext
 
         var cut = Render<Forecast>();
 
-        var cells = cut.FindAll("tbody td");
+        var cells = cut.Find("#ledger-table").QuerySelectorAll("tbody td");
         Assert.Contains("text-align: right", cells[2].GetAttribute("style")); // Amount
         Assert.Contains("text-align: right", cells[3].GetAttribute("style")); // Running balance
     }
@@ -270,8 +321,9 @@ public class ForecastTests : BunitContext
 
         var cut = Render<Forecast>();
 
-        Assert.Contains("border-collapse: collapse", cut.Find("table").GetAttribute("style"));
-        foreach (var cell in cut.FindAll("th").Concat(cut.FindAll("td")))
+        var ledgerTable = cut.Find("#ledger-table");
+        Assert.Contains("border-collapse: collapse", ledgerTable.GetAttribute("style"));
+        foreach (var cell in ledgerTable.QuerySelectorAll("th").Concat(ledgerTable.QuerySelectorAll("td")))
         {
             var style = cell.GetAttribute("style") ?? "";
             Assert.Contains("border:", style);
@@ -326,8 +378,8 @@ public class ForecastTests : BunitContext
         Assert.Contains("08/22/2026", cut.Markup);
         Assert.Contains("Originally estimated for 08/20/2026", cut.Markup);
         Assert.Contains("reschedule", cut.Markup);
-        var row = cut.Find("tbody tr");
-        Assert.Contains("background-color: orange", row.GetAttribute("style"));
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("background-color: orange", row!.GetAttribute("style"));
         Assert.NotNull(cut.Find("#remove-deferral-btn-0"));
         Assert.Empty(cut.FindAll("#defer-btn-0"));
     }
@@ -506,7 +558,7 @@ public class ForecastTests : BunitContext
         cut.Find("#undo-confirmation-btn-1").Click();
         cut.Find("#action-modal-apply").Click();
 
-        Assert.Single(cut.FindAll("tbody tr"));
+        Assert.Single(cut.Find("#ledger-table").QuerySelectorAll("tbody tr"));
         Assert.NotNull(cut.Find("#confirm-btn-0"));
         Assert.Empty(cut.FindAll("#undo-confirmation-btn-1"));
     }
