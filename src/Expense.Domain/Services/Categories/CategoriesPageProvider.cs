@@ -29,6 +29,7 @@ public class CategoriesPageProvider(
                 c.Name,
                 c.IsActive,
                 c.ReconcileByCalendarMonth,
+                c.CarryoverCapMultiplier,
                 FundingStrategy = context.FundingRules.Where(r => r.CategoryId == c.Id).Select(r => r.Strategy).FirstOrDefault(),
                 LinkedAccountId = context.FundingRules.Where(r => r.CategoryId == c.Id).Select(r => r.AccountId).FirstOrDefault()
             })
@@ -44,6 +45,7 @@ public class CategoriesPageProvider(
                 Name = c.Name,
                 IsActive = c.IsActive,
                 ReconcileByCalendarMonth = c.ReconcileByCalendarMonth,
+                CarryoverCapMultiplier = c.CarryoverCapMultiplier,
                 FundingStrategy = c.FundingStrategy ?? FundingStrategies.None,
                 BudgetAmount = period?.Amount,
                 BudgetFrequency = period?.Frequency,
@@ -76,10 +78,10 @@ public class CategoriesPageProvider(
         await ApplyAccountPaymentAsync(context, category.Id, accountPayment);
     }
 
-    public async Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, bool reconcileByCalendarMonth = false, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default)
+    public async Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, bool reconcileByCalendarMonth = false, decimal? carryoverCapMultiplier = 1.0m, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await categories.UpdateCategoryAsync(context, categoryId, name, fundingStrategy, reconcileByCalendarMonth);
+        await categories.UpdateCategoryAsync(context, categoryId, name, fundingStrategy, reconcileByCalendarMonth, carryoverCapMultiplier);
         await ApplyBudgetAsync(context, categoryId, budget);
         await ApplyAccountPaymentAsync(context, categoryId, accountPayment);
     }

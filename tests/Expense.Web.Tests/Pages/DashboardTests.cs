@@ -54,6 +54,8 @@ public class DashboardTests : BunitContext
             var start = new DateOnly(referenceDate.Year, referenceDate.Month, 1);
             return Task.FromResult(new SpendingTrackerResult { PeriodStart = start, PeriodEnd = start.AddMonths(1).AddDays(-1), Categories = [], PendingAmount = 0m });
         }
+
+        public Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     // Only Dashboard.razor's narrow "sum the active Savings accounts' latest balance" read is

@@ -9,9 +9,17 @@ public class SpendingTrackerTests : BunitContext
 {
     private class FakeSpendingTrackerPageProvider(SpendingTrackerPageData data) : ISpendingTrackerPageProvider
     {
+        public List<(int CategoryId, bool StartingNextPeriod)> ResetCalls { get; } = [];
+
         public Task<SpendingTrackerPageData> GetSpendingTrackerAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
         public Task<SpendingTrackerResult> GetWeekAsync(DateOnly referenceDate, CancellationToken cancellationToken = default) => Task.FromResult(data.Week);
         public Task<SpendingTrackerResult> GetMonthAsync(DateOnly referenceDate, CancellationToken cancellationToken = default) => Task.FromResult(data.Month);
+
+        public Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod, CancellationToken cancellationToken = default)
+        {
+            ResetCalls.Add((categoryId, startingNextPeriod));
+            return Task.CompletedTask;
+        }
     }
 
     private static SpendingTrackerPageData MakeData() => new()
@@ -122,5 +130,134 @@ public class SpendingTrackerTests : BunitContext
         Assert.Contains("2026-07-18", cut.Markup);
         Assert.Contains("2026-07-01", cut.Markup);
         Assert.Contains("2026-07-31", cut.Markup);
+    }
+
+    private static SpendingTrackerPageData MakeCarryoverData() => new()
+    {
+        Week = new SpendingTrackerResult
+        {
+            PeriodStart = new DateOnly(2026, 7, 12),
+            PeriodEnd = new DateOnly(2026, 7, 18),
+            Categories =
+            [
+                new CategorySpendingSummary
+                {
+                    CategoryId = 1, CategoryName = "Groceries", Budget = 450m, Actual = 470m,
+                    IsCarryoverTracked = true, CarriedIn = 50m, RollingBalance = 30m, CarryoverCap = 450m
+                }
+            ],
+            PendingAmount = 0m
+        },
+        Month = new SpendingTrackerResult
+        {
+            PeriodStart = new DateOnly(2026, 7, 1),
+            PeriodEnd = new DateOnly(2026, 7, 31),
+            Categories = [new CategorySpendingSummary { CategoryId = 1, CategoryName = "Groceries", Budget = 1956.70m, Actual = 800m }],
+            PendingAmount = 0m
+        }
+    };
+
+    [Fact]
+    public void CarryoverTrackedCategory_ShowsTheRollingBalance_NotPlainRemaining()
+    {
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeCarryoverData()));
+
+        var cut = Render<SpendingTracker>();
+
+        // Plain Remaining would be 450 - 470 = -20; the rolling balance (30, including the
+        // +50 carried in from a prior surplus week) is what should actually be shown.
+        Assert.Contains("30.00", cut.Markup);
+    }
+
+    [Fact]
+    public void CarryoverTrackedCategory_ShowsTheCarriedInNote_WithTheCap()
+    {
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeCarryoverData()));
+
+        var cut = Render<SpendingTracker>();
+
+        var note = cut.Find("#carried-in-note-1");
+        Assert.Contains("+50.00 carried in", note.TextContent);
+        Assert.Contains("450.00", note.TextContent);
+    }
+
+    [Fact]
+    public void NonCarryoverCategory_ShowsNoCarriedInNote_AndNoResetButton()
+    {
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeData()));
+
+        var cut = Render<SpendingTracker>();
+
+        Assert.Empty(cut.FindAll("[id^='carried-in-note-']"));
+        Assert.Empty(cut.FindAll("[id^='reset-carryover-btn-']"));
+    }
+
+    [Fact]
+    public void ClickingReset_ShowsThisPeriodAndNextPeriodChoices()
+    {
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeCarryoverData()));
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#reset-carryover-btn-1").Click();
+
+        Assert.NotEmpty(cut.FindAll("#reset-this-period-btn-1"));
+        Assert.NotEmpty(cut.FindAll("#reset-next-period-btn-1"));
+    }
+
+    [Fact]
+    public void ClickingResetThisPeriod_CallsTheProvider_WithStartingNextPeriodFalse()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeCarryoverData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#reset-carryover-btn-1").Click();
+        cut.Find("#reset-this-period-btn-1").Click();
+
+        var call = Assert.Single(provider.ResetCalls);
+        Assert.Equal(1, call.CategoryId);
+        Assert.False(call.StartingNextPeriod);
+    }
+
+    [Fact]
+    public void ClickingResetNextPeriod_CallsTheProvider_WithStartingNextPeriodTrue()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeCarryoverData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#reset-carryover-btn-1").Click();
+        cut.Find("#reset-next-period-btn-1").Click();
+
+        var call = Assert.Single(provider.ResetCalls);
+        Assert.True(call.StartingNextPeriod);
+    }
+
+    [Fact]
+    public void ClickingCancel_HidesTheResetChoices_WithoutCallingTheProvider()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeCarryoverData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#reset-carryover-btn-1").Click();
+        cut.Find("#cancel-reset-btn-1").Click();
+
+        Assert.Empty(cut.FindAll("#reset-options-1"));
+        Assert.NotEmpty(cut.FindAll("#reset-carryover-btn-1"));
+        Assert.Empty(provider.ResetCalls);
+    }
+
+    [Fact]
+    public void TotalsRow_SumsTheRollingBalance_NotPlainRemaining_ForCarryoverTrackedCategories()
+    {
+        // Groceries: rolling balance 30 (not plain Remaining -20) - the total should reflect
+        // what's actually displayed in the column above it.
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeCarryoverData()));
+
+        var cut = Render<SpendingTracker>();
+
+        var totalsRow = cut.Find("#week-totals-row");
+        Assert.Contains("30.00", totalsRow.TextContent);
     }
 }

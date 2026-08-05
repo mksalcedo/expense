@@ -177,6 +177,25 @@ else
                             </select>
                         </div>
                     }
+                    @if (_formFundingStrategy == FundingStrategies.PayInFullAmex && _mode == DetailMode.Editing)
+                    {
+                        <div style="display: contents">
+                            <label for="detail-carryover-cap">Carryover cap (&times; period budget)</label>
+                            <input id="detail-carryover-cap" type="number" step="0.1" min="0" value="@_formCarryoverCapMultiplier"
+                                   disabled="@(_formCarryoverCapMultiplier is null)"
+                                   @onchange="e => _formCarryoverCapMultiplier = ParseNullableDecimal((string)e.Value!)" />
+                        </div>
+                        <div style="display: contents">
+                            <label for="detail-carryover-no-limit">No limit</label>
+                            <input id="detail-carryover-no-limit" type="checkbox" checked="@(_formCarryoverCapMultiplier is null)"
+                                   @onchange="e => _formCarryoverCapMultiplier = (bool)e.Value! ? null : 1.0m" style="justify-self: start;" />
+                        </div>
+                        <p style="grid-column: 1 / -1; margin: 0; color: #666; font-size: 0.9em;">
+                            How far the Spending Tracker's rolling carried-forward balance can go, in either direction, before it
+                            stops growing - e.g. 1x means at most one extra period's worth of surplus or deficit. Check "No limit"
+                            for a category you're deliberately saving up in across several periods.
+                        </p>
+                    }
                     @if (_formFundingStrategy == FundingStrategies.Direct)
                     {
                         <div style="display: contents">
@@ -238,6 +257,7 @@ else
     private DateOnly _formAnchor = DateOnly.FromDateTime(DateTime.Today);
     private int? _formAccountId;
     private bool _formReconcileByCalendarMonth;
+    private decimal? _formCarryoverCapMultiplier = 1.0m;
 
     private AccountType? _formLinkedAccountType;
     private decimal? _formMinPayment;
@@ -349,6 +369,7 @@ else
         _formPaymentDueDay = null;
         _formStatementCloseDay = null;
         _formReconcileByCalendarMonth = false;
+        _formCarryoverCapMultiplier = 1.0m;
     }
 
     private Task SelectAsync(CategoryRow category)
@@ -369,6 +390,7 @@ else
         _formPaymentDueDay = category.LinkedAccountPaymentDueDay;
         _formStatementCloseDay = category.LinkedAccountStatementCloseDay;
         _formReconcileByCalendarMonth = category.ReconcileByCalendarMonth;
+        _formCarryoverCapMultiplier = category.CarryoverCapMultiplier;
         return Task.CompletedTask;
     }
 
@@ -395,7 +417,7 @@ else
         }
         else if (_selectedId is { } id)
         {
-            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formFundingStrategy, _formReconcileByCalendarMonth, budget, accountPayment);
+            await CategoriesProvider.UpdateCategoryAsync(id, _formName, _formFundingStrategy, _formReconcileByCalendarMonth, _formCarryoverCapMultiplier, budget, accountPayment);
         }
 
         _mode = DetailMode.None;

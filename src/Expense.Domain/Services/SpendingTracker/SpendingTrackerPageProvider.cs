@@ -32,4 +32,11 @@ public class SpendingTrackerPageProvider(IDbContextFactory<ExpenseDbContext> con
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         return await tracker.GetCurrentMonthAsync(context, referenceDate, cancellationToken);
     }
+
+    public async Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var asOfDate = DateOnly.FromDateTime(DateTime.Today);
+        await tracker.ResetCarryoverAsync(context, categoryId, startingNextPeriod, asOfDate, cancellationToken);
+    }
 }

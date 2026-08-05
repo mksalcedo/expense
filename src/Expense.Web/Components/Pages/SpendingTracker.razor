@@ -20,9 +20,17 @@ else
 
 @code {
     private SpendingTrackerPageData? _data;
+    private int? _resettingCategoryId;
 
     protected override async Task OnInitializedAsync()
     {
+        _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
+    }
+
+    private async Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod)
+    {
+        await SpendingTrackerProvider.ResetCarryoverAsync(categoryId, startingNextPeriod);
+        _resettingCategoryId = null;
         _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
     }
 
@@ -45,7 +53,37 @@ else
                         <td>@category.CategoryName</td>
                         <td class="text-right">@category.Budget.ToString("N2")</td>
                         <td class="text-right">@category.Actual.ToString("N2")</td>
-                        <td class="text-right">@category.Remaining.ToString("N2")</td>
+                        <td class="text-right">
+                            @((category.RollingBalance ?? category.Remaining).ToString("N2"))
+                            @if (category.IsCarryoverTracked)
+                            {
+                                @if (category.CarriedIn != 0)
+                                {
+                                    <br />
+                                    <span id="carried-in-note-@category.CategoryId" style="color:#666; font-size:0.85em;">
+                                        @(category.CarriedIn > 0 ? "+" : "")@category.CarriedIn.ToString("N2") carried in
+                                        @if (category.CarryoverCap is { } cap)
+                                        {
+                                            <text> (capped at &plusmn;@cap.ToString("N2"))</text>
+                                        }
+                                    </span>
+                                }
+                                <br />
+                                @if (_resettingCategoryId == category.CategoryId)
+                                {
+                                    <span id="reset-options-@category.CategoryId" style="font-size:0.85em;">
+                                        Reset carryover:
+                                        <button id="reset-this-period-btn-@category.CategoryId" @onclick="() => ResetCarryoverAsync(category.CategoryId, startingNextPeriod: false)">This period</button>
+                                        <button id="reset-next-period-btn-@category.CategoryId" @onclick="() => ResetCarryoverAsync(category.CategoryId, startingNextPeriod: true)">Next period</button>
+                                        <button id="cancel-reset-btn-@category.CategoryId" @onclick="() => _resettingCategoryId = null">Cancel</button>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <button id="reset-carryover-btn-@category.CategoryId" style="font-size:0.85em;" @onclick="() => _resettingCategoryId = category.CategoryId">Reset</button>
+                                }
+                            }
+                        </td>
                     </tr>
                 }
                 <tr>
@@ -64,12 +102,16 @@ else
                     // kind of "silently ignore uncategorized spend" mistake already fixed
                     // once before for the Amex forecast.
                     var actualTotal = result.Categories.Sum(c => c.Actual) + result.PendingAmount;
+                    // Sums whatever's actually displayed per row (the carryover-adjusted
+                    // RollingBalance where tracked, plain Remaining otherwise) rather than
+                    // Budget-Actual, so the total reconciles with the column above it.
+                    var remainingTotal = result.Categories.Sum(c => c.RollingBalance ?? c.Remaining) - result.PendingAmount;
                 }
                 <tr id="@(idPrefix)-totals-row" style="font-weight: 600; border-top: 2px solid var(--color-border, #ccc)">
                     <td>Total</td>
                     <td class="text-right">@budgetTotal.ToString("N2")</td>
                     <td class="text-right">@actualTotal.ToString("N2")</td>
-                    <td class="text-right">@((budgetTotal - actualTotal).ToString("N2"))</td>
+                    <td class="text-right">@remainingTotal.ToString("N2")</td>
                 </tr>
             </tfoot>
         </table>

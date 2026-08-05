@@ -10,6 +10,9 @@ public class CategoryRow
     public required string FundingStrategy { get; set; }
     public required bool ReconcileByCalendarMonth { get; set; }
 
+    // Spending Tracker carryover cap, only meaningful for FundingStrategy == PayInFullAmex. Null = uncapped.
+    public decimal? CarryoverCapMultiplier { get; set; }
+
     // Current BudgetPeriod, if any - only meaningful for FundingStrategy == Direct or PayInFullAmex.
     public decimal? BudgetAmount { get; set; }
     public Frequency? BudgetFrequency { get; set; }

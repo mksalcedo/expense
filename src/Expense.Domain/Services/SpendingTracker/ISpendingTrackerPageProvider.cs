@@ -10,4 +10,7 @@ public interface ISpendingTrackerPageProvider
 
     /// <summary>The calendar month containing referenceDate - not necessarily this month, see Dashboard's month navigation.</summary>
     Task<SpendingTrackerResult> GetMonthAsync(DateOnly referenceDate, CancellationToken cancellationToken = default);
+
+    /// <summary>See SpendingTrackerService.ResetCarryoverAsync - startingNextPeriod false = "starting this period", true = "starting next period".</summary>
+    Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod, CancellationToken cancellationToken = default);
 }

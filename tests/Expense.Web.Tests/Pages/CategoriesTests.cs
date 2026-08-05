@@ -22,6 +22,7 @@ public class CategoriesTests : BunitContext
         public string? LastUpdatedName { get; private set; }
         public string? LastUpdatedFundingStrategy { get; private set; }
         public bool? LastUpdatedReconcileByCalendarMonth { get; private set; }
+        public decimal? LastUpdatedCarryoverCapMultiplier { get; private set; }
         public BudgetInput? LastUpdatedBudget { get; private set; }
         public AccountPaymentInput? LastUpdatedAccountPayment { get; private set; }
 
@@ -40,12 +41,13 @@ public class CategoriesTests : BunitContext
             return Task.CompletedTask;
         }
 
-        public Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, bool reconcileByCalendarMonth = false, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default)
+        public Task UpdateCategoryAsync(int categoryId, string name, string fundingStrategy, bool reconcileByCalendarMonth = false, decimal? carryoverCapMultiplier = 1.0m, BudgetInput? budget = null, AccountPaymentInput? accountPayment = null, CancellationToken cancellationToken = default)
         {
             LastUpdatedId = categoryId;
             LastUpdatedName = name;
             LastUpdatedFundingStrategy = fundingStrategy;
             LastUpdatedReconcileByCalendarMonth = reconcileByCalendarMonth;
+            LastUpdatedCarryoverCapMultiplier = carryoverCapMultiplier;
             LastUpdatedBudget = budget;
             LastUpdatedAccountPayment = accountPayment;
             return Task.CompletedTask;
@@ -541,6 +543,89 @@ public class CategoriesTests : BunitContext
 
         Assert.Equal(4, provider.LastUpdatedId);
         Assert.True(provider.LastUpdatedReconcileByCalendarMonth);
+    }
+
+    [Fact]
+    public void SelectingAPayInFullAmexCategory_ShowsTheCarryoverCapField_WithItsValue()
+    {
+        var provider = MakeProvider();
+        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = 2.0m; // Groceries: PayInFullAmex
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click();
+
+        Assert.Equal("2.0", cut.Find("#detail-carryover-cap").GetAttribute("value"));
+        Assert.False(cut.Find("#detail-carryover-no-limit").HasAttribute("checked"));
+    }
+
+    [Fact]
+    public void SelectingAPayInFullAmexCategory_WithNoCap_ShowsNoLimitCheckedAndTheFieldDisabled()
+    {
+        var provider = MakeProvider();
+        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = null; // Groceries: PayInFullAmex
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click();
+
+        Assert.True(cut.Find("#detail-carryover-no-limit").HasAttribute("checked"));
+        Assert.True(cut.Find("#detail-carryover-cap").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void SelectingANonPayInFullAmexCategory_DoesNotShowTheCarryoverCapField()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-4").Click(); // Truist Mortgage: Direct
+
+        Assert.Empty(cut.FindAll("#detail-carryover-cap"));
+    }
+
+    [Fact]
+    public void CreatingANewPayInFullAmexCategory_DoesNotShowTheCarryoverCapField()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#new-category-button").Click();
+        cut.Find("#detail-funding-strategy").Change(FundingStrategies.PayInFullAmex);
+
+        Assert.Empty(cut.FindAll("#detail-carryover-cap"));
+    }
+
+    [Fact]
+    public void ChangingTheCarryoverCap_AndSaving_PassesItThrough()
+    {
+        var provider = MakeProvider();
+        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = 1.0m; // Groceries: PayInFullAmex, field enabled
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click();
+        cut.Find("#detail-carryover-cap").Change("3");
+        cut.Find("#detail-save").Click();
+
+        Assert.Equal(3m, provider.LastUpdatedCarryoverCapMultiplier);
+    }
+
+    [Fact]
+    public void CheckingNoLimit_AndSaving_PassesNullCarryoverCap()
+    {
+        var provider = MakeProvider();
+        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = 1.0m; // Groceries: PayInFullAmex
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click();
+        cut.Find("#detail-carryover-no-limit").Change(true);
+        cut.Find("#detail-save").Click();
+
+        Assert.Null(provider.LastUpdatedCarryoverCapMultiplier);
     }
 
     [Fact]

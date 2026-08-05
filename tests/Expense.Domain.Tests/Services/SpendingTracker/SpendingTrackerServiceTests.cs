@@ -15,7 +15,10 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
 
     private async Task<Category> CreateGroceriesAsync(decimal amount = 450m, Frequency frequency = Frequency.Weekly)
     {
-        var category = new Category { Name = "Groceries" };
+        // CarryoverAnchorDate defaults to CURRENT_DATE (the real wall-clock date) via the DB
+        // column default - fixed here to line up with AsOfDate/EffectiveFrom instead, so tests
+        // stay deterministic regardless of what today's real date happens to be.
+        var category = new Category { Name = "Groceries", CarryoverAnchorDate = new DateOnly(2026, 1, 1) };
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 
@@ -34,6 +37,21 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
         Context.Accounts.Add(account);
         await Context.SaveChangesAsync();
         return account;
+    }
+
+    private async Task<Category> CreateCategoryAsync(string name, decimal amount, Frequency frequency, DateOnly anchor, decimal? capMultiplier = 1.0m)
+    {
+        var category = new Category { Name = name, CarryoverAnchorDate = anchor, CarryoverCapMultiplier = capMultiplier };
+        Context.Categories.Add(category);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = category.Id, Amount = amount, Frequency = frequency, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+        return category;
     }
 
     [Fact]
@@ -82,7 +100,7 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
     [Fact]
     public async Task AskingForAPastPeriod_UsesTheBudgetThatWasActuallyInEffectThen_NotTodays()
     {
-        var category = new Category { Name = "Groceries" };
+        var category = new Category { Name = "Groceries", CarryoverAnchorDate = new DateOnly(2026, 1, 1) };
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
         Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.PayInFullAmex });
@@ -374,5 +392,151 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
         var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
 
         Assert.Empty(result.Categories);
+    }
+
+    // Carryover: which view is "native" for a category is decided by its own budgeted
+    // Frequency - Weekly categories carry over on the week view, everything else (Monthly
+    // here) on the month view. The other view always stays a plain this-period-only number.
+    [Fact]
+    public async Task WeeklyCategory_OnTheWeekView_IsCarryoverTracked()
+    {
+        await CreateCategoryAsync("Groceries", 450m, Frequency.Weekly, anchor: new DateOnly(2026, 7, 5));
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.True(summary.IsCarryoverTracked);
+        Assert.NotNull(summary.RollingBalance);
+    }
+
+    [Fact]
+    public async Task WeeklyCategory_OnTheMonthView_IsNotCarryoverTracked()
+    {
+        await CreateCategoryAsync("Groceries", 450m, Frequency.Weekly, anchor: new DateOnly(2026, 7, 5));
+
+        var result = await _sut.GetCurrentMonthAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.False(summary.IsCarryoverTracked);
+        Assert.Null(summary.RollingBalance);
+        Assert.Equal(0m, summary.CarriedIn);
+    }
+
+    [Fact]
+    public async Task MonthlyCategory_OnTheMonthView_IsCarryoverTracked()
+    {
+        await CreateCategoryAsync("Clothing", 100m, Frequency.Monthly, anchor: new DateOnly(2026, 7, 1));
+
+        var result = await _sut.GetCurrentMonthAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.True(summary.IsCarryoverTracked);
+    }
+
+    [Fact]
+    public async Task MonthlyCategory_OnTheWeekView_IsNotCarryoverTracked()
+    {
+        await CreateCategoryAsync("Clothing", 100m, Frequency.Monthly, anchor: new DateOnly(2026, 7, 1));
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.False(summary.IsCarryoverTracked);
+        Assert.Null(summary.RollingBalance);
+    }
+
+    [Fact]
+    public async Task RollingBalance_OnTheCurrentWeek_IncludesTheSurplusCarriedInFromThePriorWeek()
+    {
+        var groceries = await CreateCategoryAsync("Groceries", 450m, Frequency.Weekly, anchor: new DateOnly(2026, 7, 5));
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.AddRange(
+            new BankTransaction // prior week (7/5-7/11): spent 400, +50 surplus
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 8), PostedDate = new DateOnly(2026, 7, 8),
+                Description = "Prior week", Amount = -400m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction // current week (7/12-7/18): spent 470, -20 this period alone
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 14), PostedDate = new DateOnly(2026, 7, 14),
+                Description = "Current week", Amount = -470m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(450m, summary.Budget);
+        Assert.Equal(470m, summary.Actual);
+        Assert.Equal(-20m, summary.Remaining); // this period alone, unaffected by carryover
+        Assert.Equal(50m, summary.CarriedIn);
+        Assert.Equal(30m, summary.RollingBalance);
+    }
+
+    [Fact]
+    public async Task RollingBalance_IsCappedAtTheCategorysConfiguredMultiple_OfThatPeriodsOwnBudget()
+    {
+        // No transactions in either the prior or current week - both periods run the full
+        // +450 surplus, which would total +900 uncapped; the 1.0x default cap should hold it
+        // at 450 instead.
+        await CreateCategoryAsync("Groceries", 450m, Frequency.Weekly, anchor: new DateOnly(2026, 7, 5), capMultiplier: 1.0m);
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(450m, summary.CarriedIn);
+        Assert.Equal(450m, summary.RollingBalance);
+        Assert.Equal(450m, summary.CarryoverCap);
+    }
+
+    [Fact]
+    public async Task NullCapMultiplier_AllowsCarryoverPastOnePeriodsBudget()
+    {
+        // Anchored to January with no spending at all - by July (7 months inclusive), an
+        // uncapped Clothing budget should have accumulated all 7 months' surplus.
+        await CreateCategoryAsync("Clothing", 100m, Frequency.Monthly, anchor: new DateOnly(2026, 1, 1), capMultiplier: null);
+
+        var result = await _sut.GetCurrentMonthAsync(Context, AsOfDate);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(700m, summary.RollingBalance);
+        Assert.Null(summary.CarryoverCap);
+    }
+
+    [Fact]
+    public async Task ResetCarryoverAsync_StartingThisPeriod_ZeroesTheCarriedInBalanceImmediately()
+    {
+        var groceries = await CreateCategoryAsync("Groceries", 450m, Frequency.Weekly, anchor: new DateOnly(2026, 7, 5));
+
+        await _sut.ResetCarryoverAsync(Context, groceries.Id, startingNextPeriod: false, AsOfDate);
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(0m, summary.CarriedIn);
+        Assert.Equal(450m, summary.RollingBalance); // just this period's own delta now
+    }
+
+    [Fact]
+    public async Task ResetCarryoverAsync_StartingNextPeriod_LeavesTheCurrentlyInProgressPeriodUntouched()
+    {
+        var groceries = await CreateCategoryAsync("Groceries", 450m, Frequency.Weekly, anchor: new DateOnly(2026, 7, 5));
+
+        await _sut.ResetCarryoverAsync(Context, groceries.Id, startingNextPeriod: true, AsOfDate);
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(450m, summary.CarriedIn); // reset hasn't taken effect yet - still this week
+    }
+
+    [Fact]
+    public async Task ResetCarryoverAsync_StartingNextPeriod_TakesEffectOnceThatPeriodActuallyBegins()
+    {
+        var groceries = await CreateCategoryAsync("Groceries", 450m, Frequency.Weekly, anchor: new DateOnly(2026, 7, 5));
+
+        await _sut.ResetCarryoverAsync(Context, groceries.Id, startingNextPeriod: true, AsOfDate); // queues a reset for the week of 7/19
+
+        var result = await _sut.GetCurrentWeekAsync(Context, new DateOnly(2026, 7, 22)); // within the week of 7/19-7/25
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(0m, summary.CarriedIn); // the queued reset has now taken effect
     }
 }

@@ -10,8 +10,12 @@ namespace Expense.Domain.Services.SpendingTracker;
 /// Current-week/current-month budget vs. actual vs. remaining, scoped to PayInFullAmex
 /// categories (the only ones with real day-to-day variable spending to track - Direct
 /// categories are fixed bills/income, AccountPayment categories are paydown-only debt).
-/// No carryover in either direction: Remaining = this period's prorated budget minus
-/// this period's actual spend, full stop - see design-summary.md.
+///
+/// Carryover: a category's own budgeted Frequency decides which of the two views is its
+/// "native" one (Weekly -> the week view, everything else -> the month view) - that view
+/// shows a real rolling balance (see CarryoverCalculator), the other view stays a plain
+/// this-period-only Budget minus Actual, exactly as before carryover existed. See
+/// Category.CarryoverAnchorDate/CarryoverCapMultiplier and ResetCarryoverAsync.
 ///
 /// PendingAmount is spend only (negative-amount transactions) - real checking activity
 /// includes plenty of legitimately-uncategorized non-spend rows (paycheck deposits, etc.),
@@ -20,22 +24,86 @@ namespace Expense.Domain.Services.SpendingTracker;
 public class SpendingTrackerService(BudgetProrationService proration)
 {
     public Task<SpendingTrackerResult> GetCurrentWeekAsync(ExpenseDbContext context, DateOnly asOfDate, CancellationToken cancellationToken = default)
-    {
-        var daysSinceSunday = (int)asOfDate.DayOfWeek;
-        var start = asOfDate.AddDays(-daysSinceSunday);
-        var end = start.AddDays(6);
-        return GetSummaryAsync(context, start, end, Frequency.Weekly, cancellationToken);
-    }
+        => GetSummaryAsync(context, PeriodStart(asOfDate, Frequency.Weekly), PeriodEnd(PeriodStart(asOfDate, Frequency.Weekly), Frequency.Weekly), Frequency.Weekly, asOfDate, cancellationToken);
 
     public Task<SpendingTrackerResult> GetCurrentMonthAsync(ExpenseDbContext context, DateOnly asOfDate, CancellationToken cancellationToken = default)
+        => GetSummaryAsync(context, PeriodStart(asOfDate, Frequency.Monthly), PeriodEnd(PeriodStart(asOfDate, Frequency.Monthly), Frequency.Monthly), Frequency.Monthly, asOfDate, cancellationToken);
+
+    /// <summary>
+    /// "Starting this period" zeroes CarryoverAnchorDate to today's period, wiping any
+    /// carried-in balance immediately. "Starting next period" only queues
+    /// PendingCarryoverAnchorDate - the period already in progress keeps whatever it already
+    /// carried, and the reset only takes effect once that next period actually begins (see
+    /// ResolveEffectiveAnchor).
+    /// </summary>
+    public async Task ResetCarryoverAsync(ExpenseDbContext context, int categoryId, bool startingNextPeriod, DateOnly asOfDate, CancellationToken cancellationToken = default)
     {
-        var start = new DateOnly(asOfDate.Year, asOfDate.Month, 1);
-        var end = start.AddMonths(1).AddDays(-1);
-        return GetSummaryAsync(context, start, end, Frequency.Monthly, cancellationToken);
+        var category = await context.Categories.SingleAsync(c => c.Id == categoryId, cancellationToken);
+        var activeBudget = await context.BudgetPeriods
+            .Where(p => p.CategoryId == categoryId && p.EffectiveThrough == null)
+            .SingleOrDefaultAsync(cancellationToken);
+        var frequency = DetermineNativeFrequency(activeBudget);
+        var currentPeriodStart = PeriodStart(asOfDate, frequency);
+
+        if (startingNextPeriod)
+        {
+            category.PendingCarryoverAnchorDate = NextPeriodStart(currentPeriodStart, frequency);
+        }
+        else
+        {
+            category.CarryoverAnchorDate = currentPeriodStart;
+            category.PendingCarryoverAnchorDate = null;
+        }
+
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    private static Frequency DetermineNativeFrequency(BudgetPeriod? activeBudget) =>
+        activeBudget?.Frequency == Frequency.Weekly ? Frequency.Weekly : Frequency.Monthly;
+
+    private static DateOnly PeriodStart(DateOnly date, Frequency frequency) => frequency switch
+    {
+        Frequency.Weekly => date.AddDays(-(int)date.DayOfWeek),
+        _ => new DateOnly(date.Year, date.Month, 1)
+    };
+
+    private static DateOnly PeriodEnd(DateOnly periodStart, Frequency frequency) => frequency switch
+    {
+        Frequency.Weekly => periodStart.AddDays(6),
+        _ => periodStart.AddMonths(1).AddDays(-1)
+    };
+
+    private static DateOnly NextPeriodStart(DateOnly periodStart, Frequency frequency) =>
+        frequency == Frequency.Weekly ? periodStart.AddDays(7) : periodStart.AddMonths(1);
+
+    private static DateOnly ResolveEffectiveAnchor(Category category, DateOnly currentPeriodStart) =>
+        category.PendingCarryoverAnchorDate is { } pending && pending <= currentPeriodStart
+            ? pending
+            : category.CarryoverAnchorDate;
+
+    private static List<DateOnly> EnumeratePeriodStarts(DateOnly anchorDate, DateOnly asOfDate, Frequency frequency)
+    {
+        var starts = new List<DateOnly>();
+        var last = PeriodStart(asOfDate, frequency);
+        // Always include at least the current period, even if the anchor somehow resolves to
+        // later than it (shouldn't happen in practice - a category's anchor is never set in
+        // the future relative to "today" - but this keeps the caller from indexing into an
+        // empty list rather than relying on that invariant always holding).
+        var cursor = PeriodStart(anchorDate, frequency);
+        if (cursor > last)
+        {
+            cursor = last;
+        }
+        while (cursor <= last)
+        {
+            starts.Add(cursor);
+            cursor = NextPeriodStart(cursor, frequency);
+        }
+        return starts;
     }
 
     private async Task<SpendingTrackerResult> GetSummaryAsync(
-        ExpenseDbContext context, DateOnly periodStart, DateOnly periodEnd, Frequency periodFrequency, CancellationToken cancellationToken)
+        ExpenseDbContext context, DateOnly periodStart, DateOnly periodEnd, Frequency periodFrequency, DateOnly asOfDate, CancellationToken cancellationToken)
     {
         var qualifyingCategoryIds = await context.FundingRules
             .Where(r => r.Strategy == FundingStrategies.PayInFullAmex)
@@ -47,13 +115,19 @@ public class SpendingTrackerService(BudgetProrationService proration)
             .OrderBy(c => c.Name)
             .ToListAsync(cancellationToken);
 
+        // Every dated budget version for these categories, not just the one active today -
+        // carryover needs each historical period's own period-correct budget, same principle
+        // as the existing period-correct lookup below.
+        var allBudgetPeriods = await context.BudgetPeriods
+            .Where(p => qualifyingCategoryIds.Contains(p.CategoryId))
+            .ToListAsync(cancellationToken);
+
         // Period-correct, not "whatever's open today" - matters once a past period becomes
         // browsable (Dashboard week/month navigation), since a since-changed budget would
         // otherwise misreport what was actually budgeted back then.
-        var budgetsAtPeriodStart = await context.BudgetPeriods
-            .Where(p => qualifyingCategoryIds.Contains(p.CategoryId)
-                        && p.EffectiveFrom <= periodStart && (p.EffectiveThrough == null || p.EffectiveThrough >= periodStart))
-            .ToDictionaryAsync(p => p.CategoryId, cancellationToken);
+        var budgetsAtPeriodStart = allBudgetPeriods
+            .Where(p => p.EffectiveFrom <= periodStart && (p.EffectiveThrough == null || p.EffectiveThrough >= periodStart))
+            .ToDictionary(p => p.CategoryId);
 
         // Still-unposted, self-reported (screenshot-derived) charges count using the date
         // they were seen/entered instead of a real PostedDate - consistent with how the
@@ -73,7 +147,8 @@ public class SpendingTrackerService(BudgetProrationService proration)
             .Select(g => new { CategoryId = g.Key, Total = g.Sum(i => i.Price * i.Quantity + i.TaxAllocated - (i.RefundAmount ?? 0m)) })
             .ToDictionaryAsync(g => g.CategoryId, g => g.Total, cancellationToken);
 
-        var summaries = categories.Select(category =>
+        var summaries = new List<CategorySpendingSummary>();
+        foreach (var category in categories)
         {
             var budget = budgetsAtPeriodStart.TryGetValue(category.Id, out var period)
                 ? proration.Convert(period.Amount, period.Frequency, periodFrequency)
@@ -82,14 +157,28 @@ public class SpendingTrackerService(BudgetProrationService proration)
             var bankSpend = -bankTotalsByCategory.GetValueOrDefault(category.Id);
             var amazonSpend = amazonTotalsByCategory.GetValueOrDefault(category.Id);
 
-            return new CategorySpendingSummary
+            var summary = new CategorySpendingSummary
             {
                 CategoryId = category.Id,
                 CategoryName = category.Name,
                 Budget = budget,
                 Actual = bankSpend + amazonSpend
             };
-        }).ToList();
+
+            var activeBudget = allBudgetPeriods.SingleOrDefault(p => p.CategoryId == category.Id && p.EffectiveThrough == null);
+            var nativeFrequency = DetermineNativeFrequency(activeBudget);
+            if (nativeFrequency == periodFrequency)
+            {
+                var (carriedIn, rollingBalance, cap) = await ComputeCarryoverAsync(
+                    context, category, periodFrequency, asOfDate, allBudgetPeriods.Where(p => p.CategoryId == category.Id).ToList(), cancellationToken);
+                summary.IsCarryoverTracked = true;
+                summary.CarriedIn = carriedIn;
+                summary.RollingBalance = rollingBalance;
+                summary.CarryoverCap = cap;
+            }
+
+            summaries.Add(summary);
+        }
 
         var pendingBank = await context.BankTransactions
             .Where(t => !t.IsAmazonMerchant && t.CategoryId == null && t.Amount < 0
@@ -108,5 +197,47 @@ public class SpendingTrackerService(BudgetProrationService proration)
             Categories = summaries,
             PendingAmount = -pendingBank + pendingAmazon
         };
+    }
+
+    private async Task<(decimal CarriedIn, decimal RollingBalance, decimal? Cap)> ComputeCarryoverAsync(
+        ExpenseDbContext context, Category category, Frequency frequency, DateOnly asOfDate,
+        IReadOnlyList<BudgetPeriod> categoryBudgetPeriods, CancellationToken cancellationToken)
+    {
+        var currentPeriodStart = PeriodStart(asOfDate, frequency);
+        var effectiveAnchor = ResolveEffectiveAnchor(category, currentPeriodStart);
+        var periodStarts = EnumeratePeriodStarts(effectiveAnchor, asOfDate, frequency);
+        var rangeStart = periodStarts[0];
+        var rangeEnd = PeriodEnd(currentPeriodStart, frequency);
+
+        // One query per data source across the whole anchor-to-now range, bucketed by period
+        // in memory below - avoids one query per historical period.
+        var bankRows = await context.BankTransactions
+            .Where(t => !t.IsAmazonMerchant && t.CategoryId == category.Id
+                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
+            .Where(t => (t.PostedDate ?? t.TransactionDate) >= rangeStart && (t.PostedDate ?? t.TransactionDate) <= rangeEnd)
+            .Select(t => new { Date = t.PostedDate ?? t.TransactionDate, t.Amount })
+            .ToListAsync(cancellationToken);
+
+        var amazonRows = await context.AmazonOrderItems
+            .Where(i => i.CategoryId == category.Id && i.OrderDate >= rangeStart && i.OrderDate <= rangeEnd)
+            .Select(i => new { i.OrderDate, Total = i.Price * i.Quantity + i.TaxAllocated - (i.RefundAmount ?? 0m) })
+            .ToListAsync(cancellationToken);
+
+        var activities = new List<CarryoverCalculator.PeriodActivity>();
+        foreach (var start in periodStarts)
+        {
+            var end = PeriodEnd(start, frequency);
+            var budgetPeriod = categoryBudgetPeriods
+                .SingleOrDefault(p => p.EffectiveFrom <= start && (p.EffectiveThrough == null || p.EffectiveThrough >= start));
+            var budget = budgetPeriod is null ? 0m : proration.Convert(budgetPeriod.Amount, budgetPeriod.Frequency, frequency);
+
+            var bankSpend = -bankRows.Where(r => r.Date >= start && r.Date <= end).Sum(r => r.Amount);
+            var amazonSpend = amazonRows.Where(r => r.OrderDate >= start && r.OrderDate <= end).Sum(r => r.Total);
+
+            activities.Add(new CarryoverCalculator.PeriodActivity(budget, bankSpend + amazonSpend));
+        }
+
+        var result = CarryoverCalculator.Compute(activities, category.CarryoverCapMultiplier);
+        return (result.CarriedIn, result.RollingBalance, result.Cap);
     }
 }
