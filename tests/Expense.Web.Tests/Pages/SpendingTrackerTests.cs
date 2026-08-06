@@ -12,10 +12,26 @@ public class SpendingTrackerTests : BunitContext
         public List<(int CategoryId, bool StartingNextPeriod)> ResetCalls { get; } = [];
         public List<(int CategoryId, DateOnly PeriodStart, DateOnly PeriodEnd)> TransactionRequests { get; } = [];
         public Dictionary<int, List<CategoryTransactionLine>> TransactionsByCategory { get; set; } = [];
+        public DateOnly? LastWeekReferenceDate { get; private set; }
+        public DateOnly? LastMonthReferenceDate { get; private set; }
 
         public Task<SpendingTrackerPageData> GetSpendingTrackerAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
-        public Task<SpendingTrackerResult> GetWeekAsync(DateOnly referenceDate, CancellationToken cancellationToken = default) => Task.FromResult(data.Week);
-        public Task<SpendingTrackerResult> GetMonthAsync(DateOnly referenceDate, CancellationToken cancellationToken = default) => Task.FromResult(data.Month);
+
+        // Same Sunday-start-week/calendar-month math as the real SpendingTrackerService, so
+        // navigation tests can assert against real period boundaries rather than a fake stub.
+        public Task<SpendingTrackerResult> GetWeekAsync(DateOnly referenceDate, CancellationToken cancellationToken = default)
+        {
+            LastWeekReferenceDate = referenceDate;
+            var start = referenceDate.AddDays(-(int)referenceDate.DayOfWeek);
+            return Task.FromResult(new SpendingTrackerResult { PeriodStart = start, PeriodEnd = start.AddDays(6), Categories = [], PendingAmount = 0m });
+        }
+
+        public Task<SpendingTrackerResult> GetMonthAsync(DateOnly referenceDate, CancellationToken cancellationToken = default)
+        {
+            LastMonthReferenceDate = referenceDate;
+            var start = new DateOnly(referenceDate.Year, referenceDate.Month, 1);
+            return Task.FromResult(new SpendingTrackerResult { PeriodStart = start, PeriodEnd = start.AddMonths(1).AddDays(-1), Categories = [], PendingAmount = 0m });
+        }
 
         public Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod, CancellationToken cancellationToken = default)
         {
@@ -436,5 +452,111 @@ public class SpendingTrackerTests : BunitContext
         var details = cut.Find("#category-details-week");
         Assert.Contains("OLIVE GARDEN", details.TextContent);
         Assert.DoesNotContain("INGLES", details.TextContent);
+    }
+
+    // Week navigation mirrors Dashboard.razor's own (see DashboardTests.cs) - same
+    // GetWeekAsync/GetMonthAsync calculations, so the two pages can never disagree about
+    // period boundaries.
+    [Fact]
+    public void ClickingPreviousOnWeek_FetchesTheWeekBefore()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#week-previous").Click();
+
+        Assert.Equal(new DateOnly(2026, 7, 5), provider.LastWeekReferenceDate);
+        Assert.Contains("2026-07-05", cut.Markup);
+        Assert.Contains("2026-07-11", cut.Markup);
+    }
+
+    [Fact]
+    public void ClickingNextOnWeek_FetchesTheWeekAfter()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#week-next").Click();
+
+        Assert.Equal(new DateOnly(2026, 7, 19), provider.LastWeekReferenceDate);
+        Assert.Contains("2026-07-19", cut.Markup);
+        Assert.Contains("2026-07-25", cut.Markup);
+    }
+
+    [Fact]
+    public void ClickingPreviousTwiceThenCurrentOnWeek_ReturnsToTodaysRealWeek()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#week-previous").Click();
+        cut.Find("#week-previous").Click();
+        cut.Find("#week-current").Click();
+
+        Assert.Equal(DateOnly.FromDateTime(DateTime.Today), provider.LastWeekReferenceDate);
+    }
+
+    [Fact]
+    public void ClickingPreviousOnMonth_FetchesTheMonthBefore()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#month-previous").Click();
+
+        Assert.Equal(new DateOnly(2026, 6, 1), provider.LastMonthReferenceDate);
+        Assert.Contains("2026-06-01", cut.Markup);
+        Assert.Contains("2026-06-30", cut.Markup);
+    }
+
+    [Fact]
+    public void ClickingNextOnMonth_FetchesTheMonthAfter()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#month-next").Click();
+
+        Assert.Contains("2026-08-01", cut.Markup);
+        Assert.Contains("2026-08-31", cut.Markup);
+    }
+
+    [Fact]
+    public void NavigatingTheWeekTable_DoesNotAffectTheMonthTable()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#week-next").Click();
+
+        Assert.Null(provider.LastMonthReferenceDate);
+        Assert.Contains("2026-07-01", cut.Markup); // Month table unchanged
+    }
+
+    // Regression guard: the drill-down cache is keyed per period, but the *selection* itself
+    // also has to clear on navigation - otherwise a stale category name/table would keep
+    // showing against the newly-loaded (different) period until re-clicked.
+    [Fact]
+    public void NavigatingAway_ClearsTheSelectedCategoryDetails()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData())
+        {
+            TransactionsByCategory = new() { [1] = [new CategoryTransactionLine { Date = new DateOnly(2026, 7, 14), Description = "INGLES", Amount = 120m }] }
+        };
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
+        Assert.NotEmpty(cut.FindAll("#category-details-week"));
+
+        cut.Find("#week-next").Click();
+
+        Assert.Empty(cut.FindAll("#category-details-week"));
     }
 }

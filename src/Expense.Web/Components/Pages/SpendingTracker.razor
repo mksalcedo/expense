@@ -13,14 +13,16 @@
 else
 {
     <div style="display:flex; gap:3rem; align-items:flex-start;">
-        @RenderPeriod("This Week", "week", _data.Week)
-        @RenderPeriod("This Month", "month", _data.Month)
+        @RenderPeriod("This Week", "week", _data.Week, PreviousWeekAsync, NextWeekAsync, CurrentWeekAsync)
+        @RenderPeriod("This Month", "month", _data.Month, PreviousMonthAsync, NextMonthAsync, CurrentMonthAsync)
     </div>
 }
 
 @code {
     private SpendingTrackerPageData? _data;
     private int? _resettingCategoryId;
+    private DateOnly _weekReferenceDate;
+    private DateOnly _monthReferenceDate;
 
     // One selected category per table (week/month), not a set - selecting a different
     // category replaces whichever detail table was showing, it never stacks.
@@ -30,6 +32,8 @@ else
     protected override async Task OnInitializedAsync()
     {
         _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
+        _weekReferenceDate = _data.Week.PeriodStart;
+        _monthReferenceDate = _data.Month.PeriodStart;
     }
 
     private async Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod)
@@ -39,7 +43,10 @@ else
         _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
     }
 
-    private static string TransactionsCacheKey(string idPrefix, int categoryId) => $"{idPrefix}:{categoryId}";
+    // Includes the period's own start date - without it, navigating to a different week/month
+    // and then re-selecting a category previously viewed elsewhere would show that OTHER
+    // period's cached transactions instead of fetching the one actually being looked at.
+    private static string TransactionsCacheKey(string idPrefix, int categoryId, DateOnly periodStart) => $"{idPrefix}:{categoryId}:{periodStart}";
 
     // Lazy-loaded on first click, not fetched up front for every category - most categories
     // are never selected, so eagerly pulling item-level detail for all of them would be
@@ -55,16 +62,71 @@ else
 
         _selectedCategoryId[idPrefix] = categoryId;
 
-        var key = TransactionsCacheKey(idPrefix, categoryId);
+        var key = TransactionsCacheKey(idPrefix, categoryId, periodStart);
         if (!_categoryTransactions.ContainsKey(key))
         {
             _categoryTransactions[key] = await SpendingTrackerProvider.GetCategoryTransactionsAsync(categoryId, periodStart, periodEnd);
         }
     }
 
-    private RenderFragment RenderPeriod(string title, string idPrefix, SpendingTrackerResult result) => @<div style="min-width: 520px;">
+    // Mirrors Dashboard.razor's own week/month navigation exactly, including going through
+    // the same ISpendingTrackerPageProvider.GetWeekAsync/GetMonthAsync calculations - shifts
+    // relative to whatever period is currently displayed (its own PeriodStart), not an
+    // independently-tracked "today", so repeated Previous/Next clicks stay consistent with
+    // what's actually on screen. Current jumps back to the real today instead. Navigating
+    // away clears whichever category's transactions were selected on that table - the
+    // selection is period-specific and showing it against a newly-loaded period would be
+    // confusing (or just wrong, before the click that would re-fetch it).
+    private async Task PreviousWeekAsync()
+    {
+        _weekReferenceDate = _weekReferenceDate.AddDays(-7);
+        _data!.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
+        _selectedCategoryId["week"] = null;
+    }
+
+    private async Task NextWeekAsync()
+    {
+        _weekReferenceDate = _weekReferenceDate.AddDays(7);
+        _data!.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
+        _selectedCategoryId["week"] = null;
+    }
+
+    private async Task CurrentWeekAsync()
+    {
+        _weekReferenceDate = DateOnly.FromDateTime(DateTime.Today);
+        _data!.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
+        _selectedCategoryId["week"] = null;
+    }
+
+    private async Task PreviousMonthAsync()
+    {
+        _monthReferenceDate = _monthReferenceDate.AddMonths(-1);
+        _data!.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
+        _selectedCategoryId["month"] = null;
+    }
+
+    private async Task NextMonthAsync()
+    {
+        _monthReferenceDate = _monthReferenceDate.AddMonths(1);
+        _data!.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
+        _selectedCategoryId["month"] = null;
+    }
+
+    private async Task CurrentMonthAsync()
+    {
+        _monthReferenceDate = DateOnly.FromDateTime(DateTime.Today);
+        _data!.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
+        _selectedCategoryId["month"] = null;
+    }
+
+    private RenderFragment RenderPeriod(string title, string idPrefix, SpendingTrackerResult result, Func<Task> onPrevious, Func<Task> onNext, Func<Task> onCurrent) => @<div style="min-width: 520px;">
         <h2>@title</h2>
         <p>@result.PeriodStart.ToString("yyyy-MM-dd") to @result.PeriodEnd.ToString("yyyy-MM-dd")</p>
+        <div style="margin-bottom: 0.5em;">
+            <button id="@(idPrefix)-previous" @onclick="onPrevious">&laquo; Previous</button>
+            <button id="@(idPrefix)-current" @onclick="onCurrent">Current</button>
+            <button id="@(idPrefix)-next" @onclick="onNext">Next &raquo;</button>
+        </div>
         <table style="width: 100%;">
             <thead>
                 <tr>
@@ -166,7 +228,7 @@ else
         {
             var selectedCategoryName = result.Categories.First(c => c.CategoryId == selectedCategoryId).CategoryName;
             <h3 style="margin-top: 1.5em;">@selectedCategoryName transactions</h3>
-            @if (!_categoryTransactions.TryGetValue(TransactionsCacheKey(idPrefix, selectedCategoryId), out var lines))
+            @if (!_categoryTransactions.TryGetValue(TransactionsCacheKey(idPrefix, selectedCategoryId, result.PeriodStart), out var lines))
             {
                 <p id="category-details-@idPrefix">Loading...</p>
             }
