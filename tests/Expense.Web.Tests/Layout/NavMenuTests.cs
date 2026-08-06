@@ -226,7 +226,7 @@ public class NavMenuTests : BunitContext
     }
 
     [Fact]
-    public void NavMenu_ShowsForecastThenTransactionsThenReviewQueue_FollowedByADivider()
+    public void NavMenu_ShowsForecastThenTransactionsThenSpendingTrackerThenReviewQueue_FollowedByADivider()
     {
         RegisterFakes();
 
@@ -237,10 +237,12 @@ public class NavMenuTests : BunitContext
 
         var forecastIndex = markers.IndexOf("forecast");
         var transactionsIndex = markers.IndexOf("transactions");
+        var spendingTrackerIndex = markers.IndexOf("spending-tracker");
         var reviewQueueIndex = markers.IndexOf("review-queue");
 
         Assert.True(forecastIndex < transactionsIndex, "Forecast should come before Transactions");
-        Assert.True(transactionsIndex < reviewQueueIndex, "Transactions should come before Review Queue");
+        Assert.True(transactionsIndex < spendingTrackerIndex, "Transactions should come before Spending Tracker");
+        Assert.True(spendingTrackerIndex < reviewQueueIndex, "Spending Tracker should come before Review Queue");
         Assert.Equal("DIVIDER", markers[reviewQueueIndex + 1]);
     }
 
