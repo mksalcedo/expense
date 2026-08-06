@@ -305,6 +305,33 @@ public class SpendingTrackerTests : BunitContext
     }
 
     [Fact]
+    public void CategoryDetailsTable_ShowsABoldTotalRow_ReconcilingWithTheCategorysActualFigure()
+    {
+        // Groceries' Actual on the week table (MakeData) is 120.00 - the detail total should
+        // match it exactly, so the two numbers can be visually reconciled at a glance.
+        var provider = new FakeSpendingTrackerPageProvider(MakeData())
+        {
+            TransactionsByCategory = new()
+            {
+                [1] =
+                [
+                    new CategoryTransactionLine { Date = new DateOnly(2026, 7, 13), Description = "INGLES", Amount = 100m },
+                    new CategoryTransactionLine { Date = new DateOnly(2026, 7, 14), Description = "PUBLIX", Amount = 20m }
+                ]
+            }
+        };
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
+
+        var totalRow = cut.Find("#category-details-week-total-row");
+        Assert.Contains("Total", totalRow.TextContent);
+        Assert.Contains("120.00", totalRow.TextContent);
+        Assert.Contains("font-weight: 600", totalRow.GetAttribute("style"));
+    }
+
+    [Fact]
     public void ClickingACategoryName_RequestsTransactions_ScopedToThatCategoryAndPeriod()
     {
         var provider = new FakeSpendingTrackerPageProvider(MakeData());

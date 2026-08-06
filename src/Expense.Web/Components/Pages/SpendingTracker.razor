@@ -185,6 +185,12 @@ else
                             </tr>
                         }
                     </tbody>
+                    <tfoot>
+                        <tr id="category-details-@(idPrefix)-total-row" style="font-weight: 600; border-top: 2px solid var(--color-border, #ccc)">
+                            <td colspan="2">Total</td>
+                            <td class="text-right">@lines.Sum(l => l.Amount).ToString("N2")</td>
+                        </tr>
+                    </tfoot>
                 </table>
             }
         }
