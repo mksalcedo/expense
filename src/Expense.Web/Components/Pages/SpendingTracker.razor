@@ -118,6 +118,15 @@ else
                                     <button id="reset-carryover-btn-@category.CategoryId" style="font-size:0.85em;" @onclick="() => _resettingCategoryId = category.CategoryId">Reset...</button>
                                 }
                             }
+                            else
+                            {
+                                <!-- Reserves the same row height as a Reset button would, even though this
+                                     category doesn't have one - otherwise This Week and This Month end up
+                                     with different row heights for the same categories (whichever ones don't
+                                     carry over on that table), and their rows visibly drift out of alignment
+                                     down the list. -->
+                                <button style="font-size:0.85em; visibility: hidden;" tabindex="-1" aria-hidden="true">Reset...</button>
+                            }
                         </td>
                     </tr>
                 }

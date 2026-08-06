@@ -200,6 +200,21 @@ public class SpendingTrackerTests : BunitContext
         Assert.Empty(cut.FindAll("[id^='reset-carryover-btn-']"));
     }
 
+    // Regression guard: without a same-sized invisible placeholder, a category with no
+    // Reset button renders a shorter row than one with a button - since Week and Month show
+    // the button on different categories, their rows would drift out of vertical alignment
+    // with each other going down the list.
+    [Fact]
+    public void NonCarryoverCategory_StillReservesSpaceForAResetButton_SoRowHeightsStayAligned()
+    {
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeData()));
+
+        var cut = Render<SpendingTracker>();
+
+        var placeholders = cut.FindAll("button").Where(b => b.TextContent.Contains("Reset") && b.GetAttribute("style")!.Contains("hidden")).ToList();
+        Assert.NotEmpty(placeholders);
+    }
+
     [Fact]
     public void ClickingReset_ShowsThisPeriodAndNextPeriodChoices()
     {
