@@ -276,11 +276,11 @@ public class SpendingTrackerTests : BunitContext
 
         var cut = Render<SpendingTracker>();
 
-        Assert.Empty(cut.FindAll("#category-details-week-1"));
+        Assert.Empty(cut.FindAll("#category-details-week"));
     }
 
     [Fact]
-    public void ClickingACategoryName_ShowsItsContributingTransactions()
+    public void ClickingACategoryName_ShowsItsContributingTransactions_AsASeparateTableBelow()
     {
         var provider = new FakeSpendingTrackerPageProvider(MakeData())
         {
@@ -297,7 +297,8 @@ public class SpendingTrackerTests : BunitContext
         var cut = Render<SpendingTracker>();
         cut.Find("#category-link-week-1").Click();
 
-        var details = cut.Find("#category-details-week-1");
+        var details = cut.Find("#category-details-week");
+        Assert.Equal("TABLE", details.TagName);
         Assert.Contains("INGLES", details.TextContent);
         Assert.Contains("120.00", details.TextContent);
         Assert.Contains("07/14/2026", details.TextContent);
@@ -328,7 +329,7 @@ public class SpendingTrackerTests : BunitContext
         cut.Find("#category-link-week-1").Click();
         cut.Find("#category-link-week-1").Click();
 
-        Assert.Empty(cut.FindAll("#category-details-week-1"));
+        Assert.Empty(cut.FindAll("#category-details-week"));
     }
 
     [Fact]
@@ -353,12 +354,12 @@ public class SpendingTrackerTests : BunitContext
         var cut = Render<SpendingTracker>();
         cut.Find("#category-link-week-1").Click();
 
-        var details = cut.Find("#category-details-week-1");
+        var details = cut.Find("#category-details-week");
         Assert.Contains("No transactions found", details.TextContent);
     }
 
     [Fact]
-    public void ExpandingACategory_OnOneTable_DoesNotAffectTheSameCategoryOnTheOtherTable()
+    public void SelectingACategory_OnOneTable_DoesNotAffectTheOtherTable()
     {
         // Groceries (CategoryId 1) appears on both the week and month tables in MakeData().
         Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeData()));
@@ -366,7 +367,32 @@ public class SpendingTrackerTests : BunitContext
         var cut = Render<SpendingTracker>();
         cut.Find("#category-link-week-1").Click();
 
-        Assert.NotEmpty(cut.FindAll("#category-details-week-1"));
-        Assert.Empty(cut.FindAll("#category-details-month-1"));
+        Assert.NotEmpty(cut.FindAll("#category-details-week"));
+        Assert.Empty(cut.FindAll("#category-details-month"));
+    }
+
+    // Explicit regression guard for the exact bug the user called out: selecting a second
+    // category must replace the detail table shown, never stack a second one alongside it.
+    [Fact]
+    public void SelectingADifferentCategory_ReplacesTheDetailTable_DoesNotStack()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData())
+        {
+            TransactionsByCategory = new()
+            {
+                [1] = [new CategoryTransactionLine { Date = new DateOnly(2026, 7, 14), Description = "INGLES", Amount = 120m }],
+                [2] = [new CategoryTransactionLine { Date = new DateOnly(2026, 7, 15), Description = "OLIVE GARDEN", Amount = 45m }]
+            }
+        };
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
+        cut.Find("#category-link-week-2").Click();
+
+        Assert.Single(cut.FindAll("#category-details-week"));
+        var details = cut.Find("#category-details-week");
+        Assert.Contains("OLIVE GARDEN", details.TextContent);
+        Assert.DoesNotContain("INGLES", details.TextContent);
     }
 }

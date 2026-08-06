@@ -21,7 +21,10 @@ else
 @code {
     private SpendingTrackerPageData? _data;
     private int? _resettingCategoryId;
-    private readonly HashSet<string> _expandedRowKeys = [];
+
+    // One selected category per table (week/month), not a set - selecting a different
+    // category replaces whichever detail table was showing, it never stacks.
+    private readonly Dictionary<string, int?> _selectedCategoryId = [];
     private readonly Dictionary<string, List<CategoryTransactionLine>> _categoryTransactions = [];
 
     protected override async Task OnInitializedAsync()
@@ -36,19 +39,23 @@ else
         _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
     }
 
-    private static string RowKey(string idPrefix, int categoryId) => $"{idPrefix}:{categoryId}";
+    private static string TransactionsCacheKey(string idPrefix, int categoryId) => $"{idPrefix}:{categoryId}";
 
-    // Lazy-loaded on first click, not fetched up front for every category - most rows are
-    // never expanded, so eagerly pulling item-level detail for all of them would be wasted work.
-    private async Task ToggleCategoryDetailsAsync(string idPrefix, int categoryId, DateOnly periodStart, DateOnly periodEnd)
+    // Lazy-loaded on first click, not fetched up front for every category - most categories
+    // are never selected, so eagerly pulling item-level detail for all of them would be
+    // wasted work. Cached afterward so switching back to an already-viewed category doesn't
+    // re-fetch.
+    private async Task SelectCategoryDetailsAsync(string idPrefix, int categoryId, DateOnly periodStart, DateOnly periodEnd)
     {
-        var key = RowKey(idPrefix, categoryId);
-        if (!_expandedRowKeys.Add(key))
+        if (_selectedCategoryId.GetValueOrDefault(idPrefix) == categoryId)
         {
-            _expandedRowKeys.Remove(key);
+            _selectedCategoryId[idPrefix] = null;
             return;
         }
 
+        _selectedCategoryId[idPrefix] = categoryId;
+
+        var key = TransactionsCacheKey(idPrefix, categoryId);
         if (!_categoryTransactions.ContainsKey(key))
         {
             _categoryTransactions[key] = await SpendingTrackerProvider.GetCategoryTransactionsAsync(categoryId, periodStart, periodEnd);
@@ -75,7 +82,7 @@ else
                         <td>
                             <button id="category-link-@idPrefix-@category.CategoryId"
                                     style="background:none; border:none; padding:0; color:#0969da; text-decoration:underline; cursor:pointer; font:inherit;"
-                                    @onclick="() => ToggleCategoryDetailsAsync(idPrefix, category.CategoryId, result.PeriodStart, result.PeriodEnd)">
+                                    @onclick="() => SelectCategoryDetailsAsync(idPrefix, category.CategoryId, result.PeriodStart, result.PeriodEnd)">
                                 @category.CategoryName
                             </button>
                         </td>
@@ -113,43 +120,6 @@ else
                             }
                         </td>
                     </tr>
-                    @if (_expandedRowKeys.Contains(RowKey(idPrefix, category.CategoryId)))
-                    {
-                        <tr id="category-details-@idPrefix-@category.CategoryId">
-                            <td colspan="5" style="background: var(--color-surface, #f5f5f5); padding: 8px 12px;">
-                                @if (!_categoryTransactions.TryGetValue(RowKey(idPrefix, category.CategoryId), out var lines))
-                                {
-                                    <p style="margin: 4px 0;">Loading...</p>
-                                }
-                                else if (lines.Count == 0)
-                                {
-                                    <p style="margin: 4px 0;">No transactions found for this category in this period.</p>
-                                }
-                                else
-                                {
-                                    <table style="width: 100%;">
-                                        <thead>
-                                            <tr>
-                                                <th>Date</th>
-                                                <th>Description</th>
-                                                <th class="text-right">Amount</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach (var line in lines)
-                                            {
-                                                <tr>
-                                                    <td>@line.Date.ToString("MM/dd/yyyy")</td>
-                                                    <td>@line.Description</td>
-                                                    <td class="text-right">@line.Amount.ToString("N2")</td>
-                                                </tr>
-                                            }
-                                        </tbody>
-                                    </table>
-                                }
-                            </td>
-                        </tr>
-                    }
                 }
                 <tr>
                     <td>Pending / Uncategorized</td>
@@ -182,5 +152,41 @@ else
                 </tr>
             </tfoot>
         </table>
+
+        @if (_selectedCategoryId.GetValueOrDefault(idPrefix) is { } selectedCategoryId)
+        {
+            var selectedCategoryName = result.Categories.First(c => c.CategoryId == selectedCategoryId).CategoryName;
+            <h3 style="margin-top: 1.5em;">@selectedCategoryName transactions</h3>
+            @if (!_categoryTransactions.TryGetValue(TransactionsCacheKey(idPrefix, selectedCategoryId), out var lines))
+            {
+                <p id="category-details-@idPrefix">Loading...</p>
+            }
+            else if (lines.Count == 0)
+            {
+                <p id="category-details-@idPrefix">No transactions found for this category in this period.</p>
+            }
+            else
+            {
+                <table id="category-details-@idPrefix" style="width: 100%;">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Description</th>
+                            <th class="text-right">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in lines)
+                        {
+                            <tr>
+                                <td>@line.Date.ToString("MM/dd/yyyy")</td>
+                                <td>@line.Description</td>
+                                <td class="text-right">@line.Amount.ToString("N2")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
     </div>;
 }
