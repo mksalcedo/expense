@@ -15,6 +15,13 @@ public class SpendingTrackerTests : BunitContext
         public DateOnly? LastWeekReferenceDate { get; private set; }
         public DateOnly? LastMonthReferenceDate { get; private set; }
 
+        // Defaults to the same category list regardless of which period is requested - close
+        // enough for tests that just need a stable set of categories to select/navigate
+        // between. Overridable per test for the "category doesn't exist in this period"
+        // edge case.
+        public List<CategorySpendingSummary> WeekCategories { get; set; } = data.Week.Categories;
+        public List<CategorySpendingSummary> MonthCategories { get; set; } = data.Month.Categories;
+
         public Task<SpendingTrackerPageData> GetSpendingTrackerAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
 
         // Same Sunday-start-week/calendar-month math as the real SpendingTrackerService, so
@@ -23,14 +30,14 @@ public class SpendingTrackerTests : BunitContext
         {
             LastWeekReferenceDate = referenceDate;
             var start = referenceDate.AddDays(-(int)referenceDate.DayOfWeek);
-            return Task.FromResult(new SpendingTrackerResult { PeriodStart = start, PeriodEnd = start.AddDays(6), Categories = [], PendingAmount = 0m });
+            return Task.FromResult(new SpendingTrackerResult { PeriodStart = start, PeriodEnd = start.AddDays(6), Categories = WeekCategories, PendingAmount = 0m });
         }
 
         public Task<SpendingTrackerResult> GetMonthAsync(DateOnly referenceDate, CancellationToken cancellationToken = default)
         {
             LastMonthReferenceDate = referenceDate;
             var start = new DateOnly(referenceDate.Year, referenceDate.Month, 1);
-            return Task.FromResult(new SpendingTrackerResult { PeriodStart = start, PeriodEnd = start.AddMonths(1).AddDays(-1), Categories = [], PendingAmount = 0m });
+            return Task.FromResult(new SpendingTrackerResult { PeriodStart = start, PeriodEnd = start.AddMonths(1).AddDays(-1), Categories = MonthCategories, PendingAmount = 0m });
         }
 
         public Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod, CancellationToken cancellationToken = default)
@@ -539,11 +546,8 @@ public class SpendingTrackerTests : BunitContext
         Assert.Contains("2026-07-01", cut.Markup); // Month table unchanged
     }
 
-    // Regression guard: the drill-down cache is keyed per period, but the *selection* itself
-    // also has to clear on navigation - otherwise a stale category name/table would keep
-    // showing against the newly-loaded (different) period until re-clicked.
     [Fact]
-    public void NavigatingAway_ClearsTheSelectedCategoryDetails()
+    public void NavigatingWithACategorySelected_KeepsItSelected_AndFetchesTheNewPeriodsTransactions()
     {
         var provider = new FakeSpendingTrackerPageProvider(MakeData())
         {
@@ -553,8 +557,45 @@ public class SpendingTrackerTests : BunitContext
 
         var cut = Render<SpendingTracker>();
         cut.Find("#category-link-week-1").Click();
+        cut.Find("#week-next").Click();
+
+        Assert.NotEmpty(cut.FindAll("#category-details-week"));
+        var requestsForCategory1 = provider.TransactionRequests.Where(r => r.CategoryId == 1).ToList();
+        Assert.Equal(2, requestsForCategory1.Count); // once for the original period, once for the navigated one
+        Assert.NotEqual(requestsForCategory1[0].PeriodStart, requestsForCategory1[1].PeriodStart);
+    }
+
+    [Fact]
+    public void NavigatingBackToAPreviouslyViewedPeriod_ReusesTheCachedTransactions_DoesNotRefetch()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData())
+        {
+            TransactionsByCategory = new() { [1] = [new CategoryTransactionLine { Date = new DateOnly(2026, 7, 14), Description = "INGLES", Amount = 120m }] }
+        };
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click(); // fetch for the original period
+        cut.Find("#week-next").Click();             // fetch for the next period
+        cut.Find("#week-previous").Click();          // back to the original period - already cached
+
+        Assert.Equal(2, provider.TransactionRequests.Count(r => r.CategoryId == 1));
+    }
+
+    // If the selected category isn't budgeted (or no longer exists) in the newly-navigated
+    // period, there's nothing to show it against - falls back to clearing the selection
+    // rather than pointing the detail table at a category that isn't even on screen.
+    [Fact]
+    public void NavigatingToAPeriodWithoutTheSelectedCategory_ClearsTheSelection()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
         Assert.NotEmpty(cut.FindAll("#category-details-week"));
 
+        provider.WeekCategories = []; // the navigated-to period has no categories at all
         cut.Find("#week-next").Click();
 
         Assert.Empty(cut.FindAll("#category-details-week"));

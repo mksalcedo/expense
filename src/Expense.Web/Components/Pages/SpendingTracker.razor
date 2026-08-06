@@ -75,48 +75,75 @@ else
     // independently-tracked "today", so repeated Previous/Next clicks stay consistent with
     // what's actually on screen. Current jumps back to the real today instead. Navigating
     // away clears whichever category's transactions were selected on that table - the
-    // selection is period-specific and showing it against a newly-loaded period would be
-    // confusing (or just wrong, before the click that would re-fetch it).
+    // If a category is currently selected on that table, navigating keeps it selected and
+    // re-fetches its transactions for the newly-loaded period instead of clearing the
+    // selection - the whole point of Previous/Next here is to keep looking at the same
+    // category across periods without re-clicking it every time.
     private async Task PreviousWeekAsync()
     {
         _weekReferenceDate = _weekReferenceDate.AddDays(-7);
         _data!.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
-        _selectedCategoryId["week"] = null;
+        await RefreshSelectedCategoryAsync("week", _data.Week);
     }
 
     private async Task NextWeekAsync()
     {
         _weekReferenceDate = _weekReferenceDate.AddDays(7);
         _data!.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
-        _selectedCategoryId["week"] = null;
+        await RefreshSelectedCategoryAsync("week", _data.Week);
     }
 
     private async Task CurrentWeekAsync()
     {
         _weekReferenceDate = DateOnly.FromDateTime(DateTime.Today);
         _data!.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
-        _selectedCategoryId["week"] = null;
+        await RefreshSelectedCategoryAsync("week", _data.Week);
     }
 
     private async Task PreviousMonthAsync()
     {
         _monthReferenceDate = _monthReferenceDate.AddMonths(-1);
         _data!.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
-        _selectedCategoryId["month"] = null;
+        await RefreshSelectedCategoryAsync("month", _data.Month);
     }
 
     private async Task NextMonthAsync()
     {
         _monthReferenceDate = _monthReferenceDate.AddMonths(1);
         _data!.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
-        _selectedCategoryId["month"] = null;
+        await RefreshSelectedCategoryAsync("month", _data.Month);
     }
 
     private async Task CurrentMonthAsync()
     {
         _monthReferenceDate = DateOnly.FromDateTime(DateTime.Today);
         _data!.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
-        _selectedCategoryId["month"] = null;
+        await RefreshSelectedCategoryAsync("month", _data.Month);
+    }
+
+    // Keeps whichever category is selected on this table selected across the navigation,
+    // fetching (or reusing an already-cached) transaction list for the newly-loaded period -
+    // unless that category no longer appears in the new period at all (e.g. it wasn't
+    // budgeted yet, or has since been deactivated), in which case there's nothing to show and
+    // the selection is cleared instead of pointing at a category that isn't on screen.
+    private async Task RefreshSelectedCategoryAsync(string idPrefix, SpendingTrackerResult result)
+    {
+        if (_selectedCategoryId.GetValueOrDefault(idPrefix) is not { } categoryId)
+        {
+            return;
+        }
+
+        if (!result.Categories.Any(c => c.CategoryId == categoryId))
+        {
+            _selectedCategoryId[idPrefix] = null;
+            return;
+        }
+
+        var key = TransactionsCacheKey(idPrefix, categoryId, result.PeriodStart);
+        if (!_categoryTransactions.ContainsKey(key))
+        {
+            _categoryTransactions[key] = await SpendingTrackerProvider.GetCategoryTransactionsAsync(categoryId, result.PeriodStart, result.PeriodEnd);
+        }
     }
 
     private RenderFragment RenderPeriod(string title, string idPrefix, SpendingTrackerResult result, Func<Task> onPrevious, Func<Task> onNext, Func<Task> onCurrent) => @<div style="min-width: 520px;">
