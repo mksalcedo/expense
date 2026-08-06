@@ -56,6 +56,7 @@ public class DashboardTests : BunitContext
         }
 
         public Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<List<CategoryTransactionLine>> GetCategoryTransactionsAsync(int categoryId, DateOnly periodStart, DateOnly periodEnd, CancellationToken cancellationToken = default) => Task.FromResult(new List<CategoryTransactionLine>());
     }
 
     // Only Dashboard.razor's narrow "sum the active Savings accounts' latest balance" read is

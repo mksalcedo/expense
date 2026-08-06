@@ -10,6 +10,8 @@ public class SpendingTrackerTests : BunitContext
     private class FakeSpendingTrackerPageProvider(SpendingTrackerPageData data) : ISpendingTrackerPageProvider
     {
         public List<(int CategoryId, bool StartingNextPeriod)> ResetCalls { get; } = [];
+        public List<(int CategoryId, DateOnly PeriodStart, DateOnly PeriodEnd)> TransactionRequests { get; } = [];
+        public Dictionary<int, List<CategoryTransactionLine>> TransactionsByCategory { get; set; } = [];
 
         public Task<SpendingTrackerPageData> GetSpendingTrackerAsync(CancellationToken cancellationToken = default) => Task.FromResult(data);
         public Task<SpendingTrackerResult> GetWeekAsync(DateOnly referenceDate, CancellationToken cancellationToken = default) => Task.FromResult(data.Week);
@@ -19,6 +21,12 @@ public class SpendingTrackerTests : BunitContext
         {
             ResetCalls.Add((categoryId, startingNextPeriod));
             return Task.CompletedTask;
+        }
+
+        public Task<List<CategoryTransactionLine>> GetCategoryTransactionsAsync(int categoryId, DateOnly periodStart, DateOnly periodEnd, CancellationToken cancellationToken = default)
+        {
+            TransactionRequests.Add((categoryId, periodStart, periodEnd));
+            return Task.FromResult(TransactionsByCategory.GetValueOrDefault(categoryId, []));
         }
     }
 
@@ -259,5 +267,106 @@ public class SpendingTrackerTests : BunitContext
 
         var totalsRow = cut.Find("#week-totals-row");
         Assert.Contains("30.00", totalsRow.TextContent);
+    }
+
+    [Fact]
+    public void CategoryDetails_AreNotShown_UntilTheCategoryNameIsClicked()
+    {
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeData()));
+
+        var cut = Render<SpendingTracker>();
+
+        Assert.Empty(cut.FindAll("#category-details-week-1"));
+    }
+
+    [Fact]
+    public void ClickingACategoryName_ShowsItsContributingTransactions()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData())
+        {
+            TransactionsByCategory = new()
+            {
+                [1] =
+                [
+                    new CategoryTransactionLine { Date = new DateOnly(2026, 7, 14), Description = "INGLES", Amount = 120m }
+                ]
+            }
+        };
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
+
+        var details = cut.Find("#category-details-week-1");
+        Assert.Contains("INGLES", details.TextContent);
+        Assert.Contains("120.00", details.TextContent);
+        Assert.Contains("07/14/2026", details.TextContent);
+    }
+
+    [Fact]
+    public void ClickingACategoryName_RequestsTransactions_ScopedToThatCategoryAndPeriod()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
+
+        var request = Assert.Single(provider.TransactionRequests);
+        Assert.Equal(1, request.CategoryId);
+        Assert.Equal(new DateOnly(2026, 7, 12), request.PeriodStart);
+        Assert.Equal(new DateOnly(2026, 7, 18), request.PeriodEnd);
+    }
+
+    [Fact]
+    public void ClickingACategoryNameTwice_HidesItsDetailsAgain()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
+        cut.Find("#category-link-week-1").Click();
+
+        Assert.Empty(cut.FindAll("#category-details-week-1"));
+    }
+
+    [Fact]
+    public void ClickingACategoryNameASecondTime_DoesNotReFetchTransactions()
+    {
+        var provider = new FakeSpendingTrackerPageProvider(MakeData());
+        Services.AddSingleton<ISpendingTrackerPageProvider>(provider);
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
+        cut.Find("#category-link-week-1").Click(); // collapse
+        cut.Find("#category-link-week-1").Click(); // expand again
+
+        Assert.Single(provider.TransactionRequests);
+    }
+
+    [Fact]
+    public void NoTransactionsForTheCategory_ShowsAnExplicitEmptyMessage()
+    {
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeData()));
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
+
+        var details = cut.Find("#category-details-week-1");
+        Assert.Contains("No transactions found", details.TextContent);
+    }
+
+    [Fact]
+    public void ExpandingACategory_OnOneTable_DoesNotAffectTheSameCategoryOnTheOtherTable()
+    {
+        // Groceries (CategoryId 1) appears on both the week and month tables in MakeData().
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeData()));
+
+        var cut = Render<SpendingTracker>();
+        cut.Find("#category-link-week-1").Click();
+
+        Assert.NotEmpty(cut.FindAll("#category-details-week-1"));
+        Assert.Empty(cut.FindAll("#category-details-month-1"));
     }
 }

@@ -21,6 +21,8 @@ else
 @code {
     private SpendingTrackerPageData? _data;
     private int? _resettingCategoryId;
+    private readonly HashSet<string> _expandedRowKeys = [];
+    private readonly Dictionary<string, List<CategoryTransactionLine>> _categoryTransactions = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -32,6 +34,25 @@ else
         await SpendingTrackerProvider.ResetCarryoverAsync(categoryId, startingNextPeriod);
         _resettingCategoryId = null;
         _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
+    }
+
+    private static string RowKey(string idPrefix, int categoryId) => $"{idPrefix}:{categoryId}";
+
+    // Lazy-loaded on first click, not fetched up front for every category - most rows are
+    // never expanded, so eagerly pulling item-level detail for all of them would be wasted work.
+    private async Task ToggleCategoryDetailsAsync(string idPrefix, int categoryId, DateOnly periodStart, DateOnly periodEnd)
+    {
+        var key = RowKey(idPrefix, categoryId);
+        if (!_expandedRowKeys.Add(key))
+        {
+            _expandedRowKeys.Remove(key);
+            return;
+        }
+
+        if (!_categoryTransactions.ContainsKey(key))
+        {
+            _categoryTransactions[key] = await SpendingTrackerProvider.GetCategoryTransactionsAsync(categoryId, periodStart, periodEnd);
+        }
     }
 
     private RenderFragment RenderPeriod(string title, string idPrefix, SpendingTrackerResult result) => @<div style="min-width: 520px;">
@@ -51,7 +72,13 @@ else
                 @foreach (var category in result.Categories)
                 {
                     <tr>
-                        <td>@category.CategoryName</td>
+                        <td>
+                            <button id="category-link-@idPrefix-@category.CategoryId"
+                                    style="background:none; border:none; padding:0; color:#0969da; text-decoration:underline; cursor:pointer; font:inherit;"
+                                    @onclick="() => ToggleCategoryDetailsAsync(idPrefix, category.CategoryId, result.PeriodStart, result.PeriodEnd)">
+                                @category.CategoryName
+                            </button>
+                        </td>
                         <td class="text-right">@category.Budget.ToString("N2")</td>
                         <td class="text-right">@category.Actual.ToString("N2")</td>
                         <td class="text-right">
@@ -86,6 +113,43 @@ else
                             }
                         </td>
                     </tr>
+                    @if (_expandedRowKeys.Contains(RowKey(idPrefix, category.CategoryId)))
+                    {
+                        <tr id="category-details-@idPrefix-@category.CategoryId">
+                            <td colspan="5" style="background: var(--color-surface, #f5f5f5); padding: 8px 12px;">
+                                @if (!_categoryTransactions.TryGetValue(RowKey(idPrefix, category.CategoryId), out var lines))
+                                {
+                                    <p style="margin: 4px 0;">Loading...</p>
+                                }
+                                else if (lines.Count == 0)
+                                {
+                                    <p style="margin: 4px 0;">No transactions found for this category in this period.</p>
+                                }
+                                else
+                                {
+                                    <table style="width: 100%;">
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Description</th>
+                                                <th class="text-right">Amount</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var line in lines)
+                                            {
+                                                <tr>
+                                                    <td>@line.Date.ToString("MM/dd/yyyy")</td>
+                                                    <td>@line.Description</td>
+                                                    <td class="text-right">@line.Amount.ToString("N2")</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+                            </td>
+                        </tr>
+                    }
                 }
                 <tr>
                     <td>Pending / Uncategorized</td>

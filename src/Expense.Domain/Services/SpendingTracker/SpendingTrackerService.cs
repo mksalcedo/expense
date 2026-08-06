@@ -58,6 +58,29 @@ public class SpendingTrackerService(BudgetProrationService proration)
         await context.SaveChangesAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// The individual bank transactions and Amazon items making up a category's Actual
+    /// figure for a period - same filtering predicates as the aggregated totals in
+    /// GetSummaryAsync, so the two always reconcile exactly.
+    /// </summary>
+    public async Task<List<CategoryTransactionLine>> GetCategoryTransactionsAsync(
+        ExpenseDbContext context, int categoryId, DateOnly periodStart, DateOnly periodEnd, CancellationToken cancellationToken = default)
+    {
+        var bankLines = await context.BankTransactions
+            .Where(t => !t.IsAmazonMerchant && t.CategoryId == categoryId
+                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
+            .Where(t => (t.PostedDate ?? t.TransactionDate) >= periodStart && (t.PostedDate ?? t.TransactionDate) <= periodEnd)
+            .Select(t => new CategoryTransactionLine { Date = t.PostedDate ?? t.TransactionDate, Description = t.Description, Amount = -t.Amount })
+            .ToListAsync(cancellationToken);
+
+        var amazonLines = await context.AmazonOrderItems
+            .Where(i => i.CategoryId == categoryId && i.OrderDate >= periodStart && i.OrderDate <= periodEnd)
+            .Select(i => new CategoryTransactionLine { Date = i.OrderDate, Description = i.ItemTitle, Amount = i.Price * i.Quantity + i.TaxAllocated - (i.RefundAmount ?? 0m) })
+            .ToListAsync(cancellationToken);
+
+        return bankLines.Concat(amazonLines).OrderBy(l => l.Date).ToList();
+    }
+
     private static Frequency DetermineNativeFrequency(BudgetPeriod? activeBudget) =>
         activeBudget?.Frequency == Frequency.Weekly ? Frequency.Weekly : Frequency.Monthly;
 

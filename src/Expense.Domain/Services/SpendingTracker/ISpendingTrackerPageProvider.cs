@@ -13,4 +13,7 @@ public interface ISpendingTrackerPageProvider
 
     /// <summary>See SpendingTrackerService.ResetCarryoverAsync - startingNextPeriod false = "starting this period", true = "starting next period".</summary>
     Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod, CancellationToken cancellationToken = default);
+
+    /// <summary>The drill-down list behind a category's Actual figure - see SpendingTrackerService.GetCategoryTransactionsAsync.</summary>
+    Task<List<CategoryTransactionLine>> GetCategoryTransactionsAsync(int categoryId, DateOnly periodStart, DateOnly periodEnd, CancellationToken cancellationToken = default);
 }

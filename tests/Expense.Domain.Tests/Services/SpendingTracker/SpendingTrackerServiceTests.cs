@@ -539,4 +539,101 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
         var summary = Assert.Single(result.Categories);
         Assert.Equal(0m, summary.CarriedIn); // the queued reset has now taken effect
     }
+
+    // The Spending Tracker's drill-down: individual bank transactions and Amazon items
+    // making up a category's Actual figure for a period.
+    [Fact]
+    public async Task GetCategoryTransactionsAsync_ReturnsBankAndAmazonLines_SortedByDate()
+    {
+        var groceries = await CreateGroceriesAsync();
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 14), PostedDate = new DateOnly(2026, 7, 14),
+            Description = "INGLES", Amount = -120m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.AmazonOrderItems.Add(new AmazonOrderItem
+        {
+            OrderId = "ORDER1", OrderDate = new DateOnly(2026, 7, 13), ItemTitle = "Vitamins", Price = 20m, Quantity = 1,
+            TaxAllocated = 1.60m, CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var lines = await _sut.GetCategoryTransactionsAsync(Context, groceries.Id, new DateOnly(2026, 7, 12), new DateOnly(2026, 7, 18));
+
+        Assert.Equal(2, lines.Count);
+        Assert.Equal(new DateOnly(2026, 7, 13), lines[0].Date);
+        Assert.Equal("Vitamins", lines[0].Description);
+        Assert.Equal(21.60m, lines[0].Amount);
+        Assert.Equal(new DateOnly(2026, 7, 14), lines[1].Date);
+        Assert.Equal("INGLES", lines[1].Description);
+        Assert.Equal(120m, lines[1].Amount);
+    }
+
+    [Fact]
+    public async Task GetCategoryTransactionsAsync_ExcludesTransactionsOutsideThePeriod()
+    {
+        var groceries = await CreateGroceriesAsync();
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction // outside the requested period
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 11), PostedDate = new DateOnly(2026, 7, 11),
+            Description = "LAST WEEK", Amount = -999m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var lines = await _sut.GetCategoryTransactionsAsync(Context, groceries.Id, new DateOnly(2026, 7, 12), new DateOnly(2026, 7, 18));
+
+        Assert.Empty(lines);
+    }
+
+    [Fact]
+    public async Task GetCategoryTransactionsAsync_RefundShowsAsANegativeLine()
+    {
+        var groceries = await CreateGroceriesAsync();
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 14), PostedDate = new DateOnly(2026, 7, 14),
+            Description = "INGLES REFUND", Amount = 20m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var lines = await _sut.GetCategoryTransactionsAsync(Context, groceries.Id, new DateOnly(2026, 7, 12), new DateOnly(2026, 7, 18));
+
+        var line = Assert.Single(lines);
+        Assert.Equal(-20m, line.Amount);
+    }
+
+    // Regression guard: the drill-down list must always sum to exactly the same Actual
+    // figure the summary row shows, or the two would visibly disagree with each other.
+    [Fact]
+    public async Task GetCategoryTransactionsAsync_SumOfLines_ReconcilesWithTheSummarysActualFigure()
+    {
+        var groceries = await CreateGroceriesAsync();
+        var amex = await CreateAccountAsync();
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 13), PostedDate = new DateOnly(2026, 7, 13),
+                Description = "INGLES", Amount = -100m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 7, 14), PostedDate = new DateOnly(2026, 7, 14),
+                Description = "INGLES REFUND", Amount = 20m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+        Context.AmazonOrderItems.Add(new AmazonOrderItem
+        {
+            OrderId = "ORDER1", OrderDate = new DateOnly(2026, 7, 15), ItemTitle = "Vitamins", Price = 55m, Quantity = 1,
+            TaxAllocated = 5m, CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentWeekAsync(Context, AsOfDate);
+        var lines = await _sut.GetCategoryTransactionsAsync(Context, groceries.Id, result.PeriodStart, result.PeriodEnd);
+
+        var summary = Assert.Single(result.Categories);
+        Assert.Equal(summary.Actual, lines.Sum(l => l.Amount));
+    }
 }
