@@ -667,6 +667,26 @@ public class CategoriesTests : BunitContext
         Assert.Empty(cut.FindAll("#detail-statement-close-day"));
     }
 
+    // Regression guard: UpdatePaymentFieldsAsync overwrites all of an account's payment
+    // fields together (there's no partial-patch), so this page's quick inline edit - which
+    // has no visible PaymentStartDate input at all - must still round-trip whatever value the
+    // account already has, or saving here would silently wipe out a start date set on the
+    // full Accounts page.
+    [Fact]
+    public void SavingAnAccountPaymentCategory_PreservesTheLinkedAccountsPaymentStartDate()
+    {
+        var provider = MakeProvider();
+        provider.Rows.Single(r => r.Id == 5).LinkedAccountPaymentStartDate = new DateOnly(2026, 9, 15);
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-5").Click(); // Discover Payment: linked to a Debt account
+        cut.Find("#detail-min-payment").Change("180");
+        cut.Find("#detail-save").Click();
+
+        Assert.Equal(new DateOnly(2026, 9, 15), provider.LastUpdatedAccountPayment!.PaymentStartDate);
+    }
+
     [Fact]
     public void SelectingAnActiveSpendingAccountPaymentCategory_ShowsStatementCloseDayButNotMinPayment()
     {

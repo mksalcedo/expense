@@ -10,11 +10,11 @@ public interface IAccountsPageProvider
     /// <summary>Returns the new account's id, so the caller can keep working with it (e.g. switch straight into editing it) without a second round trip.</summary>
     Task<int> CreateAccountAsync(
         string name, AccountType type, decimal? minPayment, decimal? extraPayment,
-        int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default);
+        int? paymentDueDay, int? statementCloseDay, decimal? apr, DateOnly? paymentStartDate = null, CancellationToken cancellationToken = default);
 
     Task UpdateAccountAsync(
         int accountId, string name, decimal? minPayment, decimal? extraPayment,
-        int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default);
+        int? paymentDueDay, int? statementCloseDay, decimal? apr, DateOnly? paymentStartDate = null, CancellationToken cancellationToken = default);
 
     Task DeactivateAccountAsync(int accountId, CancellationToken cancellationToken = default);
 

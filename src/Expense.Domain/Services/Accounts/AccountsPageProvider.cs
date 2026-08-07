@@ -29,7 +29,8 @@ public class AccountsPageProvider(IDbContextFactory<ExpenseDbContext> contextFac
                 ExtraPayment = a.ExtraPayment,
                 PaymentDueDay = a.PaymentDueDay,
                 StatementCloseDay = a.StatementCloseDay,
-                Apr = a.Apr
+                Apr = a.Apr,
+                PaymentStartDate = a.PaymentStartDate
             })
             .ToListAsync(cancellationToken);
 
@@ -45,19 +46,19 @@ public class AccountsPageProvider(IDbContextFactory<ExpenseDbContext> contextFac
 
     public async Task<int> CreateAccountAsync(
         string name, AccountType type, decimal? minPayment, decimal? extraPayment,
-        int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default)
+        int? paymentDueDay, int? statementCloseDay, decimal? apr, DateOnly? paymentStartDate = null, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var account = await accounts.CreateAccountAsync(context, name, type, minPayment, extraPayment, paymentDueDay, statementCloseDay, apr: apr);
+        var account = await accounts.CreateAccountAsync(context, name, type, minPayment, extraPayment, paymentDueDay, statementCloseDay, apr: apr, paymentStartDate: paymentStartDate);
         return account.Id;
     }
 
     public async Task UpdateAccountAsync(
         int accountId, string name, decimal? minPayment, decimal? extraPayment,
-        int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default)
+        int? paymentDueDay, int? statementCloseDay, decimal? apr, DateOnly? paymentStartDate = null, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await accounts.UpdateAccountAsync(context, accountId, name, minPayment, extraPayment, paymentDueDay, statementCloseDay, apr);
+        await accounts.UpdateAccountAsync(context, accountId, name, minPayment, extraPayment, paymentDueDay, statementCloseDay, apr, paymentStartDate);
     }
 
     public async Task UpdateBalanceAsync(int accountId, DateOnly asOfDate, decimal balance, CancellationToken cancellationToken = default)

@@ -27,4 +27,5 @@ public class CategoryRow
     public decimal? LinkedAccountExtraPayment { get; set; }
     public int? LinkedAccountPaymentDueDay { get; set; }
     public int? LinkedAccountStatementCloseDay { get; set; }
+    public DateOnly? LinkedAccountPaymentStartDate { get; set; }
 }

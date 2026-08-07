@@ -18,7 +18,7 @@ public class CategoriesPageProvider(
         var currentPeriods = (await budgets.GetCurrentBudgetsAsync(context)).ToDictionary(p => p.CategoryId);
 
         var linkedAccountsById = await context.Accounts
-            .Select(a => new { a.Id, a.Type, a.MinPayment, a.ExtraPayment, a.PaymentDueDay, a.StatementCloseDay })
+            .Select(a => new { a.Id, a.Type, a.MinPayment, a.ExtraPayment, a.PaymentDueDay, a.StatementCloseDay, a.PaymentStartDate })
             .ToDictionaryAsync(a => a.Id, cancellationToken);
 
         var categoryData = await context.Categories
@@ -57,7 +57,8 @@ public class CategoriesPageProvider(
                 LinkedAccountMinPayment = linkedAccount?.MinPayment,
                 LinkedAccountExtraPayment = linkedAccount?.ExtraPayment,
                 LinkedAccountPaymentDueDay = linkedAccount?.PaymentDueDay,
-                LinkedAccountStatementCloseDay = linkedAccount?.StatementCloseDay
+                LinkedAccountStatementCloseDay = linkedAccount?.StatementCloseDay,
+                LinkedAccountPaymentStartDate = linkedAccount?.PaymentStartDate
             };
         }).ToList();
 
@@ -102,7 +103,8 @@ public class CategoriesPageProvider(
         if (rule?.AccountId is not { } accountId) return;
 
         await accounts.UpdatePaymentFieldsAsync(context, accountId,
-            accountPayment.MinPayment, accountPayment.ExtraPayment, accountPayment.PaymentDueDay, accountPayment.StatementCloseDay);
+            accountPayment.MinPayment, accountPayment.ExtraPayment, accountPayment.PaymentDueDay, accountPayment.StatementCloseDay,
+            accountPayment.PaymentStartDate);
     }
 
     public async Task DeactivateCategoryAsync(int categoryId, CancellationToken cancellationToken = default)

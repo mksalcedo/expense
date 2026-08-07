@@ -1513,6 +1513,58 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(-150m, row.Amount);
     }
 
+    // Found real 2026-08-07 planning a real debt-consolidation loan: a newly-added debt
+    // account's payment schedule used to be implicitly active "since the beginning of time" -
+    // adding a loan today whose real first payment isn't for weeks would have produced a
+    // phantom payment this month. PaymentStartDate lets the schedule genuinely not start yet.
+    [Fact]
+    public async Task DebtAccountPayment_WithAFuturePaymentStartDate_DoesNotAppearBeforeThatDate()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 8, 7));
+        var loan = new Account
+        {
+            Name = "BMG", Type = AccountType.Debt, MinPayment = 2334.99m, PaymentDueDay = 15,
+            PaymentStartDate = new DateOnly(2026, 9, 15)
+        };
+        Context.Accounts.Add(loan);
+        await Context.SaveChangesAsync();
+
+        var loanPayment = new Category { Name = "BMG Payment" };
+        Context.Categories.Add(loanPayment);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = loanPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = loan.Id });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 7), new DateOnly(2026, 8, 31));
+
+        Assert.DoesNotContain(result.Rows, r => r.Description == "BMG Payment");
+    }
+
+    [Fact]
+    public async Task DebtAccountPayment_WithAFuturePaymentStartDate_AppearsOnceThatDateIsInTheWindow()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 8, 7));
+        var loan = new Account
+        {
+            Name = "BMG", Type = AccountType.Debt, MinPayment = 2334.99m, PaymentDueDay = 15,
+            PaymentStartDate = new DateOnly(2026, 9, 15)
+        };
+        Context.Accounts.Add(loan);
+        await Context.SaveChangesAsync();
+
+        var loanPayment = new Category { Name = "BMG Payment" };
+        Context.Categories.Add(loanPayment);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = loanPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = loan.Id });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 7), new DateOnly(2026, 9, 30));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "BMG Payment");
+        Assert.Equal(new DateOnly(2026, 9, 15), row.Date);
+        Assert.Equal(-2334.99m, row.Amount);
+    }
+
     [Fact]
     public async Task PartialPayment_ReducesTheRemainingForecastedAmount()
     {

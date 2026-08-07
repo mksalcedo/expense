@@ -116,6 +116,18 @@ else
                                 <input id="detail-payment-due-day" type="number" value="@_formPaymentDueDay"
                                        @onchange="e => _formPaymentDueDay = ParseNullableInt((string)e.Value!)" />
                             </div>
+                            @if (_formType == AccountType.Debt)
+                            {
+                                <div style="display: contents">
+                                    <label for="detail-payment-start-date">Payment start date</label>
+                                    <input id="detail-payment-start-date" type="date" value="@_formPaymentStartDate?.ToString("yyyy-MM-dd")"
+                                           @onchange="e => _formPaymentStartDate = ParseNullableDate((string)e.Value!)" />
+                                </div>
+                                <p style="grid-column: 1 / -1; margin: 0; color: #666; font-size: 0.9em;">
+                                    Leave blank for an ordinary ongoing account. Set this when the real first payment is in the
+                                    future (e.g. a new loan) - the forecast won't show a payment before this date.
+                                </p>
+                            }
                             @if (_formType == AccountType.ActiveSpending)
                             {
                                 <div style="display: contents">
@@ -205,6 +217,7 @@ else
     private int? _formPaymentDueDay;
     private int? _formStatementCloseDay;
     private decimal? _formApr;
+    private DateOnly? _formPaymentStartDate;
 
     private decimal? _selectedLatestBalance;
     private DateOnly? _selectedLatestBalanceAsOfDate;
@@ -228,6 +241,9 @@ else
 
     private static int? ParseNullableInt(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : int.Parse(value);
+
+    private static DateOnly? ParseNullableDate(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : DateOnly.Parse(value);
 
     // Storage convention (matches the accounting/SimpleFin data already in the database):
     // negative = amount owed, positive = credit balance. Display always shows a positive
@@ -294,6 +310,7 @@ else
         _formPaymentDueDay = null;
         _formStatementCloseDay = null;
         _formApr = null;
+        _formPaymentStartDate = null;
         _selectedLatestBalance = null;
         _selectedLatestBalanceAsOfDate = null;
         _formBalanceAsOfDate = DateOnly.FromDateTime(DateTime.Today);
@@ -313,6 +330,7 @@ else
         _formPaymentDueDay = account.PaymentDueDay;
         _formStatementCloseDay = account.StatementCloseDay;
         _formApr = account.Apr;
+        _formPaymentStartDate = account.PaymentStartDate;
         _selectedLatestBalance = account.LatestBalance;
         _selectedLatestBalanceAsOfDate = account.LatestBalanceAsOfDate;
         _formBalanceAsOfDate = DateOnly.FromDateTime(DateTime.Today);
@@ -343,13 +361,13 @@ else
         if (_mode == DetailMode.Creating)
         {
             accountId = await AccountsProvider.CreateAccountAsync(
-                _formName, _formType, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay, _formApr);
+                _formName, _formType, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay, _formApr, _formPaymentStartDate);
         }
         else if (_selectedId is { } id)
         {
             accountId = id;
             await AccountsProvider.UpdateAccountAsync(
-                id, _formName, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay, _formApr);
+                id, _formName, _formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay, _formApr, _formPaymentStartDate);
         }
         else
         {

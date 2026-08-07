@@ -23,6 +23,7 @@ public class AccountsTests : BunitContext
         public int? LastCreatedPaymentDueDay { get; private set; }
         public int? LastCreatedStatementCloseDay { get; private set; }
         public decimal? LastCreatedApr { get; private set; }
+        public DateOnly? LastCreatedPaymentStartDate { get; private set; }
 
         public int? LastUpdatedId { get; private set; }
         public string? LastUpdatedName { get; private set; }
@@ -31,6 +32,7 @@ public class AccountsTests : BunitContext
         public int? LastUpdatedPaymentDueDay { get; private set; }
         public int? LastUpdatedStatementCloseDay { get; private set; }
         public decimal? LastUpdatedApr { get; private set; }
+        public DateOnly? LastUpdatedPaymentStartDate { get; private set; }
 
         public int? LastDeactivatedId { get; private set; }
         public int? LastReactivatedId { get; private set; }
@@ -43,7 +45,7 @@ public class AccountsTests : BunitContext
             Task.FromResult(new AccountsPageData { Accounts = Rows });
 
         public Task<int> CreateAccountAsync(string name, AccountType type, decimal? minPayment, decimal? extraPayment,
-            int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default)
+            int? paymentDueDay, int? statementCloseDay, decimal? apr, DateOnly? paymentStartDate = null, CancellationToken cancellationToken = default)
         {
             LastCreatedName = name;
             LastCreatedType = type;
@@ -52,19 +54,20 @@ public class AccountsTests : BunitContext
             LastCreatedPaymentDueDay = paymentDueDay;
             LastCreatedStatementCloseDay = statementCloseDay;
             LastCreatedApr = apr;
+            LastCreatedPaymentStartDate = paymentStartDate;
 
             var id = NextCreatedId;
             Rows.Add(new AccountRow
             {
                 Id = id, Name = name, Type = type, IsActive = true,
                 MinPayment = minPayment, ExtraPayment = extraPayment,
-                PaymentDueDay = paymentDueDay, StatementCloseDay = statementCloseDay, Apr = apr
+                PaymentDueDay = paymentDueDay, StatementCloseDay = statementCloseDay, Apr = apr, PaymentStartDate = paymentStartDate
             });
             return Task.FromResult(id);
         }
 
         public Task UpdateAccountAsync(int accountId, string name, decimal? minPayment, decimal? extraPayment,
-            int? paymentDueDay, int? statementCloseDay, decimal? apr, CancellationToken cancellationToken = default)
+            int? paymentDueDay, int? statementCloseDay, decimal? apr, DateOnly? paymentStartDate = null, CancellationToken cancellationToken = default)
         {
             LastUpdatedId = accountId;
             LastUpdatedName = name;
@@ -73,6 +76,7 @@ public class AccountsTests : BunitContext
             LastUpdatedPaymentDueDay = paymentDueDay;
             LastUpdatedStatementCloseDay = statementCloseDay;
             LastUpdatedApr = apr;
+            LastUpdatedPaymentStartDate = paymentStartDate;
 
             var row = Rows.Single(r => r.Id == accountId);
             row.Name = name;
@@ -81,6 +85,7 @@ public class AccountsTests : BunitContext
             row.PaymentDueDay = paymentDueDay;
             row.StatementCloseDay = statementCloseDay;
             row.Apr = apr;
+            row.PaymentStartDate = paymentStartDate;
             return Task.CompletedTask;
         }
 
@@ -432,6 +437,65 @@ public class AccountsTests : BunitContext
         Assert.Equal(100m, provider.LastCreatedMinPayment);
         Assert.Equal(15, provider.LastCreatedPaymentDueDay);
         Assert.Equal(19.99m, provider.LastCreatedApr);
+    }
+
+    [Fact]
+    public void CreatingANewDebtAccount_WithAPaymentStartDate_PassesItThrough()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IAccountsPageProvider>(provider);
+
+        var cut = Render<Accounts>();
+        cut.Find("#new-account-button").Click();
+        cut.Find("#detail-name").Change("BMG");
+        cut.Find("#detail-type").Change(nameof(AccountType.Debt));
+        cut.Find("#detail-min-payment").Change("2334.99");
+        cut.Find("#detail-payment-due-day").Change("15");
+        cut.Find("#detail-payment-start-date").Change("2026-09-15");
+        cut.Find("#detail-save").Click();
+
+        Assert.Equal(new DateOnly(2026, 9, 15), provider.LastCreatedPaymentStartDate);
+    }
+
+    [Fact]
+    public void CreatingANewDebtAccount_WithNoPaymentStartDate_PassesNull()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IAccountsPageProvider>(provider);
+
+        var cut = Render<Accounts>();
+        cut.Find("#new-account-button").Click();
+        cut.Find("#detail-name").Change("Ordinary Card");
+        cut.Find("#detail-type").Change(nameof(AccountType.Debt));
+        cut.Find("#detail-save").Click();
+
+        Assert.Null(provider.LastCreatedPaymentStartDate);
+    }
+
+    [Fact]
+    public void SelectingADebtAccount_WithAPaymentStartDate_ShowsItInTheForm()
+    {
+        var provider = MakeProvider();
+        provider.Rows.Single(r => r.Id == 3).PaymentStartDate = new DateOnly(2026, 9, 15);
+        Services.AddSingleton<IAccountsPageProvider>(provider);
+
+        var cut = Render<Accounts>();
+        cut.Find("#account-row-3").Click();
+
+        Assert.Equal("2026-09-15", cut.Find("#detail-payment-start-date").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void PaymentStartDateField_IsNotShownForActiveSpendingAccounts()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IAccountsPageProvider>(provider);
+
+        var cut = Render<Accounts>();
+        cut.Find("#new-account-button").Click();
+        cut.Find("#detail-type").Change(nameof(AccountType.ActiveSpending));
+
+        Assert.Empty(cut.FindAll("#detail-payment-start-date"));
     }
 
     [Fact]

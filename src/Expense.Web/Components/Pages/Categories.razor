@@ -264,6 +264,11 @@ else
     private decimal? _formExtraPayment;
     private int? _formPaymentDueDay;
     private int? _formStatementCloseDay;
+    // Round-tripped but never shown here - this page's inline account-payment edit is for
+    // quick min/extra payment tweaks, not the rare "add a future-dated payment start" case
+    // (that lives on Accounts.razor). Still has to be carried through on save, or saving
+    // here would silently wipe out a start date set on the full Accounts page.
+    private DateOnly? _formLinkedAccountPaymentStartDate;
 
     protected override async Task OnInitializedAsync()
     {
@@ -368,6 +373,7 @@ else
         _formExtraPayment = null;
         _formPaymentDueDay = null;
         _formStatementCloseDay = null;
+        _formLinkedAccountPaymentStartDate = null;
         _formReconcileByCalendarMonth = false;
         _formCarryoverCapMultiplier = 1.0m;
     }
@@ -389,6 +395,7 @@ else
         _formExtraPayment = category.LinkedAccountExtraPayment;
         _formPaymentDueDay = category.LinkedAccountPaymentDueDay;
         _formStatementCloseDay = category.LinkedAccountStatementCloseDay;
+        _formLinkedAccountPaymentStartDate = category.LinkedAccountPaymentStartDate;
         _formReconcileByCalendarMonth = category.ReconcileByCalendarMonth;
         _formCarryoverCapMultiplier = category.CarryoverCapMultiplier;
         return Task.CompletedTask;
@@ -408,7 +415,7 @@ else
         };
 
         AccountPaymentInput? accountPayment = _formFundingStrategy == FundingStrategies.AccountPayment && _formLinkedAccountType is not null
-            ? new AccountPaymentInput(_formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay)
+            ? new AccountPaymentInput(_formMinPayment, _formExtraPayment, _formPaymentDueDay, _formStatementCloseDay, _formLinkedAccountPaymentStartDate)
             : null;
 
         if (_mode == DetailMode.Creating)

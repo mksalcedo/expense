@@ -87,7 +87,7 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 AccountId = account.Id,
                 CategoryId = accountPaymentCategoryIds.GetValueOrDefault(account.Id),
                 Active = true,
-                StartDate = DateOnly.MinValue
+                StartDate = account.PaymentStartDate ?? DateOnly.MinValue
             });
         }
 

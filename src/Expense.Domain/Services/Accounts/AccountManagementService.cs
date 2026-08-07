@@ -23,7 +23,8 @@ public class AccountManagementService
         int? paymentDueDay = null,
         int? statementCloseDay = null,
         string? suggestedMerchantPattern = null,
-        decimal? apr = null)
+        decimal? apr = null,
+        DateOnly? paymentStartDate = null)
     {
         var account = new Account
         {
@@ -33,7 +34,8 @@ public class AccountManagementService
             ExtraPayment = extraPayment,
             PaymentDueDay = paymentDueDay,
             StatementCloseDay = statementCloseDay,
-            Apr = apr
+            Apr = apr,
+            PaymentStartDate = paymentStartDate
         };
         context.Accounts.Add(account);
         await context.SaveChangesAsync();
@@ -74,12 +76,13 @@ public class AccountManagementService
     /// <summary>Combined save for the master-detail edit form: name and payment fields commit together. Type is fixed at creation.</summary>
     public async Task UpdateAccountAsync(
         ExpenseDbContext context, int accountId, string name,
-        decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay, decimal? apr = null)
+        decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay, decimal? apr = null,
+        DateOnly? paymentStartDate = null)
     {
         var account = await context.Accounts.SingleAsync(a => a.Id == accountId);
         account.Name = name;
         account.Apr = apr;
-        await SetPaymentFieldsAsync(context, account, minPayment, extraPayment, paymentDueDay, statementCloseDay);
+        await SetPaymentFieldsAsync(context, account, minPayment, extraPayment, paymentDueDay, statementCloseDay, paymentStartDate);
     }
 
     /// <summary>
@@ -104,23 +107,31 @@ public class AccountManagementService
         await context.SaveChangesAsync();
     }
 
-    /// <summary>Payment-fields-only save, for editing an AccountPayment category's linked account inline from Categories.razor - never touches the account's name.</summary>
+    /// <summary>
+    /// Payment-fields-only save, for editing an AccountPayment category's linked account
+    /// inline from Categories.razor - never touches the account's name. Callers must pass
+    /// through whatever PaymentStartDate the account already has (see CategoryRow/
+    /// AccountPaymentInput) - this always overwrites all payment fields together, same as
+    /// the other four, so silently omitting it here would wipe it out on every quick edit.
+    /// </summary>
     public async Task UpdatePaymentFieldsAsync(
         ExpenseDbContext context, int accountId,
-        decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay)
+        decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay,
+        DateOnly? paymentStartDate = null)
     {
         var account = await context.Accounts.SingleAsync(a => a.Id == accountId);
-        await SetPaymentFieldsAsync(context, account, minPayment, extraPayment, paymentDueDay, statementCloseDay);
+        await SetPaymentFieldsAsync(context, account, minPayment, extraPayment, paymentDueDay, statementCloseDay, paymentStartDate);
     }
 
     private static async Task SetPaymentFieldsAsync(
         ExpenseDbContext context, Account account,
-        decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay)
+        decimal? minPayment, decimal? extraPayment, int? paymentDueDay, int? statementCloseDay, DateOnly? paymentStartDate)
     {
         account.MinPayment = minPayment;
         account.ExtraPayment = extraPayment;
         account.PaymentDueDay = paymentDueDay;
         account.StatementCloseDay = statementCloseDay;
+        account.PaymentStartDate = paymentStartDate;
         await context.SaveChangesAsync();
     }
 }
