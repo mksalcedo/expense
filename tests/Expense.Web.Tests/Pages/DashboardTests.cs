@@ -620,9 +620,6 @@ public class DashboardTests : BunitContext
         setItemCall.VerifyInvoke("localStorage.setItem");
     }
 
-    // Deliberately the exact same localStorage key Forecast.razor uses - see the comment on
-    // Dashboard.razor's ShowResolvedStorageKey constant. Toggling the preference on either
-    // page should be reflected on the other.
     [Fact]
     public void OnLoad_UsesTheSavedShowResolvedPreferenceFromLocalStorage()
     {
@@ -642,5 +639,26 @@ public class DashboardTests : BunitContext
 
         Assert.False(cut.Find("#show-resolved-toggle").HasAttribute("checked"));
         Assert.DoesNotContain("Chase Amazon Prime Visa Payment", cut.Markup);
+    }
+
+    // User reported 2026-08-07: checking the box on one page showed it checked on the other
+    // too - the two pages were sharing a single localStorage key. Confirmed independent now.
+    [Fact]
+    public void DashboardAndForecast_SaveTheShowResolvedPreference_UnderDifferentLocalStorageKeys()
+    {
+        // Both pages resolve the same registered IForecastResultProvider - fine, since only
+        // the storage key being written is under test here, not either page's own content.
+        RegisterFakes(forecast: new ForecastResult { StartingBalance = 0m, Rows = [] });
+        var setItemCall = JSInterop.SetupVoid("localStorage.setItem", _ => true).SetVoidResult();
+
+        var dashboardCut = Render<Dashboard>();
+        dashboardCut.Find("#show-resolved-toggle").Change(false);
+        var dashboardKey = setItemCall.Invocations.Last().Arguments[0];
+
+        var forecastCut = Render<Forecast>();
+        forecastCut.Find("#show-resolved-toggle").Change(false);
+        var forecastKey = setItemCall.Invocations.Last().Arguments[0];
+
+        Assert.NotEqual(dashboardKey, forecastKey);
     }
 }

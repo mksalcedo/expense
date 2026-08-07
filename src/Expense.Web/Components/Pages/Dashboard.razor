@@ -135,10 +135,9 @@ else
 }
 
 @code {
-    // Shares Forecast.razor's own storage key deliberately - "show resolved items" is a
-    // single preference, not a per-page one, so toggling it in one place is reflected in
-    // the other without needing to set it twice.
-    private const string ShowResolvedStorageKey = "expense-forecast-show-resolved";
+    // Deliberately a separate key from Forecast.razor's own - user confirmed 2026-08-07 that
+    // the two pages' "show resolved items" preferences should be independent, not shared.
+    private const string ShowResolvedStorageKey = "expense-dashboard-show-resolved";
 
     private ForecastResult? _forecast;
     private ForecastLedgerRow? _lowestForecastRow;
