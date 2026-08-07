@@ -520,12 +520,25 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         var candidates = new List<PartialPaymentCandidate>();
         var matchedPartialPaymentIds = new HashSet<int>();
 
-        foreach (var txn in transactions.Where(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate == line.Date))
+        // Ordered by effective date so, when two same-amount transactions both fall within a
+        // single PartialPayment's match window, the earlier (closer, more likely the one it
+        // was actually recorded against) transaction claims it - not an arbitrary DB order.
+        var orderedTransactions = transactions
+            .Where(t => t.CategoryId == line.CategoryId && t.ReconciledOccurrenceDate == line.Date)
+            .OrderBy(t => t.PostedDate ?? t.TransactionDate);
+
+        foreach (var txn in orderedTransactions)
         {
             var effectiveDate = txn.PostedDate ?? txn.TransactionDate;
             var amount = Math.Abs(txn.Amount);
+            // Excludes PartialPayments already claimed by an earlier transaction in this same
+            // loop - without this, two real transactions of the same amount could both match
+            // the one PartialPayment record that only actually covers one of them, showing
+            // both as "recorded" while the dollar reduction only ever counts it once (found
+            // live 2026-08-07, a real Piano payment).
             var matchingPartialPayment = appliedPartialPayments.FirstOrDefault(p =>
-                p.Amount == amount
+                !matchedPartialPaymentIds.Contains(p.Id)
+                && p.Amount == amount
                 && p.PaidDate >= effectiveDate.AddDays(-PartialPaymentMatchWindowDays)
                 && p.PaidDate <= effectiveDate.AddDays(PartialPaymentMatchWindowDays));
 

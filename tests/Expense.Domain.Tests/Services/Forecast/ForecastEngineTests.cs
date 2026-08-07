@@ -1314,6 +1314,66 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(recorded.Id, candidate.PartialPaymentId);
     }
 
+    // Real bug found live 2026-08-07: two same-amount real transactions both fell within the
+    // recorded PartialPayment's +/-5-day match window, so both independently matched to the
+    // SAME PartialPayment record - both showed struck-through with "Undo" in the UI, but the
+    // dollar reduction only ever counts a PartialPayment once, so the second transaction
+    // looked "already recorded" while contributing nothing to the running balance. The
+    // correctly-recorded (earlier/closer) transaction should keep the claim; the second one
+    // must show up unclaimed so it can actually be recorded.
+    [Fact]
+    public async Task CalendarMonthCategory_TwoTransactionsOfTheSameAmount_OnlyOneClaimsARecordedPartialPayment()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 7));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano", ReconcileByCalendarMonth = true };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 3), PostedDate = new DateOnly(2026, 8, 3),
+                Description = "ZELLE FROM GABRIEL", Amount = 95m, ImportSource = "Test", CategoryId = piano.Id,
+                ReconciledOccurrenceDate = new DateOnly(2026, 8, 5), CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 6), PostedDate = new DateOnly(2026, 8, 6),
+                Description = "Venmo", Amount = 95m, ImportSource = "Test", CategoryId = piano.Id,
+                ReconciledOccurrenceDate = new DateOnly(2026, 8, 5), CreatedAt = DateTimeOffset.UtcNow
+            });
+        var oneTimeEvent = new OneTimeEvent { Name = "Checking Payment (partial)", Amount = 95m, Direction = Direction.Income, Date = new DateOnly(2026, 8, 2), AccountId = checking.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+        var recorded = new PartialPayment
+        {
+            AccountId = checking.Id, OriginalDate = new DateOnly(2026, 8, 5), Amount = 95m, PaidDate = new DateOnly(2026, 8, 2),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.PartialPayments.Add(recorded);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 7), new DateOnly(2026, 8, 31));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Piano");
+        Assert.Equal(2, row.PartialPaymentCandidates!.Count);
+        var claimed = row.PartialPaymentCandidates!.Count(c => c.PartialPaymentId == recorded.Id);
+        Assert.Equal(1, claimed); // not both
+        var unclaimed = Assert.Single(row.PartialPaymentCandidates!, c => c.PartialPaymentId == null);
+        Assert.Equal(new DateOnly(2026, 8, 6), unclaimed.Date); // the later transaction stays unclaimed, not the earlier/closer one
+        Assert.Equal(505m, row.Amount); // only the one real PartialPayment counts toward the reduction
+    }
+
     [Fact]
     public async Task DebtAccountPayment_AlreadyPaidEarly_IsExcludedFromTheForecast_ViaItsLinkedCategory()
     {
