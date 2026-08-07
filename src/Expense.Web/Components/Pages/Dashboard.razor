@@ -9,6 +9,7 @@
 @inject ISpendingTrackerPageProvider SpendingTrackerProvider
 @inject ISyncStatusProvider SyncStatusProvider
 @inject IAccountsPageProvider AccountsProvider
+@inject IJSRuntime JS
 
 <PageTitle>Dashboard - @DateTime.Today.ToString("MMMM d, yyyy")</PageTitle>
 
@@ -78,6 +79,12 @@ else
                     }
                 </tbody>
             </table>
+            <p>
+                <label>
+                    <input id="show-resolved-toggle" type="checkbox" checked="@_showResolved" @onchange="ToggleShowResolvedAsync" />
+                    Show resolved items (paid, overridden, or auto-reconciled)
+                </label>
+            </p>
             <table>
                 <thead>
                     <tr>
@@ -88,7 +95,7 @@ else
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var row in _forecast.Rows.Take(20))
+                    @foreach (var row in _forecast.Rows.Where(r => _showResolved || !r.IsExcluded).Take(20))
                     {
                         <tr style="@CashFlowRowStyle(row)">
                             <td>@row.Date.ToString("yyyy-MM-dd")</td>
@@ -128,6 +135,11 @@ else
 }
 
 @code {
+    // Shares Forecast.razor's own storage key deliberately - "show resolved items" is a
+    // single preference, not a per-page one, so toggling it in one place is reflected in
+    // the other without needing to set it twice.
+    private const string ShowResolvedStorageKey = "expense-forecast-show-resolved";
+
     private ForecastResult? _forecast;
     private ForecastLedgerRow? _lowestForecastRow;
     private SpendingTrackerPageData? _spendingTracker;
@@ -137,10 +149,29 @@ else
     private ImportRun? _lastSimpleFinRun;
     private ImportRun? _lastAmazonRun;
     private ImportRun? _lastPlaidRun;
+    private bool _showResolved = true;
 
     protected override async Task OnInitializedAsync()
     {
         await RefreshDashboardDataAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var saved = await JS.InvokeAsync<string?>("localStorage.getItem", ShowResolvedStorageKey);
+        if (bool.TryParse(saved, out var savedShowResolved) && savedShowResolved != _showResolved)
+        {
+            _showResolved = savedShowResolved;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleShowResolvedAsync(ChangeEventArgs e)
+    {
+        _showResolved = (bool)e.Value!;
+        await JS.InvokeVoidAsync("localStorage.setItem", ShowResolvedStorageKey, _showResolved.ToString());
     }
 
     // A sync (now done from the Sync Now page) can add transactions/orders that change every

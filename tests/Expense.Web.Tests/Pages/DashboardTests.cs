@@ -531,4 +531,116 @@ public class DashboardTests : BunitContext
 
         Assert.Empty(cut.FindAll("#sync-failure-banner"));
     }
+
+    [Fact]
+    public void Dashboard_ShowsAShowResolvedToggle_CheckedByDefault()
+    {
+        RegisterFakes();
+
+        var cut = Render<Dashboard>();
+
+        Assert.True(cut.Find("#show-resolved-toggle").HasAttribute("checked"));
+    }
+
+    [Fact]
+    public void UncheckingShowResolved_HidesExcludedRows_ButLeavesNormalRowsVisible()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows =
+            [
+                new ForecastLedgerRow
+                {
+                    Date = new DateOnly(2026, 7, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m,
+                    AccountId = 5, OriginalDate = new DateOnly(2026, 7, 20), IsExcluded = true, ExclusionReason = ConfirmationReason.AlreadyPaid, ConfirmationId = 1
+                },
+                new ForecastLedgerRow { Date = new DateOnly(2026, 7, 31), Description = "Paycheck", Amount = 2000m, RunningBalance = 2643m }
+            ]
+        };
+        RegisterFakes(forecast: forecast);
+
+        var cut = Render<Dashboard>();
+        cut.Find("#show-resolved-toggle").Change(false);
+
+        Assert.DoesNotContain("Chase Amazon Prime Visa Payment", cut.Markup);
+        Assert.Contains("Paycheck", cut.Markup);
+    }
+
+    [Fact]
+    public void ReCheckingShowResolved_BringsExcludedRowsBack()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow
+            {
+                Date = new DateOnly(2026, 7, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m,
+                AccountId = 5, OriginalDate = new DateOnly(2026, 7, 20), IsExcluded = true, ExclusionReason = ConfirmationReason.AlreadyPaid, ConfirmationId = 1
+            }]
+        };
+        RegisterFakes(forecast: forecast);
+
+        var cut = Render<Dashboard>();
+        cut.Find("#show-resolved-toggle").Change(false);
+        cut.Find("#show-resolved-toggle").Change(true);
+
+        Assert.Contains("Chase Amazon Prime Visa Payment", cut.Markup);
+    }
+
+    [Fact]
+    public void UncheckingShowResolved_DoesNotHideDeferredRows()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow
+            {
+                Date = new DateOnly(2026, 7, 22), Description = "Amex Payment", Amount = -2000m, RunningBalance = -1000m,
+                AccountId = 2, OriginalDate = new DateOnly(2026, 7, 20), IsDeferred = true, DeferralId = 1
+            }]
+        };
+        RegisterFakes(forecast: forecast);
+
+        var cut = Render<Dashboard>();
+        cut.Find("#show-resolved-toggle").Change(false);
+
+        Assert.Contains("Amex Payment", cut.Markup);
+    }
+
+    [Fact]
+    public void UncheckingShowResolved_SavesThePreferenceToLocalStorage()
+    {
+        RegisterFakes();
+        var setItemCall = JSInterop.SetupVoid("localStorage.setItem", _ => true).SetVoidResult();
+
+        var cut = Render<Dashboard>();
+        cut.Find("#show-resolved-toggle").Change(false);
+
+        setItemCall.VerifyInvoke("localStorage.setItem");
+    }
+
+    // Deliberately the exact same localStorage key Forecast.razor uses - see the comment on
+    // Dashboard.razor's ShowResolvedStorageKey constant. Toggling the preference on either
+    // page should be reflected on the other.
+    [Fact]
+    public void OnLoad_UsesTheSavedShowResolvedPreferenceFromLocalStorage()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow
+            {
+                Date = new DateOnly(2026, 7, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m,
+                AccountId = 5, OriginalDate = new DateOnly(2026, 7, 20), IsExcluded = true, ExclusionReason = ConfirmationReason.AlreadyPaid, ConfirmationId = 1
+            }]
+        };
+        RegisterFakes(forecast: forecast);
+        JSInterop.Setup<string?>("localStorage.getItem", _ => true).SetResult("false");
+
+        var cut = Render<Dashboard>();
+
+        Assert.False(cut.Find("#show-resolved-toggle").HasAttribute("checked"));
+        Assert.DoesNotContain("Chase Amazon Prime Visa Payment", cut.Markup);
+    }
 }
