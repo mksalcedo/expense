@@ -369,8 +369,15 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             // toward zero by adding it; for an income line (budgeted positive) it must instead
             // shrink the remaining expected amount by subtracting it, or a real partial
             // payment would wrongly inflate what's still expected (found live 2026-08-04).
+            // Clamped at zero, never crossing past it to flip sign - a multi-payer income
+            // line (e.g. Piano) can easily receive more than its budgeted total across several
+            // real payments, and the extra is already reflected in the Forecast's real
+            // starting balance (it already posted), so it must never appear as a second,
+            // separate negative/positive line item once fully covered (found live 2026-08-10).
             var partialPaymentTotal = appliedPartialPayments.Sum(p => p.Amount);
-            var adjustedAmount = line.Amount < 0 ? line.Amount + partialPaymentTotal : line.Amount - partialPaymentTotal;
+            var adjustedAmount = line.Amount < 0
+                ? Math.Min(0m, line.Amount + partialPaymentTotal)
+                : Math.Max(0m, line.Amount - partialPaymentTotal);
             rows.Add(new ForecastLedgerRow
             {
                 Date = isDeferred ? deferral!.DeferredToDate : line.Date,

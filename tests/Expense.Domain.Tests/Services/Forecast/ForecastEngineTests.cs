@@ -1631,6 +1631,80 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(171m, pianoRow.Amount);
     }
 
+    // Real bug this guards (found live 2026-08-10, user-identified): recording partial
+    // payments that add up to more than the budgeted amount used to push the remaining
+    // amount past zero into negative territory - e.g. $600 budgeted, $860 actually recorded
+    // across several payers, giving 600-860=-260. A negative amount here gets treated as an
+    // expense in the running balance, so extra real income would wrongly *subtract* from the
+    // projected balance instead of just leaving nothing more expected. The extra money is
+    // already reflected in the Forecast's real starting balance (it already posted) - it
+    // doesn't need a second, separate negative line item once fully covered.
+    [Fact]
+    public async Task PartialPayments_TotalingMoreThanTheBudgetedIncome_ClampRemainingAtZero_NeverGoNegative()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano" };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+
+        // Three separate real partial payments totaling 860 - more than the 600 budgeted.
+        foreach (var (amount, date) in new[] { (215m, new DateOnly(2026, 8, 3)), (275m, new DateOnly(2026, 8, 10)), (370m, new DateOnly(2026, 8, 10)) })
+        {
+            var oneTimeEvent = new OneTimeEvent { Name = "Checking Payment (partial)", Amount = amount, Direction = Direction.Income, Date = date, AccountId = checking.Id };
+            Context.OneTimeEvents.Add(oneTimeEvent);
+            await Context.SaveChangesAsync();
+            Context.PartialPayments.Add(new PartialPayment
+            {
+                AccountId = checking.Id, OriginalDate = new DateOnly(2026, 8, 5), Amount = amount, PaidDate = date,
+                OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+            await Context.SaveChangesAsync();
+        }
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 31));
+
+        var pianoRow = Assert.Single(result.Rows, r => r.CategoryId == piano.Id && r.OriginalDate == new DateOnly(2026, 8, 5));
+        Assert.Equal(0m, pianoRow.Amount);
+    }
+
+    // Symmetric case on the expense side: overpaying a bill via partial payments must clamp
+    // at zero too, never flip positive (which would wrongly show the bill as income).
+    [Fact]
+    public async Task PartialPayments_TotalingMoreThanTheBudgetedExpense_ClampRemainingAtZero_NeverFlipPositive()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 13));
+        var amex = new Account { Name = "Amex", Type = AccountType.Debt, MinPayment = 600m, PaymentDueDay = 20 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var oneTimeEvent = new OneTimeEvent { Name = "Amex Payment (partial)", Amount = 860m, Direction = Direction.Expense, Date = new DateOnly(2026, 7, 14), AccountId = amex.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), Amount = 860m, PaidDate = new DateOnly(2026, 7, 14),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 14), new DateOnly(2026, 7, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.AccountId == amex.Id && r.OriginalDate == new DateOnly(2026, 7, 20));
+        Assert.Equal(0m, amexRow.Amount);
+    }
+
     [Fact]
     public async Task PartialPayment_AppearsAsItsOwnSeparateLedgerLine_OnItsPaidDate()
     {
