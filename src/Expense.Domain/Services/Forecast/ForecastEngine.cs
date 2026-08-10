@@ -378,6 +378,14 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             var adjustedAmount = line.Amount < 0
                 ? Math.Min(0m, line.Amount + partialPaymentTotal)
                 : Math.Max(0m, line.Amount - partialPaymentTotal);
+
+            // Once fully covered, the row should drop off the active ledger like any other
+            // resolved item - but only once there's truly nothing left to do: a calendar-month
+            // category can still have a real, unclaimed transaction sitting in its candidate
+            // list even after the budgeted amount clamps to zero (found live 2026-08-10).
+            var hasUnclaimedCandidate = partialPaymentCandidates?.Any(c => c.PartialPaymentId is null) ?? false;
+            var isFullyCoveredByPartialPayments = appliedPartialPayments.Count > 0 && adjustedAmount == 0m && !hasUnclaimedCandidate;
+
             rows.Add(new ForecastLedgerRow
             {
                 Date = isDeferred ? deferral!.DeferredToDate : line.Date,
@@ -394,7 +402,9 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 DeferralId = isDeferred ? deferral!.Id : null,
                 SuggestedOverrideAmount = nearMissAmount,
                 SuggestedOverrideDate = nearMissDate,
-                PartialPaymentCandidates = partialPaymentCandidates
+                PartialPaymentCandidates = partialPaymentCandidates,
+                IsExcluded = isFullyCoveredByPartialPayments,
+                ExclusionReason = isFullyCoveredByPartialPayments ? ConfirmationReason.AutoReconciled : null
             });
         }
 

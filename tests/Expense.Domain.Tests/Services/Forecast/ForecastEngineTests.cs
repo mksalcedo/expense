@@ -1676,6 +1676,12 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var pianoRow = Assert.Single(result.Rows, r => r.CategoryId == piano.Id && r.OriginalDate == new DateOnly(2026, 8, 5));
         Assert.Equal(0m, pianoRow.Amount);
+
+        // Real follow-up found live 2026-08-10: a fully-covered row must also respect "Show
+        // resolved items" the same as any other AutoReconciled row, or it clutters the ledger
+        // forever even though there's nothing left to do.
+        Assert.True(pianoRow.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, pianoRow.ExclusionReason);
     }
 
     // Symmetric case on the expense side: overpaying a bill via partial payments must clamp
@@ -1703,6 +1709,119 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var amexRow = Assert.Single(result.Rows, r => r.AccountId == amex.Id && r.OriginalDate == new DateOnly(2026, 7, 20));
         Assert.Equal(0m, amexRow.Amount);
+        Assert.True(amexRow.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, amexRow.ExclusionReason);
+    }
+
+    // The multi-candidate list (calendar-month categories like Piano) needs its own version
+    // of this check: fully covered by ALREADY-RECORDED payments isn't enough on its own if a
+    // real transaction is sitting there still unclaimed - that candidate is still genuinely
+    // actionable ("Record partial income" for accurate bookkeeping), so the row must stay
+    // visible even though its Amount has already clamped to zero.
+    [Fact]
+    public async Task CalendarMonthCategory_FullyCoveredWithNoUnclaimedCandidatesRemaining_IsMarkedResolved()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 10));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano", ReconcileByCalendarMonth = true };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        // Several separate, individually-small real transactions - none close enough to the
+        // $600 budgeted line on its own to trigger simple single-transaction auto-reconciliation
+        // (see FindReflectingTransaction above), so this genuinely exercises the multi-candidate
+        // partial-payment path instead, same as the real Piano data that found this bug.
+        foreach (var (amount, date) in new[] { (95m, new DateOnly(2026, 8, 3)), (95m, new DateOnly(2026, 8, 6)), (25m, new DateOnly(2026, 8, 7)), (100m, new DateOnly(2026, 8, 10)), (275m, new DateOnly(2026, 8, 10)), (270m, new DateOnly(2026, 8, 10)) })
+        {
+            Context.BankTransactions.Add(new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = date, PostedDate = date,
+                Description = "ZELLE", Amount = amount, ImportSource = "Test", CategoryId = piano.Id,
+                ReconciledOccurrenceDate = new DateOnly(2026, 8, 5), CreatedAt = DateTimeOffset.UtcNow
+            });
+            var oneTimeEvent = new OneTimeEvent { Name = "Checking Payment (partial)", Amount = amount, Direction = Direction.Income, Date = date, AccountId = checking.Id };
+            Context.OneTimeEvents.Add(oneTimeEvent);
+            await Context.SaveChangesAsync();
+            Context.PartialPayments.Add(new PartialPayment
+            {
+                AccountId = checking.Id, OriginalDate = new DateOnly(2026, 8, 5), Amount = amount, PaidDate = date,
+                OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+            await Context.SaveChangesAsync();
+        }
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 10), new DateOnly(2026, 8, 31));
+
+        var pianoRow = Assert.Single(result.Rows, r => r.Description == "Piano");
+        Assert.Equal(0m, pianoRow.Amount);
+        Assert.True(pianoRow.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, pianoRow.ExclusionReason);
+    }
+
+    [Fact]
+    public async Task CalendarMonthCategory_FullyCoveredByRecordedPayments_ButAnUnclaimedCandidateRemains_StaysVisible()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 10));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var piano = new Category { Name = "Piano", ReconcileByCalendarMonth = true };
+        Context.Categories.Add(piano);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = piano.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = piano.Id, Amount = 600m, Frequency = Frequency.Monthly, Direction = Direction.Income,
+            Anchor = new DateOnly(2026, 8, 5), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        // Same small-amount pattern as the sibling test, so none individually trigger simple
+        // single-transaction auto-reconciliation - five recorded (already totaling 610, over
+        // the 600 budget on their own), plus one more real transaction that's never been
+        // recorded via "Record partial income".
+        foreach (var (amount, date) in new[] { (95m, new DateOnly(2026, 8, 3)), (95m, new DateOnly(2026, 8, 6)), (25m, new DateOnly(2026, 8, 7)), (120m, new DateOnly(2026, 8, 10)), (275m, new DateOnly(2026, 8, 10)) })
+        {
+            Context.BankTransactions.Add(new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = date, PostedDate = date,
+                Description = "ZELLE", Amount = amount, ImportSource = "Test", CategoryId = piano.Id,
+                ReconciledOccurrenceDate = new DateOnly(2026, 8, 5), CreatedAt = DateTimeOffset.UtcNow
+            });
+            var oneTimeEvent = new OneTimeEvent { Name = "Checking Payment (partial)", Amount = amount, Direction = Direction.Income, Date = date, AccountId = checking.Id };
+            Context.OneTimeEvents.Add(oneTimeEvent);
+            await Context.SaveChangesAsync();
+            Context.PartialPayments.Add(new PartialPayment
+            {
+                AccountId = checking.Id, OriginalDate = new DateOnly(2026, 8, 5), Amount = amount, PaidDate = date,
+                OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+            await Context.SaveChangesAsync();
+        }
+
+        Context.BankTransactions.Add(new BankTransaction // a real transaction, never recorded via "Record partial income"
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 9), PostedDate = new DateOnly(2026, 8, 9),
+            Description = "ZELLE FROM AMI HASTINGS", Amount = 270m, ImportSource = "Test", CategoryId = piano.Id,
+            ReconciledOccurrenceDate = new DateOnly(2026, 8, 5), CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 10), new DateOnly(2026, 8, 31));
+
+        var pianoRow = Assert.Single(result.Rows, r => r.Description == "Piano");
+        Assert.Equal(0m, pianoRow.Amount);
+        Assert.False(pianoRow.IsExcluded);
+        Assert.Contains(pianoRow.PartialPaymentCandidates!, c => c.Amount == 270m && c.PartialPaymentId == null);
     }
 
     [Fact]
