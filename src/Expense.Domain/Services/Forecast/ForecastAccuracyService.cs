@@ -1,7 +1,7 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Budgets;
-using Expense.Domain.Services.Ingestion.ManualCharges;
+using Expense.Domain.Services.Ingestion;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Forecast;
@@ -151,8 +151,8 @@ public class ForecastAccuracyService(RecurrenceExpander recurrenceExpander, Amex
             });
 
             var chargeTransactions = await context.BankTransactions
-                .Where(t => t.AccountId == account.Id && t.Amount < 0
-                            && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
+                .Where(t => t.AccountId == account.Id && t.Amount < 0)
+                .Where(BankTransactionReconciliation.CountsAsReal)
                 .ToListAsync(cancellationToken);
 
             // Same blind-spot guard as the Direct/debt-payment comparisons above, scoped to

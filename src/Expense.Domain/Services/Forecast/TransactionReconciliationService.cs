@@ -1,6 +1,6 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
-using Expense.Domain.Services.Ingestion.ManualCharges;
+using Expense.Domain.Services.Ingestion;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Forecast;
@@ -127,8 +127,8 @@ public class TransactionReconciliationService(RecurrenceExpander recurrenceExpan
         }
 
         var transactions = await context.BankTransactions
-            .Where(t => t.CategoryId != null
-                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
+            .Where(t => t.CategoryId != null)
+            .Where(BankTransactionReconciliation.CountsAsReal)
             .ToListAsync(cancellationToken);
 
         var calendarMonthCategoryIds = await context.Categories
@@ -143,7 +143,7 @@ public class TransactionReconciliationService(RecurrenceExpander recurrenceExpan
             // Plaid merges the real posting into this same row, PostedDate becomes the
             // authoritative date and this naturally starts using that instead, on the very
             // next reconciliation run (this whole method re-derives fresh every time).
-            var effectiveDate = txn.PostedDate ?? txn.TransactionDate;
+            var effectiveDate = txn.EffectiveDate();
             var categoryCandidates = candidates.Where(c => c.CategoryId == txn.CategoryId);
 
             // A category's real payments can spread across the whole month (several payers

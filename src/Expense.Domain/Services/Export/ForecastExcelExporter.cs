@@ -3,6 +3,7 @@ using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Budgets;
 using Expense.Domain.Services.Forecast;
+using Expense.Domain.Services.Ingestion;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Export;
@@ -159,8 +160,12 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
             // pay-in-full card: an uncategorized charge still needs to be paid, so it can't
             // be invisible just because it hasn't been categorized yet. Amount < 0 excludes
             // payments/credits (positive amounts) - those must never offset real spending.
+            // Still-unposted charges count too (see BankTransactionReconciliation.CountsAsReal)
+            // - this exporter's own copy of the same check used to only require PostedDate,
+            // silently understating the real balance due for any charge still pending at Plaid.
             var chargeTransactions = await context.BankTransactions
-                .Where(t => t.AccountId == account.Id && t.PostedDate != null && t.Amount < 0)
+                .Where(t => t.AccountId == account.Id && t.Amount < 0)
+                .Where(BankTransactionReconciliation.CountsAsReal)
                 .ToListAsync(cancellationToken);
 
             var extraPrincipal = account.ExtraPayment ?? 0m;

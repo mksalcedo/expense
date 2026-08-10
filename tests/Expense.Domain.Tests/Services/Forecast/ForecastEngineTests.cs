@@ -1899,6 +1899,45 @@ public class ForecastEngineTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task PartialPayment_IsExcluded_OnceAStillPendingPlaidTransactionMatches()
+    {
+        // Real bug found live 2026-08-10: three real Zelle/Venmo Piano payments were already
+        // fully reflected in the checking account's starting balance (Plaid's "available"
+        // balance includes pending activity, confirmed against a real snapshot), but the
+        // recorded partial-payment lines kept showing as live forecast rows too, because the
+        // match required PostedDate != null - a still-pending Plaid transaction never has one
+        // until a later sync flips it. Same $645 counted twice: once in the starting balance,
+        // once as a forward-looking ledger line.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 8, 10));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var oneTimeEvent = new OneTimeEvent { Name = "Checking Payment (partial)", Amount = 270m, Direction = Direction.Income, Date = new DateOnly(2026, 8, 10), AccountId = checking.Id };
+        Context.OneTimeEvents.Add(oneTimeEvent);
+        await Context.SaveChangesAsync();
+
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = checking.Id, OriginalDate = new DateOnly(2026, 8, 5), Amount = 270m, PaidDate = new DateOnly(2026, 8, 10),
+            OneTimeEventId = oneTimeEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 10), PostedDate = null,
+            Description = "ZELLE FROM AMI HASTINGS", Amount = 270m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 10), new DateOnly(2026, 8, 31));
+
+        var paidRow = Assert.Single(result.Rows, r => r.Description.StartsWith("Checking Payment (partial)"));
+        Assert.True(paidRow.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, paidRow.ExclusionReason);
+        Assert.Contains("matched a real pending payment on 08/10/2026", paidRow.Description);
+    }
+
+    [Fact]
     public async Task PartialPayment_ReconciliationMatch_RequiresTheExactAmount()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 21));

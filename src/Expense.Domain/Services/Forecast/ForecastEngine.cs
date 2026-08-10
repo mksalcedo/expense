@@ -1,6 +1,7 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Budgets;
+using Expense.Domain.Services.Ingestion;
 using Expense.Domain.Services.Ingestion.ManualCharges;
 using Microsoft.EntityFrameworkCore;
 
@@ -155,8 +156,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             // (screenshot-derived) and Plaid-reported pending charges - see
             // AmexCycleCalculator - so a looming overage is caught before it posts.
             var chargeTransactions = await context.BankTransactions
-                .Where(t => t.AccountId == account.Id && t.Amount < 0
-                            && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
+                .Where(t => t.AccountId == account.Id && t.Amount < 0)
+                .Where(BankTransactionReconciliation.CountsAsReal)
                 .ToListAsync(cancellationToken);
 
             // Widened backward same as the debt-account/Direct path above, for the same
@@ -258,9 +259,9 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         var realTransactionsForPartialPayments = (partialPaymentAccountIds.Count == 0 && partialPaymentCategoryIds.Count == 0)
             ? []
             : await context.BankTransactions
-                .Where(t => t.PostedDate != null
-                            && (partialPaymentAccountIds.Contains(t.AccountId)
-                                || (t.CategoryId != null && partialPaymentCategoryIds.Contains(t.CategoryId.Value))))
+                .Where(t => partialPaymentAccountIds.Contains(t.AccountId)
+                            || (t.CategoryId != null && partialPaymentCategoryIds.Contains(t.CategoryId.Value)))
+                .Where(BankTransactionReconciliation.CountsAsReal)
                 .ToListAsync(cancellationToken);
 
         BankTransaction? FindRealPostingFor(PartialPayment partialPayment)
@@ -269,9 +270,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             return realTransactionsForPartialPayments.FirstOrDefault(t =>
                 (paymentCategoryId is not null ? t.CategoryId == paymentCategoryId : t.AccountId == partialPayment.AccountId)
                 && Math.Abs(t.Amount) == partialPayment.Amount
-                && t.PostedDate is { } posted
-                && posted >= partialPayment.PaidDate.AddDays(-PartialPaymentMatchWindowDays)
-                && posted <= partialPayment.PaidDate.AddDays(PartialPaymentMatchWindowDays));
+                && t.EffectiveDate() >= partialPayment.PaidDate.AddDays(-PartialPaymentMatchWindowDays)
+                && t.EffectiveDate() <= partialPayment.PaidDate.AddDays(PartialPaymentMatchWindowDays));
         }
 
         var rows = new List<ForecastLedgerRow>();
@@ -283,9 +283,12 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 rows.Add(new ForecastLedgerRow
                 {
                     Date = line.Date,
-                    Description = realPosting is { PostedDate: { } posted }
-                        ? $"{line.Description} - matched a real posted payment on {posted:MM/dd/yyyy}"
-                        : line.Description,
+                    Description = realPosting switch
+                    {
+                        { PostedDate: { } posted } => $"{line.Description} - matched a real posted payment on {posted:MM/dd/yyyy}",
+                        not null => $"{line.Description} - matched a real pending payment on {realPosting.TransactionDate:MM/dd/yyyy}",
+                        null => line.Description
+                    },
                     Amount = line.Amount,
                     RunningBalance = 0m,
                     AccountId = line.AccountId,

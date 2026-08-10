@@ -267,6 +267,46 @@ public class ForecastExcelExporterTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task Export_AmexPayment_CountsAStillPendingPlaidCharge_NotJustPostedOnes()
+    {
+        // Same gap as the uncategorized-charge bug above, but for Plaid pending charges - the
+        // live ForecastEngine/Spending Tracker/Forecast Accuracy calculations were fixed for
+        // this (55fab6b), but the Excel exporter's own copy of the "how much do I owe" charge
+        // query was never updated, so an export taken before a charge posts would understate
+        // the real balance due.
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
+        var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m, StatementCloseDay = 25, PaymentDueDay = 15 };
+        Context.Accounts.Add(amex);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
+                Description = "TRADER JOE S", Amount = -200m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 5), PostedDate = null,
+                Description = "PUBLIX", Amount = -107.90m, ImportSource = "Plaid", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
+
+        var forecast = workbook.Worksheet("Forecast");
+        var forecastRow = FindRowByDescription(forecast, "Amex Payment");
+        var formula = forecast.Cell(forecastRow, 3).FormulaA1;
+
+        Assert.Contains("MAX(307.90,", formula); // 200 (posted) + 107.90 (still-pending Plaid)
+    }
+
+    [Fact]
     public async Task Export_AmexPayment_ExcludesPaymentsAndCredits_OnlyCountsActualCharges()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));

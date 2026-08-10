@@ -1,7 +1,7 @@
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Budgets;
-using Expense.Domain.Services.Ingestion.ManualCharges;
+using Expense.Domain.Services.Ingestion;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.SpendingTracker;
@@ -67,8 +67,8 @@ public class SpendingTrackerService(BudgetProrationService proration)
         ExpenseDbContext context, int categoryId, DateOnly periodStart, DateOnly periodEnd, CancellationToken cancellationToken = default)
     {
         var bankLines = await context.BankTransactions
-            .Where(t => !t.IsAmazonMerchant && t.CategoryId == categoryId
-                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
+            .Where(t => !t.IsAmazonMerchant && t.CategoryId == categoryId)
+            .Where(BankTransactionReconciliation.CountsAsReal)
             .Where(t => (t.PostedDate ?? t.TransactionDate) >= periodStart && (t.PostedDate ?? t.TransactionDate) <= periodEnd)
             .Select(t => new CategoryTransactionLine { Date = t.PostedDate ?? t.TransactionDate, Description = t.Description, Amount = -t.Amount })
             .ToListAsync(cancellationToken);
@@ -156,8 +156,8 @@ public class SpendingTrackerService(BudgetProrationService proration)
         // they were seen/entered instead of a real PostedDate - consistent with how the
         // Forecast page's Amex cycle calculation already treats these (see AmexCycleCalculator).
         var bankTotalsByCategory = await context.BankTransactions
-            .Where(t => !t.IsAmazonMerchant && t.CategoryId != null && qualifyingCategoryIds.Contains(t.CategoryId.Value)
-                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
+            .Where(t => !t.IsAmazonMerchant && t.CategoryId != null && qualifyingCategoryIds.Contains(t.CategoryId.Value))
+            .Where(BankTransactionReconciliation.CountsAsReal)
             .Where(t => (t.PostedDate ?? t.TransactionDate) >= periodStart && (t.PostedDate ?? t.TransactionDate) <= periodEnd)
             .GroupBy(t => t.CategoryId!.Value)
             .Select(g => new { CategoryId = g.Key, Total = g.Sum(t => t.Amount) })
@@ -204,8 +204,8 @@ public class SpendingTrackerService(BudgetProrationService proration)
         }
 
         var pendingBank = await context.BankTransactions
-            .Where(t => !t.IsAmazonMerchant && t.CategoryId == null && t.Amount < 0
-                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
+            .Where(t => !t.IsAmazonMerchant && t.CategoryId == null && t.Amount < 0)
+            .Where(BankTransactionReconciliation.CountsAsReal)
             .Where(t => (t.PostedDate ?? t.TransactionDate) >= periodStart && (t.PostedDate ?? t.TransactionDate) <= periodEnd)
             .SumAsync(t => (decimal?)t.Amount, cancellationToken) ?? 0m;
 
@@ -235,8 +235,8 @@ public class SpendingTrackerService(BudgetProrationService proration)
         // One query per data source across the whole anchor-to-now range, bucketed by period
         // in memory below - avoids one query per historical period.
         var bankRows = await context.BankTransactions
-            .Where(t => !t.IsAmazonMerchant && t.CategoryId == category.Id
-                        && (t.PostedDate != null || t.ImportSource == ManualChargeMatchingService.ManualScreenshotImportSource || t.ImportSource == "Plaid"))
+            .Where(t => !t.IsAmazonMerchant && t.CategoryId == category.Id)
+            .Where(BankTransactionReconciliation.CountsAsReal)
             .Where(t => (t.PostedDate ?? t.TransactionDate) >= rangeStart && (t.PostedDate ?? t.TransactionDate) <= rangeEnd)
             .Select(t => new { Date = t.PostedDate ?? t.TransactionDate, t.Amount })
             .ToListAsync(cancellationToken);
