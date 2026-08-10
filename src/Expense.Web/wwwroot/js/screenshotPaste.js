@@ -1,8 +1,12 @@
-// Lets AddPendingCharges.razor accept a screenshot straight from the clipboard (Ctrl+V) in
-// addition to the InputFile "Choose File" fallback. Kept as a JS-isolated module (dynamically
-// imported, not a global <script>) rather than the alternative of reading clipboard.read() from
-// .NET - browsers only allow clipboard image access from a user-gesture-triggered 'paste' event,
-// so the listener has to live in JS.
+// Shared by AddPendingCharges.razor and ReviewQueue.razor - lets either page accept a
+// screenshot straight from the clipboard (Ctrl+V) via a DotNetObjectReference callback. Kept
+// as a JS-isolated module (dynamically imported, not a global <script>) rather than the
+// alternative of reading clipboard.read() from .NET - browsers only allow clipboard image
+// access from a user-gesture-triggered 'paste' event, so the listener has to live in JS.
+// Only one page-wide listener is ever registered at a time (register calls unregister first),
+// so a caller that needs to scope pasting to one specific UI element (e.g. Review Queue's
+// per-row "Paste screenshot" mode) does that by only calling registerPasteListener while that
+// element is active, not by teaching this module about multiple simultaneous targets.
 let currentHandler = null;
 
 export function registerPasteListener(dotNetRef) {

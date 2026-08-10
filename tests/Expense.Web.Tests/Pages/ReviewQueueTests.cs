@@ -4,6 +4,7 @@ using Expense.Domain.Services.Categorization;
 using Expense.Web.Components.Pages;
 using Expense.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.JSInterop;
 
 namespace Expense.Web.Tests.Pages;
 
@@ -15,6 +16,11 @@ public class ReviewQueueTests : BunitContext
         // NavMenu's badge updating live register their own shared instance instead (see
         // NavMenuTests.cs), which overrides this one (last registration wins).
         Services.AddSingleton<IReviewQueueChangeNotifier>(new ReviewQueueChangeNotifier());
+
+        // Every render now imports screenshotPaste.js for the "Paste screenshot" feature -
+        // Loose mode lets tests that don't care about it render without configuring the
+        // module explicitly, matching Forecast/Dashboard's own localStorage-interop tests.
+        JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
     // Stateful fake: CategorizeTransactionAsync/CategorizeAmazonItemAsync actually
@@ -128,6 +134,19 @@ public class ReviewQueueTests : BunitContext
             LastAddedPrice = price;
             LastAddedQuantity = quantity;
             return Task.CompletedTask;
+        }
+
+        public List<string> NextParsedTitles { get; set; } = [];
+        public byte[]? LastParsedImageBytes { get; private set; }
+        public string? LastParsedMediaType { get; private set; }
+        public int ParseAmazonItemScreenshotCallCount { get; private set; }
+
+        public Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default)
+        {
+            ParseAmazonItemScreenshotCallCount++;
+            LastParsedImageBytes = imageBytes;
+            LastParsedMediaType = mediaType;
+            return Task.FromResult(NextParsedTitles);
         }
     }
 
@@ -595,6 +614,156 @@ public class ReviewQueueTests : BunitContext
         Assert.Equal(402, provider.LastUpdatedItemId);
         Assert.Equal("Levoit Core 300-P Air Purifier Filter", provider.LastUpdatedTitle);
         Assert.Equal(25.99m, provider.LastUpdatedPrice);
+    }
+
+    private class FakeJSStreamReference(byte[] bytes) : IJSStreamReference
+    {
+        public long Length => bytes.Length;
+
+        public ValueTask<Stream> OpenReadStreamAsync(long maxAllowedSize = 512000, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<Stream>(new MemoryStream(bytes));
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    [Fact]
+    public void NeedsReviewItem_ShowsAPasteScreenshotButton()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        Assert.NotEmpty(cut.FindAll("#item-paste-screenshot-500"));
+    }
+
+    [Fact]
+    public void ClickingPasteScreenshot_ShowsThePasteTarget()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+
+        cut.Find("#item-paste-screenshot-500").Click();
+
+        Assert.NotEmpty(cut.FindAll("#item-paste-target-500"));
+    }
+
+    [Fact]
+    public void ClickingCancelOnThePasteTarget_HidesItAgain()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-paste-screenshot-500").Click();
+
+        cut.Find("#item-cancel-paste-500").Click();
+
+        Assert.Empty(cut.FindAll("#item-paste-target-500"));
+    }
+
+    [Fact]
+    public async Task PastingAScreenshot_AppliesTheParsedTitle_AndClosesThePasteTarget()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        provider.NextParsedTitles = ["THORNE Vitamin C"];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-paste-screenshot-500").Click();
+
+        var pageInstance = cut.Instance;
+        await cut.InvokeAsync(() => pageInstance.OnImagePasted(new FakeJSStreamReference([1, 2, 3]), "image/png"));
+
+        Assert.Equal(500, provider.LastUpdatedItemId);
+        Assert.Equal("THORNE Vitamin C", provider.LastUpdatedTitle);
+        Assert.Equal("THORNE Vitamin C", cut.Find("#item-title-500").GetAttribute("value"));
+        Assert.Empty(cut.FindAll("#item-paste-target-500"));
+    }
+
+    [Fact]
+    public async Task PastingAScreenshot_PassesTheImageBytesAndMediaTypeToTheParser()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        provider.NextParsedTitles = ["THORNE Vitamin C"];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-paste-screenshot-500").Click();
+
+        var pageInstance = cut.Instance;
+        await cut.InvokeAsync(() => pageInstance.OnImagePasted(new FakeJSStreamReference([9, 8, 7]), "image/png"));
+
+        Assert.Equal(1, provider.ParseAmazonItemScreenshotCallCount);
+        Assert.Equal(new byte[] { 9, 8, 7 }, provider.LastParsedImageBytes);
+        Assert.Equal("image/png", provider.LastParsedMediaType);
+    }
+
+    [Fact]
+    public async Task PastingAScreenshot_WithNoItemsFound_ShowsAnErrorAndLeavesThePasteTargetOpen()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        provider.NextParsedTitles = [];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-paste-screenshot-500").Click();
+
+        var pageInstance = cut.Instance;
+        await cut.InvokeAsync(() => pageInstance.OnImagePasted(new FakeJSStreamReference([1, 2, 3]), "image/png"));
+
+        Assert.Null(provider.LastUpdatedItemId);
+        Assert.NotEmpty(cut.FindAll("#item-paste-target-500"));
+        Assert.Contains("Couldn't find an item name", cut.Find("#item-paste-error-500").TextContent);
     }
 
     [Fact]

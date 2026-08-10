@@ -1,14 +1,16 @@
 using Expense.Domain.Data;
 using Expense.Domain.Services.Ingestion.Amazon;
+using Expense.Domain.Services.Ingestion.ManualCharges;
 using Expense.Domain.Services.Transactions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace Expense.Domain.Services.Categorization;
 
 /// <summary>Thin DI-composition wiring (like ForecastResultProvider) - all real logic lives in CategorizationService.</summary>
 public class ReviewQueueProvider(
     IDbContextFactory<ExpenseDbContext> contextFactory, CategorizationService categorization, TransactionManagementService transactions,
-    AmazonImportService amazonImport)
+    AmazonImportService amazonImport, HttpClient httpClient, IConfiguration configuration)
     : IReviewQueueProvider
 {
     public async Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default)
@@ -82,5 +84,15 @@ public class ReviewQueueProvider(
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await amazonImport.AddManualItemAsync(context, orderId, orderDate, itemTitle, price, quantity, cancellationToken);
+    }
+
+    public async Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default)
+    {
+        var apiKey = configuration["Anthropic:ApiKey"]
+            ?? throw new InvalidOperationException("Anthropic:ApiKey not set. Run: dotnet user-secrets set \"Anthropic:ApiKey\" \"...\" --project src/Expense.Web");
+
+        var visionClient = new AnthropicVisionClient(httpClient, apiKey);
+        var parsingService = new AmazonOrderScreenshotParsingService(visionClient);
+        return await parsingService.ParseScreenshotAsync(imageBytes, mediaType, cancellationToken);
     }
 }

@@ -3,6 +3,8 @@
 @using Expense.Web.Services
 @inject IReviewQueueProvider ReviewQueueProvider
 @inject IReviewQueueChangeNotifier ReviewQueueChangeNotifier
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
 <PageTitle>Review Queue</PageTitle>
 
@@ -204,6 +206,9 @@ else
                             <button id="item-why-flagged-@representativeId" @onclick="() => ToggleReviewContext(representativeId)">
                                 Why is this flagged?
                             </button>
+                            <button id="item-paste-screenshot-@representativeId" @onclick="() => TogglePasteScreenshotAsync(representativeId)">
+                                Paste screenshot
+                            </button>
                         }
                         @if (group.OrderId is not null)
                         {
@@ -223,6 +228,28 @@ else
                                 {
                                     <pre style="max-height: 200px; overflow-y: auto; white-space: pre-wrap;">@body</pre>
                                 }
+                            </div>
+                        </td>
+                    </tr>
+                }
+                @if (group.NeedsReview && _pastingScreenshotForItemId == representativeId)
+                {
+                    <tr>
+                        <td colspan="9">
+                            <div id="item-paste-target-@representativeId" style="background: var(--color-surface, #f5f5f5); padding: 10px;">
+                                <p>
+                                    Open the order on Amazon (link above), then paste a screenshot of it here with Ctrl+V (or Cmd+V) -
+                                    the item name will be read automatically.
+                                </p>
+                                @if (_parsingScreenshot)
+                                {
+                                    <p id="item-paste-parsing-@representativeId">Reading screenshot... (usually 5-15 seconds)</p>
+                                }
+                                @if (_screenshotParseError is not null)
+                                {
+                                    <p id="item-paste-error-@representativeId" style="color: #b00020;">@_screenshotParseError</p>
+                                }
+                                <button id="item-cancel-paste-@representativeId" @onclick="() => TogglePasteScreenshotAsync(representativeId)">Cancel</button>
                             </div>
                         </td>
                     </tr>
@@ -286,9 +313,111 @@ else
     private string? _confirmSingleWordPattern;
     private Func<Task>? _pendingSingleWordAction;
 
+    // Only one row can be in "paste screenshot" mode at a time - the shared paste-listener
+    // module is page-wide (see screenshotPaste.js), so scoping it to one specific item is
+    // done here by only registering the listener while that one row is active, not by
+    // teaching the JS module about multiple simultaneous targets.
+    private int? _pastingScreenshotForItemId;
+    private bool _parsingScreenshot;
+    private string? _screenshotParseError;
+    private IJSObjectReference? _screenshotModule;
+    private DotNetObjectReference<ReviewQueue>? _dotNetRef;
+
     protected override async Task OnInitializedAsync()
     {
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _screenshotModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/screenshotPaste.js");
+            _dotNetRef = DotNetObjectReference.Create(this);
+        }
+    }
+
+    private async Task TogglePasteScreenshotAsync(int representativeId)
+    {
+        _screenshotParseError = null;
+
+        if (_pastingScreenshotForItemId == representativeId)
+        {
+            _pastingScreenshotForItemId = null;
+            if (_screenshotModule is not null)
+            {
+                await _screenshotModule.InvokeVoidAsync("unregisterPasteListener");
+            }
+            return;
+        }
+
+        _pastingScreenshotForItemId = representativeId;
+        if (_screenshotModule is not null)
+        {
+            await _screenshotModule.InvokeVoidAsync("registerPasteListener", _dotNetRef);
+        }
+    }
+
+    // Only the first item found is applied automatically - a screenshot showing more than one
+    // real item is rare (most NeedsReview placeholders are single-item orders) and handling
+    // that case is already covered by "+ Add another item" for whichever items the user adds
+    // by hand afterward, rather than teaching this path to also split multi-item orders.
+    [JSInvokable]
+    public async Task OnImagePasted(IJSStreamReference imageStream, string mediaType)
+    {
+        if (_pastingScreenshotForItemId is not { } itemId) return;
+
+        _parsingScreenshot = true;
+        _screenshotParseError = null;
+        StateHasChanged();
+
+        try
+        {
+            using var stream = await imageStream.OpenReadStreamAsync(maxAllowedSize: 10 * 1024 * 1024);
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+
+            var titles = await ReviewQueueProvider.ParseAmazonItemScreenshotAsync(memoryStream.ToArray(), mediaType);
+            if (titles.Count == 0)
+            {
+                _screenshotParseError = "Couldn't find an item name in that screenshot - try a clearer screenshot, or type it in directly.";
+                return;
+            }
+
+            await UpdateAmazonItemDetailsAsync(itemId, title: titles[0], price: null);
+            _pastingScreenshotForItemId = null;
+            if (_screenshotModule is not null)
+            {
+                await _screenshotModule.InvokeVoidAsync("unregisterPasteListener");
+            }
+        }
+        catch (Exception ex)
+        {
+            _screenshotParseError = ex.Message;
+        }
+        finally
+        {
+            _parsingScreenshot = false;
+            StateHasChanged();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_screenshotModule is not null)
+        {
+            try
+            {
+                await _screenshotModule.InvokeVoidAsync("unregisterPasteListener");
+                await _screenshotModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit already gone (e.g. browser closed/navigated away) - nothing to clean up.
+            }
+        }
+
+        _dotNetRef?.Dispose();
     }
 
     // Every action that can change which items are pending reloads through here, which also

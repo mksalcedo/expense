@@ -53,7 +53,7 @@ builder.Services.AddScoped<TransactionReconciliationService>();
 builder.Services.AddScoped<IConfirmedPaymentsPageProvider, ConfirmedPaymentsPageProvider>();
 
 builder.Services.AddScoped<CategorizationService>();
-builder.Services.AddScoped<IReviewQueueProvider, ReviewQueueProvider>();
+builder.Services.AddHttpClient<IReviewQueueProvider, ReviewQueueProvider>();
 builder.Services.AddScoped<IReviewQueueChangeNotifier, ReviewQueueChangeNotifier>();
 
 builder.Services.AddScoped<CategoryManagementService>();

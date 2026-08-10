@@ -41,6 +41,7 @@ public class NavMenuTests : BunitContext
         public Task DismissAmazonItemsAsync(IReadOnlyList<int> itemIds, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default) => Task.FromResult(new List<string>());
     }
 
     // Only NavMenu.razor's narrow "did the last sync fail" read is exercised here - the
@@ -259,6 +260,9 @@ public class NavMenuTests : BunitContext
         var navCut = Render<NavMenu>();
         Assert.Equal("Review Queue (1 item needs review)", navCut.Find("#nav-review-queue-link").TextContent.Trim());
 
+        // ReviewQueue now imports screenshotPaste.js on render for its "Paste screenshot"
+        // feature - not under test here, so let unconfigured JS calls no-op.
+        JSInterop.Mode = JSRuntimeMode.Loose;
         var reviewQueueCut = Render<Expense.Web.Components.Pages.ReviewQueue>();
         reviewQueueCut.Find("#txn-category-1").Change("1");
 

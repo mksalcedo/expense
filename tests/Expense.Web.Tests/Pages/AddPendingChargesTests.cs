@@ -61,7 +61,7 @@ public class AddPendingChargesTests : BunitContext
 
     private IRenderedComponent<AddPendingCharges> RenderPage()
     {
-        var module = JSInterop.SetupModule("./js/addPendingCharges.js");
+        var module = JSInterop.SetupModule("./js/screenshotPaste.js");
         module.SetupVoid("registerPasteListener", _ => true);
         module.SetupVoid("unregisterPasteListener", _ => true);
 

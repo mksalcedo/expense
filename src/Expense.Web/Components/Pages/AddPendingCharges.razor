@@ -160,7 +160,7 @@ else
     {
         if (firstRender)
         {
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/addPendingCharges.js");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/screenshotPaste.js");
             _dotNetRef = DotNetObjectReference.Create(this);
             await _module.InvokeVoidAsync("registerPasteListener", _dotNetRef);
         }

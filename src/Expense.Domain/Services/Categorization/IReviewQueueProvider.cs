@@ -22,4 +22,12 @@ public interface IReviewQueueProvider
     Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default);
 
     Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Extracts item title(s) from a screenshot of the real Amazon order-details page - for a
+    /// NeedsReview item whose confirmation email never had item-level detail at all. Pure
+    /// extraction only, doesn't save anything - the caller applies the result via
+    /// UpdateAmazonItemDetailsAsync itself, same as if the user had typed it in by hand.
+    /// </summary>
+    Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default);
 }
