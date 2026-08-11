@@ -227,6 +227,17 @@ public class NavMenuTests : BunitContext
     }
 
     [Fact]
+    public void NavMenu_HasAnAmazonOrderScraperLink()
+    {
+        RegisterFakes();
+
+        var cut = Render<NavMenu>();
+
+        var link = cut.Find("#nav-amazon-order-scraper-link");
+        Assert.Equal("amazon-order-scraper", link.GetAttribute("href"));
+    }
+
+    [Fact]
     public void NavMenu_ShowsForecastThenTransactionsThenSpendingTrackerThenReviewQueue_FollowedByADivider()
     {
         RegisterFakes();
