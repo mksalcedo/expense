@@ -314,7 +314,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     CategoryId = line.CategoryId,
                     IsExcluded = true,
                     ExclusionReason = confirmation.Reason,
-                    ConfirmationId = confirmation.Id
+                    ConfirmationId = confirmation.Id,
+                    ResolvedDate = DateOnly.FromDateTime(confirmation.CreatedAt.UtcDateTime)
                 });
                 continue;
             }
@@ -342,7 +343,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     OriginalDate = line.Date,
                     CategoryId = line.CategoryId,
                     IsExcluded = true,
-                    ExclusionReason = ConfirmationReason.AutoReconciled
+                    ExclusionReason = ConfirmationReason.AutoReconciled,
+                    ResolvedDate = reflectingTransaction.EffectiveDate()
                 });
                 continue;
             }
@@ -389,6 +391,12 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             var hasUnclaimedCandidate = partialPaymentCandidates?.Any(c => c.PartialPaymentId is null) ?? false;
             var isFullyCoveredByPartialPayments = appliedPartialPayments.Count > 0 && adjustedAmount == 0m && !hasUnclaimedCandidate;
 
+            // No single real transaction resolved this one - several did, on different dates -
+            // so the most recent payment's date is the closest honest answer to "when."
+            var resolvedDate = isFullyCoveredByPartialPayments
+                ? appliedPartialPayments.Max(p => p.PaidDate)
+                : (DateOnly?)null;
+
             rows.Add(new ForecastLedgerRow
             {
                 Date = isDeferred ? deferral!.DeferredToDate : line.Date,
@@ -407,7 +415,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 SuggestedOverrideDate = nearMissDate,
                 PartialPaymentCandidates = partialPaymentCandidates,
                 IsExcluded = isFullyCoveredByPartialPayments,
-                ExclusionReason = isFullyCoveredByPartialPayments ? ConfirmationReason.AutoReconciled : null
+                ExclusionReason = isFullyCoveredByPartialPayments ? ConfirmationReason.AutoReconciled : null,
+                ResolvedDate = resolvedDate
             });
         }
 
@@ -426,7 +435,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 OriginalDate = confirmation.OriginalDate,
                 IsExcluded = true,
                 ExclusionReason = confirmation.Reason,
-                ConfirmationId = confirmation.Id
+                ConfirmationId = confirmation.Id,
+                ResolvedDate = DateOnly.FromDateTime(confirmation.CreatedAt.UtcDateTime)
             });
         }
 

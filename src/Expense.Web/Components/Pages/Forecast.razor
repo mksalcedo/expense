@@ -80,7 +80,7 @@ else
                         @if (row.IsExcluded)
                         {
                             <br />
-                            <span style="color: #666">(@row.ExclusionReason)</span>
+                            <span style="color: #666">(@row.ExclusionReason@(row.ResolvedDate is { } resolvedDate ? $" - {resolvedDate:MM/dd/yyyy}" : ""))</span>
                         }
                         else
                         {

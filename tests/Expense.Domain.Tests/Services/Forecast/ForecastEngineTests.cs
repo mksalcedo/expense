@@ -964,6 +964,7 @@ public class ForecastEngineTests : DatabaseTestBase
         var row = Assert.Single(result.Rows);
         Assert.True(row.IsExcluded);
         Assert.Equal(ConfirmationReason.AutoReconciled, row.ExclusionReason);
+        Assert.Equal(new DateOnly(2026, 7, 13), row.ResolvedDate);
     }
 
     // Real gap this guards (found live 2026-08-04, user-identified): before this fix, a
@@ -1682,6 +1683,7 @@ public class ForecastEngineTests : DatabaseTestBase
         // forever even though there's nothing left to do.
         Assert.True(pianoRow.IsExcluded);
         Assert.Equal(ConfirmationReason.AutoReconciled, pianoRow.ExclusionReason);
+        Assert.Equal(new DateOnly(2026, 8, 10), pianoRow.ResolvedDate); // most recent of the three payments (8/3, 8/10, 8/10)
     }
 
     // Symmetric case on the expense side: overpaying a bill via partial payments must clamp
@@ -1711,6 +1713,7 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(0m, amexRow.Amount);
         Assert.True(amexRow.IsExcluded);
         Assert.Equal(ConfirmationReason.AutoReconciled, amexRow.ExclusionReason);
+        Assert.Equal(new DateOnly(2026, 7, 14), amexRow.ResolvedDate);
     }
 
     // The multi-candidate list (calendar-month categories like Piano) needs its own version
@@ -1765,6 +1768,7 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(0m, pianoRow.Amount);
         Assert.True(pianoRow.IsExcluded);
         Assert.Equal(ConfirmationReason.AutoReconciled, pianoRow.ExclusionReason);
+        Assert.Equal(new DateOnly(2026, 8, 10), pianoRow.ResolvedDate); // most recent of the six payments
     }
 
     [Fact]
@@ -2188,7 +2192,7 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.PaymentConfirmations.Add(new PaymentConfirmation
         {
             AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 7, 7), EffectiveDate = new DateOnly(2026, 7, 7),
-            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = new DateTimeOffset(2026, 7, 9, 8, 30, 0, TimeSpan.Zero)
         });
         await Context.SaveChangesAsync();
 
@@ -2199,6 +2203,7 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(ConfirmationReason.AlreadyPaid, row.ExclusionReason);
         Assert.Equal(-357m, row.Amount);
         Assert.Equal(3000m, row.RunningBalance); // unaffected - the excluded amount never counts toward the balance
+        Assert.Equal(new DateOnly(2026, 7, 9), row.ResolvedDate); // when the user actually clicked Confirm, not the bill's own due date
     }
 
     [Fact]
@@ -2214,7 +2219,7 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.PaymentConfirmations.Add(new PaymentConfirmation
         {
             AccountId = amex.Id, OriginalDate = new DateOnly(2026, 7, 20), EffectiveDate = new DateOnly(2026, 7, 20),
-            Amount = -2000m, Reason = ConfirmationReason.Overridden, CreatedAt = DateTimeOffset.UtcNow
+            Amount = -2000m, Reason = ConfirmationReason.Overridden, CreatedAt = new DateTimeOffset(2026, 7, 15, 8, 30, 0, TimeSpan.Zero)
         });
         await Context.SaveChangesAsync();
 
@@ -2224,6 +2229,7 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.True(row.IsExcluded);
         Assert.Equal(ConfirmationReason.Overridden, row.ExclusionReason);
         Assert.Equal(-2000m, row.Amount);
+        Assert.Equal(new DateOnly(2026, 7, 15), row.ResolvedDate);
     }
 
     // Real bug this guards (found live 2026-08-04, user-identified): a confirmation for one
@@ -2388,7 +2394,7 @@ public class ForecastEngineTests : DatabaseTestBase
         var confirmation = new PaymentConfirmation
         {
             AccountId = chaseAmazon.Id, OriginalDate = new DateOnly(2026, 6, 7), EffectiveDate = new DateOnly(2026, 7, 10),
-            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = DateTimeOffset.UtcNow
+            Amount = -357m, Reason = ConfirmationReason.AlreadyPaid, CreatedAt = new DateTimeOffset(2026, 7, 10, 9, 0, 0, TimeSpan.Zero)
         };
         Context.PaymentConfirmations.Add(confirmation);
         await Context.SaveChangesAsync();
@@ -2399,6 +2405,7 @@ public class ForecastEngineTests : DatabaseTestBase
         Assert.Equal(confirmation.Id, row.ConfirmationId);
         Assert.Equal(-357m, row.Amount);
         Assert.Equal(new DateOnly(2026, 7, 10), row.Date);
+        Assert.Equal(new DateOnly(2026, 7, 10), row.ResolvedDate);
     }
 
     [Fact]

@@ -26,6 +26,16 @@ public class ForecastLedgerRow
     public ConfirmationReason? ExclusionReason { get; set; }
     public int? ConfirmationId { get; set; }
 
+    /// <summary>
+    /// When this row was actually resolved - null when there isn't one clean single answer
+    /// (a partial-payment-matched row already spells its own date out in Description, so
+    /// this is left unset there rather than showing the same date twice). Sourced per case:
+    /// the real transaction's own date for a single-transaction AutoReconciled match,
+    /// PaymentConfirmation.CreatedAt for a manual confirm/override, or the most recent
+    /// applied partial payment's PaidDate once a multi-payer line is fully covered.
+    /// </summary>
+    public DateOnly? ResolvedDate { get; set; }
+
     /// <summary>Real partial payments already applied to this occurrence - their sum is
     /// already subtracted from Amount above (see ForecastEngine); kept here only so the
     /// Forecast page can list/undo each one individually.</summary>

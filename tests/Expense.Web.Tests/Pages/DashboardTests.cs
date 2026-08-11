@@ -149,7 +149,8 @@ public class DashboardTests : BunitContext
             Rows = [new ForecastLedgerRow
             {
                 Date = new DateOnly(2026, 7, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m,
-                AccountId = 5, OriginalDate = new DateOnly(2026, 7, 20), IsExcluded = true, ExclusionReason = ConfirmationReason.AlreadyPaid, ConfirmationId = 1
+                AccountId = 5, OriginalDate = new DateOnly(2026, 7, 20), IsExcluded = true, ExclusionReason = ConfirmationReason.AlreadyPaid, ConfirmationId = 1,
+                ResolvedDate = new DateOnly(2026, 7, 18)
             }]
         };
         RegisterFakes(forecast: forecast);
@@ -159,6 +160,7 @@ public class DashboardTests : BunitContext
         var row = cut.FindAll("tbody tr").First(r => r.TextContent.Contains("Chase Amazon Prime Visa Payment"));
         Assert.Contains("line-through", row.GetAttribute("style") ?? "");
         Assert.Contains("AlreadyPaid", row.TextContent);
+        Assert.Contains("AlreadyPaid - 07/18/2026", row.TextContent);
     }
 
     [Fact]

@@ -724,6 +724,27 @@ public class ForecastTests : BunitContext
     }
 
     [Fact]
+    public void ExcludedRow_WithAResolvedDate_ShowsItAlongsideTheReason_SameAsTheDashboard()
+    {
+        var result = new ForecastResult
+        {
+            StartingBalance = 1000m,
+            Rows = [new ForecastLedgerRow
+            {
+                Date = new DateOnly(2026, 8, 20), Description = "Chase Amazon Prime Visa Payment", Amount = -357m, RunningBalance = 643m,
+                AccountId = 5, OriginalDate = new DateOnly(2026, 8, 20), IsExcluded = true, ExclusionReason = ConfirmationReason.AlreadyPaid,
+                ConfirmationId = 1, ResolvedDate = new DateOnly(2026, 8, 18)
+            }]
+        };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("AlreadyPaid - 08/18/2026", row!.TextContent);
+    }
+
+    [Fact]
     public void ConfirmAndOverrideActions_AreAvailableEvenOnADeferredRow()
     {
         var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
