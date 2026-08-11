@@ -449,6 +449,41 @@ public class DashboardTests : BunitContext
     }
 
     [Fact]
+    public void Dashboard_ThisWeeksSpending_RemainingColumn_UsesCarryoverAdjustedRollingBalance_NotPlainRemaining()
+    {
+        // Real bug found live 2026-08-10: Dashboard's Remaining column (row and Total) were
+        // never updated when Spending Tracker carryover shipped - they showed plain
+        // Budget-Actual while the Spending Tracker page itself correctly showed the
+        // carryover-adjusted RollingBalance. Groceries here: Budget 450, Actual 120 (plain
+        // Remaining would be 330.00), but a -60 deficit carried in from last period brings the
+        // true rolling balance to 270.00 - that's what must render, not the naive figure.
+        var fake = RegisterFakes();
+        fake.Data = new SpendingTrackerPageData
+        {
+            Week = new SpendingTrackerResult
+            {
+                PeriodStart = new DateOnly(2026, 7, 12), PeriodEnd = new DateOnly(2026, 7, 18),
+                Categories =
+                [
+                    new CategorySpendingSummary
+                    {
+                        CategoryId = 1, CategoryName = "Groceries", Budget = 450m, Actual = 120m,
+                        IsCarryoverTracked = true, CarriedIn = -60m, RollingBalance = 270m
+                    }
+                ],
+                PendingAmount = 0m
+            },
+            Month = new SpendingTrackerResult { PeriodStart = new DateOnly(2026, 7, 1), PeriodEnd = new DateOnly(2026, 7, 31), Categories = [], PendingAmount = 0m }
+        };
+
+        var cut = Render<Dashboard>();
+
+        Assert.DoesNotContain("330.00", cut.Markup);
+        var totalsRow = cut.Find("#spending-week-totals-row");
+        Assert.Contains("270.00", totalsRow.TextContent);
+    }
+
+    [Fact]
     public void Dashboard_LinksToItsOwnDetailPages()
     {
         // Only the pages this dashboard summarizes get their own "drill in" link here -
