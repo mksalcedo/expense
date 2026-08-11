@@ -124,6 +124,7 @@ public class ReviewQueueTests : BunitContext
         public decimal? LastAddedPrice { get; private set; }
         public int? LastAddedQuantity { get; private set; }
         public int AddManualAmazonItemCallCount { get; private set; }
+        public List<(string OrderId, DateOnly OrderDate, string Title, decimal Price, int Quantity)> AddedItems { get; } = [];
 
         public Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
         {
@@ -133,6 +134,7 @@ public class ReviewQueueTests : BunitContext
             LastAddedTitle = itemTitle;
             LastAddedPrice = price;
             LastAddedQuantity = quantity;
+            AddedItems.Add((orderId, orderDate, itemTitle, price, quantity));
             return Task.CompletedTask;
         }
 
@@ -764,6 +766,124 @@ public class ReviewQueueTests : BunitContext
         Assert.Null(provider.LastUpdatedItemId);
         Assert.NotEmpty(cut.FindAll("#item-paste-target-500"));
         Assert.Contains("Couldn't find an item name", cut.Find("#item-paste-error-500").TextContent);
+    }
+
+    [Fact]
+    public async Task PastingOrderData_WithASingleItem_AppliesItsExactTitlePriceAndQuantity()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-paste-screenshot-500").Click();
+
+        var pageInstance = cut.Instance;
+        const string json = """{"orderId": "113-0140431-5777821", "items": [{"title": "THORNE Vitamin C", "price": 24.99, "quantity": 2}]}""";
+        await cut.InvokeAsync(() => pageInstance.OnOrderDataPasted(json));
+
+        Assert.Equal(500, provider.LastUpdatedItemId);
+        Assert.Equal("THORNE Vitamin C", provider.LastUpdatedTitle);
+        Assert.Equal(24.99m, provider.LastUpdatedPrice);
+        Assert.Equal(2, provider.LastUpdatedQuantity);
+        Assert.Empty(provider.AddedItems);
+        Assert.Empty(cut.FindAll("#item-paste-target-500"));
+    }
+
+    [Fact]
+    public async Task PastingOrderData_WithMultipleItems_AppliesTheFirstAndAddsTheRestAsNewItems()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-paste-screenshot-500").Click();
+
+        var pageInstance = cut.Instance;
+        const string json = """
+            {
+              "orderId": "113-0140431-5777821",
+              "items": [
+                {"title": "THORNE Vitamin C", "price": 24.99, "quantity": 1},
+                {"title": "NeoCell Collagen Peptides", "price": 32.50, "quantity": 2}
+              ]
+            }
+            """;
+        await cut.InvokeAsync(() => pageInstance.OnOrderDataPasted(json));
+
+        Assert.Equal(500, provider.LastUpdatedItemId);
+        Assert.Equal("THORNE Vitamin C", provider.LastUpdatedTitle);
+        var added = Assert.Single(provider.AddedItems);
+        Assert.Equal("113-0140431-5777821", added.OrderId);
+        Assert.Equal(new DateOnly(2026, 7, 22), added.OrderDate);
+        Assert.Equal("NeoCell Collagen Peptides", added.Title);
+        Assert.Equal(32.50m, added.Price);
+        Assert.Equal(2, added.Quantity);
+    }
+
+    [Fact]
+    public async Task PastingOrderData_ThatIsNotValidJson_ShowsAnErrorAndLeavesThePasteTargetOpen()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-paste-screenshot-500").Click();
+
+        var pageInstance = cut.Instance;
+        await cut.InvokeAsync(() => pageInstance.OnOrderDataPasted("{not valid json"));
+
+        Assert.Null(provider.LastUpdatedItemId);
+        Assert.Empty(provider.AddedItems);
+        Assert.NotEmpty(cut.FindAll("#item-paste-target-500"));
+        Assert.Contains("Couldn't read that as order data", cut.Find("#item-paste-error-500").TextContent);
+    }
+
+    [Fact]
+    public async Task PastingOrderData_ForADifferentOrder_ShowsAnErrorAndAppliesNothing()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
+                NeedsReview = true, OrderId = "113-0140431-5777821"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-paste-screenshot-500").Click();
+
+        var pageInstance = cut.Instance;
+        const string json = """{"orderId": "999-9999999-9999999", "items": [{"title": "Wrong Order Item", "price": 5.00, "quantity": 1}]}""";
+        await cut.InvokeAsync(() => pageInstance.OnOrderDataPasted(json));
+
+        Assert.Null(provider.LastUpdatedItemId);
+        Assert.Empty(provider.AddedItems);
+        Assert.NotEmpty(cut.FindAll("#item-paste-target-500"));
+        Assert.Contains("different order", cut.Find("#item-paste-error-500").TextContent);
     }
 
     [Fact]

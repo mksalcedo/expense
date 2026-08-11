@@ -1,5 +1,6 @@
 @page "/review-queue"
 @using Expense.Domain.Services.Categorization
+@using Expense.Domain.Services.Ingestion.Amazon
 @using Expense.Web.Services
 @inject IReviewQueueProvider ReviewQueueProvider
 @inject IReviewQueueChangeNotifier ReviewQueueChangeNotifier
@@ -207,7 +208,7 @@ else
                                 Why is this flagged?
                             </button>
                             <button id="item-paste-screenshot-@representativeId" @onclick="() => TogglePasteScreenshotAsync(representativeId)">
-                                Paste screenshot
+                                Paste screenshot / order data
                             </button>
                         }
                         @if (group.OrderId is not null)
@@ -238,12 +239,17 @@ else
                         <td colspan="9">
                             <div id="item-paste-target-@representativeId" style="background: var(--color-surface, #f5f5f5); padding: 10px;">
                                 <p>
-                                    Open the order on Amazon (link above), then paste a screenshot of it here with Ctrl+V (or Cmd+V) -
-                                    the item name will be read automatically.
+                                    Open the order on Amazon (link above), then paste here with Ctrl+V (or Cmd+V) - either a
+                                    screenshot of the page (the item name will be read automatically), or, if you've run the
+                                    order-page bookmarklet there, its copied data for exact titles, prices, and quantities.
                                 </p>
                                 @if (_parsingScreenshot)
                                 {
                                     <p id="item-paste-parsing-@representativeId">Reading screenshot... (usually 5-15 seconds)</p>
+                                }
+                                @if (_applyingOrderData)
+                                {
+                                    <p id="item-paste-applying-@representativeId">Applying order data...</p>
                                 }
                                 @if (_screenshotParseError is not null)
                                 {
@@ -319,6 +325,7 @@ else
     // teaching the JS module about multiple simultaneous targets.
     private int? _pastingScreenshotForItemId;
     private bool _parsingScreenshot;
+    private bool _applyingOrderData;
     private string? _screenshotParseError;
     private IJSObjectReference? _screenshotModule;
     private DotNetObjectReference<ReviewQueue>? _dotNetRef;
@@ -398,6 +405,66 @@ else
         finally
         {
             _parsingScreenshot = false;
+            StateHasChanged();
+        }
+    }
+
+    // Structured alternative to OnImagePasted above - exact title/price/quantity scraped
+    // directly from the order page's DOM by the bookmarklet (see
+    // docs/amazon-order-scraper-bookmarklet.md), rather than an image for Claude Vision to
+    // guess at. Unlike the screenshot path, this applies every item found, not just the
+    // first - "+ Add another item" is how the screenshot path's own single-item limit gets
+    // worked around today, so a multi-item order here just does that automatically.
+    [JSInvokable]
+    public async Task OnOrderDataPasted(string json)
+    {
+        if (_pastingScreenshotForItemId is not { } itemId) return;
+
+        _applyingOrderData = true;
+        _screenshotParseError = null;
+        StateHasChanged();
+
+        try
+        {
+            var payload = AmazonOrderScrapeParser.TryParse(json);
+            if (payload is null)
+            {
+                _screenshotParseError = "Couldn't read that as order data from the bookmarklet - try again, or paste a screenshot instead.";
+                return;
+            }
+
+            var group = _data!.AmazonItemGroups.Single(g => g.ItemIds.Contains(itemId));
+            if (payload.OrderId is { } pastedOrderId && group.OrderId is { } expectedOrderId && pastedOrderId != expectedOrderId)
+            {
+                _screenshotParseError = $"That looks like a different order (found {pastedOrderId}, expected {expectedOrderId}) - open the correct order page and try again.";
+                return;
+            }
+
+            var first = payload.Items[0];
+            await ReviewQueueProvider.UpdateAmazonItemDetailsAsync(itemId, first.Title, first.Price, first.Quantity);
+
+            if (group.OrderId is not null)
+            {
+                foreach (var extra in payload.Items.Skip(1))
+                {
+                    await ReviewQueueProvider.AddManualAmazonItemAsync(group.OrderId, group.SampleDate, extra.Title, extra.Price, extra.Quantity);
+                }
+            }
+
+            _pastingScreenshotForItemId = null;
+            if (_screenshotModule is not null)
+            {
+                await _screenshotModule.InvokeVoidAsync("unregisterPasteListener");
+            }
+            await ReloadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            _screenshotParseError = ex.Message;
+        }
+        finally
+        {
+            _applyingOrderData = false;
             StateHasChanged();
         }
     }

@@ -7,6 +7,11 @@
 // so a caller that needs to scope pasting to one specific UI element (e.g. Review Queue's
 // per-row "Paste screenshot" mode) does that by only calling registerPasteListener while that
 // element is active, not by teaching this module about multiple simultaneous targets.
+//
+// Also accepts plain-text pastes that look like JSON (e.g. the order-page bookmarklet's
+// clipboard output - see docs/amazon-order-scraper-bookmarklet.md) via a second callback,
+// OnOrderDataPasted - same listener, same paste target, routed by clipboard content type
+// rather than needing a separate button/UI mode.
 let currentHandler = null;
 
 export function registerPasteListener(dotNetRef) {
@@ -34,7 +39,22 @@ export function registerPasteListener(dotNetRef) {
                 } catch (error) {
                     console.error('Failed to read pasted image:', error);
                 }
-                break;
+                return;
+            }
+        }
+
+        for (const item of items) {
+            if (item.kind === 'string' && item.type === 'text/plain') {
+                item.getAsString(async (text) => {
+                    const trimmed = text.trim();
+                    // Only intercept text that could plausibly be the bookmarklet's JSON -
+                    // an ordinary text paste elsewhere in this mode should behave normally
+                    // (e.g. editing the title/price inputs also open on this row).
+                    if (trimmed.startsWith('{')) {
+                        await dotNetRef.invokeMethodAsync('OnOrderDataPasted', trimmed);
+                    }
+                });
+                return;
             }
         }
     };
