@@ -354,20 +354,50 @@ public class TransactionsTests : BunitContext
     }
 
     [Fact]
-    public void EditingAnAmazonRowsDescriptionPriceAndQuantity_SavesTheDetails()
+    public void EditingAnAmazonRowsDescription_SavesTheTitle_PreservingPriceAndQuantity()
     {
+        // Price/quantity editing was removed from this page (2026-08-13) - correcting a
+        // NeedsReview item's price now belongs on the Review Queue, which allocates the
+        // resulting tax/adjustment correctly; editing it here would silently drop that (see
+        // TransactionManagementService.UpdateAmazonItemDetailsAsync). Title-only editing still
+        // needs to pass the row's own existing price/quantity through unchanged, since the
+        // underlying service always overwrites all three fields together.
         var provider = MakeProvider();
         Services.AddSingleton<ITransactionsPageProvider>(provider);
 
         var cut = Render<Transactions>();
         cut.Find("#amazon-title-201").Change("Celestial Seasonings Wild Berry Zinger Tea");
-        cut.Find("#amazon-price-201").Change("21.99");
-        cut.Find("#amazon-quantity-201").Change("2");
 
         Assert.Equal(201, provider.LastAmazonItemDetailsId);
         Assert.Equal("Celestial Seasonings Wild Berry Zinger Tea", provider.LastAmazonItemTitle);
-        Assert.Equal(21.99m, provider.LastAmazonItemPrice);
-        Assert.Equal(2, provider.LastAmazonItemQuantity);
+        Assert.Equal(22m, provider.LastAmazonItemPrice); // row 201's existing price, untouched
+        Assert.Equal(1, provider.LastAmazonItemQuantity); // row 201's existing quantity, untouched
+    }
+
+    [Fact]
+    public void AmazonRow_HasNoEditablePriceOrQuantityInputs()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+
+        Assert.Empty(cut.FindAll("#amazon-price-201"));
+        Assert.Empty(cut.FindAll("#amazon-quantity-201"));
+    }
+
+    [Fact]
+    public void AmazonRow_ShowsTheNetAmount_SameAsABankRow()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+
+        // Row 201 (see MakeProvider): Amount = -22m, the already-computed net figure -
+        // shown plainly, same as a Bank row, not the raw editable Price it used to be.
+        var row = cut.Find("#amazon-title-201").Closest("tr")!;
+        Assert.Contains("-22.00", row.TextContent);
     }
 
     [Fact]

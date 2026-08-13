@@ -644,6 +644,23 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task GetPendingAmazonItemGroupsAsync_NonNeedsReviewItems_SumTaxAllocatedAcrossTheGroup()
+    {
+        // Symmetric with TotalPrice's own summing - needed so the Review Queue can still show
+        // a correct adjustment/net note after a NeedsReview correction reloads and the item
+        // moves from its own singleton group into a grouped-by-title one.
+        Context.AmazonOrderItems.AddRange(
+            new AmazonOrderItem { OrderId = "1", OrderDate = new DateOnly(2026, 7, 1), ItemTitle = "Qunol Ultra CoQ10", Price = 30m, Quantity = 1, TaxAllocated = 1.80m, NeedsReview = false, CreatedAt = DateTimeOffset.UtcNow },
+            new AmazonOrderItem { OrderId = "2", OrderDate = new DateOnly(2026, 7, 5), ItemTitle = "Qunol Ultra CoQ10", Price = 32m, Quantity = 1, TaxAllocated = 1.92m, NeedsReview = false, CreatedAt = DateTimeOffset.UtcNow });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingAmazonItemGroupsAsync(Context);
+
+        var group = Assert.Single(groups);
+        Assert.Equal(3.72m, group.TaxAllocated);
+    }
+
+    [Fact]
     public async Task GetPendingAmazonItemGroupsAsync_SingleNonNeedsReviewItem_StillExposesItsOrderId()
     {
         // Real scenario this guards: a NeedsReview placeholder gets corrected by hand (title

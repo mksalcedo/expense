@@ -263,6 +263,7 @@ public class CategorizationService
                 SampleDate = g.First().OrderDate,
                 ItemIds = g.Select(i => i.Id).ToList(),
                 TotalPrice = g.Sum(i => i.Price),
+                TaxAllocated = g.Sum(i => i.TaxAllocated),
                 // A group of exactly one real item unambiguously belongs to one order - safe
                 // to expose here too (unlike a genuine multi-item group, which could span
                 // several orders and has no single id to report). This is what keeps "Add

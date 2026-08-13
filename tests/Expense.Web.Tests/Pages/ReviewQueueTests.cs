@@ -627,6 +627,48 @@ public class ReviewQueueTests : BunitContext
     }
 
     [Fact]
+    public void NeedsReviewItem_AfterEditingPrice_ShowsTheAdjustmentAndNetAmount()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [402], TotalPrice = 51.40m,
+                TaxAllocated = 0m, NeedsReview = true, OrderId = "113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+
+        cut.Find("#item-price-402").Change("25.99");
+
+        var note = cut.Find("#item-tax-note-402");
+        Assert.Contains("25.41", note.TextContent);
+        Assert.Contains("51.40", note.TextContent);
+    }
+
+    [Fact]
+    public void NeedsReviewItem_WithNoAdjustmentYet_ShowsNoTaxNote()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [402], TotalPrice = 51.40m,
+                TaxAllocated = 0m, NeedsReview = true, OrderId = "113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+
+        Assert.Empty(cut.FindAll("#item-tax-note-402"));
+    }
+
+    [Fact]
     public void NeedsReviewItem_EditingPriceAlone_AllocatesTheDifferenceAsTax()
     {
         var provider = MakeProvider();

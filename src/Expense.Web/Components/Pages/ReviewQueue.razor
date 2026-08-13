@@ -186,6 +186,13 @@ else
                         {
                             @group.TotalPrice.ToString("N2")
                         }
+                        @if (group.TaxAllocated != 0m)
+                        {
+                            <br />
+                            <span id="item-tax-note-@representativeId" style="color:#666; font-size:0.85em;">
+                                @(group.TaxAllocated >= 0 ? "+" : "")@group.TaxAllocated.ToString("N2") adjustment &rarr; net @((group.TotalPrice + group.TaxAllocated).ToString("N2"))
+                            </span>
+                        }
                     </td>
                     <td>
                         <input id="item-pattern-@representativeId" value="@group.SuggestedPattern"

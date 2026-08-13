@@ -119,7 +119,7 @@ else
                         @if (row.Source == TransactionSource.Amazon)
                         {
                             <input id="amazon-title-@row.Id" value="@row.Description"
-                                   @onchange="e => UpdateAmazonItemDetailsAsync(row, title: (string?)e.Value, price: null, quantity: null)" />
+                                   @onchange="e => UpdateAmazonItemTitleAsync(row, (string)e.Value!)" />
                         }
                         else
                         {
@@ -127,24 +127,8 @@ else
                         }
                     </td>
                     <td>@row.OrderId</td>
-                    <td class="text-right">
-                        @if (row.Source == TransactionSource.Amazon)
-                        {
-                            <input id="amazon-price-@row.Id" type="number" step="0.01" value="@row.Price" class="no-spinner amount-input" style="width: 80px; padding-right: 0px;"
-                                   @onchange="e => UpdateAmazonItemDetailsAsync(row, title: null, price: (string?)e.Value, quantity: null)" />
-                        }
-                        else
-                        {
-                            @row.Amount.ToString("N2")
-                        }
-                    </td>
-                    <td class="text-right">
-                        @if (row.Source == TransactionSource.Amazon)
-                        {
-                            <input id="amazon-quantity-@row.Id" type="number" value="@row.Quantity" class="no-spinner amount-input" style="width: 40px; padding-right: 0px;"
-                                   @onchange="e => UpdateAmazonItemDetailsAsync(row, title: null, price: null, quantity: (string?)e.Value)" />
-                        }
-                    </td>
+                    <td class="text-right">@row.Amount.ToString("N2")</td>
+                    <td class="text-right">@row.Quantity</td>
                     <td>@(row.Source == TransactionSource.Bank ? "Bank" : "Amazon")</td>
                     <td>@row.AccountName</td>
                     <td>
@@ -330,16 +314,18 @@ else
         await LoadDataAsync();
     }
 
-    private async Task UpdateAmazonItemDetailsAsync(TransactionRow row, string? title, string? price, string? quantity)
+    // Price/quantity correction was removed from this page (2026-08-13) - it never touched
+    // TaxAllocated, so fixing a NeedsReview placeholder's price here would have silently
+    // dropped whatever tax/adjustment belonged with it (see
+    // TransactionManagementService.UpdateAmazonItemDetailsAsync). That correction now belongs
+    // on the Review Queue, which allocates it correctly. Title is still worth fixing here -
+    // renaming isn't ambiguous the way price is - so this still has to pass the row's own
+    // existing price/quantity through unchanged, since the underlying service always
+    // overwrites all three fields together and taxAllocated is omitted (preserved as-is).
+    private async Task UpdateAmazonItemTitleAsync(TransactionRow row, string newTitle)
     {
-        var newTitle = title ?? row.Description;
-        var newPrice = price is not null ? decimal.Parse(price) : row.Price!.Value;
-        var newQuantity = quantity is not null ? int.Parse(quantity) : row.Quantity!.Value;
-
-        await TransactionsProvider.UpdateAmazonItemDetailsAsync(row.Id, newTitle, newPrice, newQuantity);
+        await TransactionsProvider.UpdateAmazonItemDetailsAsync(row.Id, newTitle, row.Price!.Value, row.Quantity!.Value);
 
         row.Description = newTitle;
-        row.Price = newPrice;
-        row.Quantity = newQuantity;
     }
 }
