@@ -23,7 +23,7 @@ public class SyncIssueService(AmazonImportService amazonImportService)
         CancellationToken cancellationToken = default)
     {
         var issue = await context.SyncIssues.SingleAsync(i => i.Id == syncIssueId, cancellationToken);
-        var item = await amazonImportService.AddManualItemAsync(context, orderId, issue.ReceivedDate, itemTitle, price, quantity, cancellationToken);
+        var item = await amazonImportService.AddManualItemAsync(context, orderId, issue.ReceivedDate, itemTitle, price, quantity, cancellationToken: cancellationToken);
 
         issue.Resolution = SyncIssueResolution.Resolved;
         issue.ResolvedAmazonOrderItemId = item.Id;

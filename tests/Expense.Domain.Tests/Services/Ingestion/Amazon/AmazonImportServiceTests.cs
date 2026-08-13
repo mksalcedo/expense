@@ -320,4 +320,22 @@ public class AmazonImportServiceTests : DatabaseTestBase
         Assert.Null(reloaded.CategoryId);
         Assert.Equal(2, reloaded.Quantity);
     }
+
+    [Fact]
+    public async Task AddManualItemAsync_SetsTaxAllocated_WhenProvided()
+    {
+        var item = await _sut.AddManualItemAsync(Context, "113-MANUAL", new DateOnly(2026, 7, 18), "Qunol Ultra CoQ10 100mg", 29.97m, 1, taxAllocated: 2.10m);
+
+        var reloaded = await Context.AmazonOrderItems.SingleAsync(i => i.Id == item.Id);
+        Assert.Equal(2.10m, reloaded.TaxAllocated);
+    }
+
+    [Fact]
+    public async Task AddManualItemAsync_DefaultsTaxAllocatedToZero_WhenNotProvided()
+    {
+        var item = await _sut.AddManualItemAsync(Context, "113-MANUAL", new DateOnly(2026, 7, 18), "Qunol Ultra CoQ10 100mg", 29.97m, 1);
+
+        var reloaded = await Context.AmazonOrderItems.SingleAsync(i => i.Id == item.Id);
+        Assert.Equal(0m, reloaded.TaxAllocated);
+    }
 }

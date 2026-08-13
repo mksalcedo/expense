@@ -349,4 +349,46 @@ public class TransactionManagementServiceTests : DatabaseTestBase
         Assert.Equal(2, reloaded.Quantity);
         Assert.False(reloaded.NeedsReview); // fixed now - no longer needs a human to look at it
     }
+
+    [Fact]
+    public async Task UpdateAmazonItemDetailsAsync_SetsTaxAllocated_WhenProvided()
+    {
+        var item = new AmazonOrderItem
+        {
+            OrderId = "113-1132648-3403446", OrderDate = new DateOnly(2026, 7, 1),
+            ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+            Price = 22.00m, Quantity = 1, TaxAllocated = 0m, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.Add(item);
+        await Context.SaveChangesAsync();
+
+        await _sut.UpdateAmazonItemDetailsAsync(Context, item.Id, "Celestial Seasonings Wild Berry Zinger Tea", 20.50m, 1, taxAllocated: 1.50m);
+
+        var reloaded = await Context.AmazonOrderItems.SingleAsync(i => i.Id == item.Id);
+        Assert.Equal(20.50m, reloaded.Price);
+        Assert.Equal(1.50m, reloaded.TaxAllocated);
+    }
+
+    [Fact]
+    public async Task UpdateAmazonItemDetailsAsync_LeavesTaxAllocatedUnchanged_WhenNotProvided()
+    {
+        // The Transactions page's own use of this method never touches tax - it's fixing a
+        // title/price/quantity typo on an item whose TaxAllocated is already correct from
+        // the original itemized email parse, not re-splitting a NeedsReview placeholder's
+        // combined total.
+        var item = new AmazonOrderItem
+        {
+            OrderId = "113-1132648-3403446", OrderDate = new DateOnly(2026, 7, 1),
+            ItemTitle = "Celestial Seasonings Wild Berry Zinger Tea",
+            Price = 20.50m, Quantity = 1, TaxAllocated = 1.75m, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.Add(item);
+        await Context.SaveChangesAsync();
+
+        await _sut.UpdateAmazonItemDetailsAsync(Context, item.Id, "Celestial Seasonings Wild Berry Zinger Tea", 21.00m, 1);
+
+        var reloaded = await Context.AmazonOrderItems.SingleAsync(i => i.Id == item.Id);
+        Assert.Equal(21.00m, reloaded.Price);
+        Assert.Equal(1.75m, reloaded.TaxAllocated); // untouched
+    }
 }

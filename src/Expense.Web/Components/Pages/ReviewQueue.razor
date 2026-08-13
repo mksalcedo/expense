@@ -441,14 +441,27 @@ else
                 return;
             }
 
+            // The placeholder's price is the order's whole tax-inclusive grand total (see
+            // AmazonOrderEmailParser.BuildPlaceholderOrder) - the scraped items only ever
+            // carry their own pre-tax prices, so whatever's left over is real tax, split
+            // proportionally across items by price share (same algorithm
+            // AmazonOrderEmailParser already uses for a normally-itemized email). Found live
+            // 2026-08-13: applying scraped data without this silently dropped the tax that
+            // had been implicitly included in the placeholder's price.
+            var grandTotal = group.TotalPrice;
+            var itemPriceSum = payload.Items.Sum(i => i.Price * i.Quantity);
+            var taxLeftover = grandTotal - itemPriceSum;
+            decimal TaxFor(AmazonOrderScrapeItem item) =>
+                itemPriceSum == 0m ? 0m : Math.Round(taxLeftover * (item.Price * item.Quantity / itemPriceSum), 2);
+
             var first = payload.Items[0];
-            await ReviewQueueProvider.UpdateAmazonItemDetailsAsync(itemId, first.Title, first.Price, first.Quantity);
+            await ReviewQueueProvider.UpdateAmazonItemDetailsAsync(itemId, first.Title, first.Price, first.Quantity, taxAllocated: TaxFor(first));
 
             if (group.OrderId is not null)
             {
                 foreach (var extra in payload.Items.Skip(1))
                 {
-                    await ReviewQueueProvider.AddManualAmazonItemAsync(group.OrderId, group.SampleDate, extra.Title, extra.Price, extra.Quantity);
+                    await ReviewQueueProvider.AddManualAmazonItemAsync(group.OrderId, group.SampleDate, extra.Title, extra.Price, extra.Quantity, taxAllocated: TaxFor(extra));
                 }
             }
 
@@ -703,10 +716,21 @@ else
         var newTitle = title ?? group.ItemTitle;
         var newPrice = price is not null ? decimal.Parse(price) : group.TotalPrice;
 
-        await ReviewQueueProvider.UpdateAmazonItemDetailsAsync(itemId, newTitle, newPrice, quantity: 1);
+        // A NeedsReview placeholder's price starts out as the order's whole tax-inclusive
+        // grand total (see AmazonOrderEmailParser.BuildPlaceholderOrder) - correcting it to
+        // the item's own pre-tax price must not silently drop the difference, it's real tax
+        // that was owed (found live 2026-08-13). Only reallocates on the FIRST price
+        // correction (TaxAllocated still 0) - once tax has been split out, a later price
+        // edit is a plain correction (e.g. a typo), not another combined-total split.
+        var newTax = price is not null && group.TaxAllocated == 0m
+            ? group.TotalPrice - newPrice
+            : group.TaxAllocated;
+
+        await ReviewQueueProvider.UpdateAmazonItemDetailsAsync(itemId, newTitle, newPrice, quantity: 1, taxAllocated: newTax);
 
         group.ItemTitle = newTitle;
         group.TotalPrice = newPrice;
+        group.TaxAllocated = newTax;
     }
 
     private readonly HashSet<int> _expandedReviewContext = [];

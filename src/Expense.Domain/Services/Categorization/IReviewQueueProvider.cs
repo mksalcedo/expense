@@ -19,9 +19,11 @@ public interface IReviewQueueProvider
 
     Task DismissAmazonItemsAsync(IReadOnlyList<int> itemIds, CancellationToken cancellationToken = default);
 
-    Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default);
+    // taxAllocated is nullable and left alone when omitted - see TransactionManagementService
+    // for why (fixing a title/price typo shouldn't touch an already-correct tax split).
+    Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, decimal? taxAllocated = null, CancellationToken cancellationToken = default);
 
-    Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default);
+    Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, decimal taxAllocated = 0m, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Extracts item title(s) from a screenshot of the real Amazon order-details page - for a

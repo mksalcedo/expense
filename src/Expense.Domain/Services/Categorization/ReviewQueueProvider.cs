@@ -70,20 +70,20 @@ public class ReviewQueueProvider(
 
     // Delegates to the same method the Transactions page already uses, so a NeedsReview
     // item can be corrected right where it's flagged instead of requiring a trip there.
-    public async Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+    public async Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, decimal? taxAllocated = null, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await transactions.UpdateAmazonItemDetailsAsync(context, itemId, itemTitle, price, quantity);
+        await transactions.UpdateAmazonItemDetailsAsync(context, itemId, itemTitle, price, quantity, taxAllocated);
     }
 
     // Lets a NeedsReview order that turns out to be multiple real items get the rest of
     // its items added by hand, one at a time, alongside correcting the existing placeholder
     // row to be the first item - see docs/amazon-needs-review-plan.md for why this exists
     // as a stopgap ahead of the fuller screenshot/vision-based import.
-    public async Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+    public async Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, decimal taxAllocated = 0m, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await amazonImport.AddManualItemAsync(context, orderId, orderDate, itemTitle, price, quantity, cancellationToken);
+        await amazonImport.AddManualItemAsync(context, orderId, orderDate, itemTitle, price, quantity, taxAllocated, cancellationToken);
     }
 
     public async Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default)

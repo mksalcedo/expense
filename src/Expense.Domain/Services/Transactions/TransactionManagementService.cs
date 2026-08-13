@@ -127,12 +127,23 @@ public class TransactionManagementService(CategorizationService categorization)
         return bankCount + amazonCount;
     }
 
-    public async Task UpdateAmazonItemDetailsAsync(ExpenseDbContext context, int itemId, string itemTitle, decimal price, int quantity)
+    // taxAllocated is nullable and left alone when omitted - the Transactions page uses this
+    // to fix a title/price/quantity typo on an item whose TaxAllocated is already correct
+    // from the original itemized email parse, not to re-split a NeedsReview placeholder's
+    // combined (tax-inclusive) total. The Review Queue's own callers, which DO need to
+    // reallocate tax when correcting a placeholder, pass a real value instead (found live
+    // 2026-08-13: correcting a placeholder's price to the item's own pre-tax amount was
+    // silently dropping the tax that had been implicitly included in the placeholder's price).
+    public async Task UpdateAmazonItemDetailsAsync(ExpenseDbContext context, int itemId, string itemTitle, decimal price, int quantity, decimal? taxAllocated = null)
     {
         var item = await context.AmazonOrderItems.SingleAsync(i => i.Id == itemId);
         item.ItemTitle = itemTitle;
         item.Price = price;
         item.Quantity = quantity;
+        if (taxAllocated is not null)
+        {
+            item.TaxAllocated = taxAllocated.Value;
+        }
         item.NeedsReview = false; // a human just corrected it - it's reliable now
         await context.SaveChangesAsync();
     }

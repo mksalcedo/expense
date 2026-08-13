@@ -610,7 +610,7 @@ public class CategorizationServiceTests : DatabaseTestBase
         {
             OrderId = "113-4355508-6173055", OrderDate = new DateOnly(2026, 7, 22),
             ItemTitle = "(Item details unavailable in email - check Amazon order page)", Price = 51.40m, Quantity = 1,
-            NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow,
+            TaxAllocated = 0m, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow,
             SourceMessageId = "19f8c33d6c1f4ca3",
             RawEmailBody = "Order #\n113-4355508-6173055\n\nGrand Total:\n51.4 USD",
             NeedsReviewReason = "No item detail in confirmation email",
@@ -624,6 +624,7 @@ public class CategorizationServiceTests : DatabaseTestBase
         Assert.Equal("No item detail in confirmation email", group.NeedsReviewReason);
         Assert.Equal("Order #\n113-4355508-6173055\n\nGrand Total:\n51.4 USD", group.RawEmailBody);
         Assert.Equal("https://www.amazon.com/gp/css/order-details?orderId=113-4355508-6173055", group.OrderDetailsUrl);
+        Assert.Equal(0m, group.TaxAllocated);
     }
 
     [Fact]

@@ -126,7 +126,7 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
     /// </summary>
     public async Task<AmazonOrderItem> AddManualItemAsync(
         ExpenseDbContext context, string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity,
-        CancellationToken cancellationToken = default)
+        decimal taxAllocated = 0m, CancellationToken cancellationToken = default)
     {
         var products = await context.Products.ToListAsync(cancellationToken);
         var match = products.FirstOrDefault(p => MerchantPatternMatcher.Matches(itemTitle, p.ProductPattern));
@@ -138,6 +138,7 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
             ItemTitle = itemTitle,
             Price = price,
             Quantity = quantity,
+            TaxAllocated = taxAllocated,
             ProductId = match?.Id,
             CategoryId = match?.CategoryId,
             CreatedAt = DateTimeOffset.UtcNow

@@ -245,6 +245,7 @@ public class CategorizationService
                 SampleDate = i.OrderDate,
                 ItemIds = [i.Id],
                 TotalPrice = i.Price,
+                TaxAllocated = i.TaxAllocated,
                 NeedsReview = true,
                 OrderId = i.OrderId,
                 NeedsReviewReason = i.NeedsReviewReason,

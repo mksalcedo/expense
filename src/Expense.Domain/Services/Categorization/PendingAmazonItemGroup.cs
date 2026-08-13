@@ -8,6 +8,13 @@ public class PendingAmazonItemGroup
     public required List<int> ItemIds { get; set; }
     public decimal TotalPrice { get; set; }
 
+    /// <summary>
+    /// Only meaningful for a NeedsReview group - always 0 there until a human corrects the
+    /// item (see ReviewQueue.razor), since the placeholder's TotalPrice is the order's whole
+    /// tax-inclusive grand total with no split yet.
+    /// </summary>
+    public decimal TaxAllocated { get; set; }
+
     /// <summary>True for a NeedsReview item's own singleton group - never true for a real multi-item group.</summary>
     public bool NeedsReview { get; set; }
 

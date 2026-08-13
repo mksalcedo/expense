@@ -108,13 +108,17 @@ public class ReviewQueueTests : BunitContext
         public string? LastUpdatedTitle { get; private set; }
         public decimal? LastUpdatedPrice { get; private set; }
         public int? LastUpdatedQuantity { get; private set; }
+        public decimal? LastUpdatedTaxAllocated { get; private set; }
+        public bool LastUpdatedTaxAllocatedWasProvided { get; private set; }
 
-        public Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+        public Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, decimal? taxAllocated = null, CancellationToken cancellationToken = default)
         {
             LastUpdatedItemId = itemId;
             LastUpdatedTitle = itemTitle;
             LastUpdatedPrice = price;
             LastUpdatedQuantity = quantity;
+            LastUpdatedTaxAllocated = taxAllocated;
+            LastUpdatedTaxAllocatedWasProvided = taxAllocated is not null;
             return Task.CompletedTask;
         }
 
@@ -124,9 +128,9 @@ public class ReviewQueueTests : BunitContext
         public decimal? LastAddedPrice { get; private set; }
         public int? LastAddedQuantity { get; private set; }
         public int AddManualAmazonItemCallCount { get; private set; }
-        public List<(string OrderId, DateOnly OrderDate, string Title, decimal Price, int Quantity)> AddedItems { get; } = [];
+        public List<(string OrderId, DateOnly OrderDate, string Title, decimal Price, int Quantity, decimal TaxAllocated)> AddedItems { get; } = [];
 
-        public Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, CancellationToken cancellationToken = default)
+        public Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, decimal taxAllocated = 0m, CancellationToken cancellationToken = default)
         {
             AddManualAmazonItemCallCount++;
             LastAddedOrderId = orderId;
@@ -134,7 +138,7 @@ public class ReviewQueueTests : BunitContext
             LastAddedTitle = itemTitle;
             LastAddedPrice = price;
             LastAddedQuantity = quantity;
-            AddedItems.Add((orderId, orderDate, itemTitle, price, quantity));
+            AddedItems.Add((orderId, orderDate, itemTitle, price, quantity, taxAllocated));
             return Task.CompletedTask;
         }
 
@@ -616,6 +620,58 @@ public class ReviewQueueTests : BunitContext
         Assert.Equal(402, provider.LastUpdatedItemId);
         Assert.Equal("Levoit Core 300-P Air Purifier Filter", provider.LastUpdatedTitle);
         Assert.Equal(25.99m, provider.LastUpdatedPrice);
+        // Real bug found live 2026-08-13: the placeholder's price (51.40) was the order's
+        // whole tax-inclusive grand total - correcting it to the item's own pre-tax price
+        // (25.99) must not silently drop the 25.41 difference, it's real tax that was owed.
+        Assert.Equal(25.41m, provider.LastUpdatedTaxAllocated);
+    }
+
+    [Fact]
+    public void NeedsReviewItem_EditingPriceAlone_AllocatesTheDifferenceAsTax()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [402], TotalPrice = 23.85m,
+                TaxAllocated = 0m, NeedsReview = true, OrderId = "113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+
+        cut.Find("#item-price-402").Change("22.50");
+
+        Assert.Equal(22.50m, provider.LastUpdatedPrice);
+        Assert.Equal(1.35m, provider.LastUpdatedTaxAllocated);
+    }
+
+    [Fact]
+    public void NeedsReviewItem_EditingPriceASecondTime_PreservesTheAlreadyAllocatedTax_InsteadOfResplitting()
+    {
+        // Once tax has been split out once (TaxAllocated no longer 0), a second price edit
+        // is a plain correction (e.g. a typo), not another combined-total split - re-running
+        // the split formula against the already-corrected price would produce a meaningless
+        // number, not real tax.
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "Celestial Seasonings Tea",
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [402], TotalPrice = 22.50m,
+                TaxAllocated = 1.35m, NeedsReview = true, OrderId = "113-4355508-6173055"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var cut = Render<ReviewQueue>();
+
+        cut.Find("#item-price-402").Change("22.55");
+
+        Assert.Equal(22.55m, provider.LastUpdatedPrice);
+        Assert.Equal(1.35m, provider.LastUpdatedTaxAllocated); // unchanged, not re-split
     }
 
     private class FakeJSStreamReference(byte[] bytes) : IJSStreamReference
@@ -777,8 +833,8 @@ public class ReviewQueueTests : BunitContext
             new PendingAmazonItemGroup
             {
                 SuggestedPattern = "x", ItemTitle = "(Item details unavailable in email - check Amazon order page)",
-                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
-                NeedsReview = true, OrderId = "113-0140431-5777821"
+                SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 53.48m,
+                TaxAllocated = 0m, NeedsReview = true, OrderId = "113-0140431-5777821"
             }
         ];
         Services.AddSingleton<IReviewQueueProvider>(provider);
@@ -793,6 +849,9 @@ public class ReviewQueueTests : BunitContext
         Assert.Equal("THORNE Vitamin C", provider.LastUpdatedTitle);
         Assert.Equal(24.99m, provider.LastUpdatedPrice);
         Assert.Equal(2, provider.LastUpdatedQuantity);
+        // The placeholder's price (53.48) was the order's whole tax-inclusive grand total -
+        // the scraped item's own total is 24.99*2=49.98, so the 3.50 difference is real tax.
+        Assert.Equal(3.50m, provider.LastUpdatedTaxAllocated);
         Assert.Empty(provider.AddedItems);
         Assert.Empty(cut.FindAll("#item-paste-target-500"));
     }
@@ -805,8 +864,8 @@ public class ReviewQueueTests : BunitContext
         [
             new PendingAmazonItemGroup
             {
-                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 19.99m,
-                NeedsReview = true, OrderId = "113-0140431-5777821"
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 7, 22), ItemIds = [500], TotalPrice = 96.29m,
+                TaxAllocated = 0m, NeedsReview = true, OrderId = "113-0140431-5777821"
             }
         ];
         Services.AddSingleton<IReviewQueueProvider>(provider);
@@ -827,12 +886,16 @@ public class ReviewQueueTests : BunitContext
 
         Assert.Equal(500, provider.LastUpdatedItemId);
         Assert.Equal("THORNE Vitamin C", provider.LastUpdatedTitle);
+        // Grand total 96.29 - item sum (24.99 + 65.00 = 89.99) = 6.30 tax, split proportionally
+        // by each item's own price share: 24.99/89.99 and 65.00/89.99.
+        Assert.Equal(1.75m, provider.LastUpdatedTaxAllocated);
         var added = Assert.Single(provider.AddedItems);
         Assert.Equal("113-0140431-5777821", added.OrderId);
         Assert.Equal(new DateOnly(2026, 7, 22), added.OrderDate);
         Assert.Equal("NeoCell Collagen Peptides", added.Title);
         Assert.Equal(32.50m, added.Price);
         Assert.Equal(2, added.Quantity);
+        Assert.Equal(4.55m, added.TaxAllocated);
     }
 
     [Fact]
