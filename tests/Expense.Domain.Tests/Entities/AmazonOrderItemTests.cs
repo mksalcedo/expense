@@ -131,6 +131,53 @@ public class AmazonOrderItemTests : DatabaseTestBase
         Assert.Null(reloaded.OrderDetailsUrl);
     }
 
+    // Real bug this guards (found live 2026-08-14): two processes both running the
+    // scheduled Amazon sync at once let two NeedsReview placeholders for the same order
+    // through - the application-level dedup check has no way to see another connection's
+    // uncommitted insert. A database-level constraint closes the class of bug regardless
+    // of what causes the overlap.
+    [Fact]
+    public async Task TwoNeedsReviewPlaceholders_ForTheSameOrder_ViolatesAUniqueConstraint()
+    {
+        Context.AmazonOrderItems.Add(new AmazonOrderItem
+        {
+            OrderId = "113-1846569-0253060", OrderDate = new DateOnly(2026, 8, 13),
+            ItemTitle = "(Item details unavailable in email - check Amazon order page)", Price = 99.85m,
+            Quantity = 1, TaxAllocated = 0m, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        Context.AmazonOrderItems.Add(new AmazonOrderItem
+        {
+            OrderId = "113-1846569-0253060", OrderDate = new DateOnly(2026, 8, 13),
+            ItemTitle = "(Item details unavailable in email - check Amazon order page)", Price = 99.85m,
+            Quantity = 1, TaxAllocated = 0m, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => Context.SaveChangesAsync());
+    }
+
+    [Fact]
+    public async Task MultipleRealItems_OnTheSameOrder_AreNotBlockedByTheNeedsReviewConstraint()
+    {
+        Context.AmazonOrderItems.Add(new AmazonOrderItem
+        {
+            OrderId = "113-4492181-5586630", OrderDate = new DateOnly(2026, 7, 12),
+            ItemTitle = "Pure Encapsulations Vitamin D3", Price = 21.00m, Quantity = 1,
+            TaxAllocated = 1.26m, NeedsReview = false, CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.AmazonOrderItems.Add(new AmazonOrderItem
+        {
+            OrderId = "113-4492181-5586630", OrderDate = new DateOnly(2026, 7, 12),
+            ItemTitle = "Standard Process Cardio-Plus", Price = 22.80m, Quantity = 1,
+            TaxAllocated = 1.37m, NeedsReview = false, CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        await Context.SaveChangesAsync();
+
+        Assert.Equal(2, await Context.AmazonOrderItems.CountAsync(i => i.OrderId == "113-4492181-5586630"));
+    }
+
     [Fact]
     public async Task RefundedItem_TracksRefundAmountOnTheSameRow()
     {
