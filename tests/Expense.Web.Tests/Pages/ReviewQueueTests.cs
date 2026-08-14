@@ -1,6 +1,7 @@
 using Bunit;
 using Expense.Domain.Entities;
 using Expense.Domain.Services.Categorization;
+using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Web.Components.Pages;
 using Expense.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +17,14 @@ public class ReviewQueueTests : BunitContext
         // NavMenu's badge updating live register their own shared instance instead (see
         // NavMenuTests.cs), which overrides this one (last registration wins).
         Services.AddSingleton<IReviewQueueChangeNotifier>(new ReviewQueueChangeNotifier());
+
+        // Same reasoning - an empty fake is fine for tests that don't care about the
+        // clipboard-watcher staging flow; tests that do register their own instance.
+        Services.AddSingleton<IStagedScrapeStore>(new FakeStagedScrapeStore());
+
+        // Never the real implementation here - it shells out to systemctl, which no test
+        // should ever actually invoke. Tests that care register their own instance.
+        Services.AddSingleton<IClipboardWatcherController>(new FakeClipboardWatcherController());
 
         // Every render now imports screenshotPaste.js for the "Paste screenshot" feature -
         // Loose mode lets tests that don't care about it render without configuring the
@@ -153,6 +162,35 @@ public class ReviewQueueTests : BunitContext
             LastParsedImageBytes = imageBytes;
             LastParsedMediaType = mediaType;
             return Task.FromResult(NextParsedTitles);
+        }
+    }
+
+    private class FakeClipboardWatcherController : IClipboardWatcherController
+    {
+        public int StartCallCount { get; private set; }
+        public int StopCallCount { get; private set; }
+        public Task StartAsync() { StartCallCount++; return Task.CompletedTask; }
+        public Task StopAsync() { StopCallCount++; return Task.CompletedTask; }
+    }
+
+    private class FakeStagedScrapeStore : IStagedScrapeStore
+    {
+        public event Action? Staged;
+        public StagedScrape? Current { get; private set; }
+        public int ClearCallCount { get; private set; }
+
+        public void SetStaged(StagedScrape scrape)
+        {
+            Current = scrape;
+            Staged?.Invoke();
+        }
+
+        public Task<bool> TryStageAsync(string json, CancellationToken cancellationToken = default) => Task.FromResult(false);
+
+        public void Clear()
+        {
+            ClearCallCount++;
+            Current = null;
         }
     }
 
@@ -1123,5 +1161,199 @@ public class ReviewQueueTests : BunitContext
 
         Assert.Empty(cut.FindAll("#item-new-title-406")); // form closed after a successful add
         Assert.Contains("Pure Encapsulations B12 Folate", cut.Markup);
+    }
+
+    [Fact]
+    public void StagedScrape_MatchingAVisibleRow_ShowsTheParsedSummaryWithAcceptAndCancel()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 8, 12), ItemIds = [500], TotalPrice = 36.54m,
+                NeedsReview = true, OrderId = "113-1333397-2163455"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var stagedStore = new FakeStagedScrapeStore();
+        stagedStore.SetStaged(new StagedScrape(500, new AmazonOrderScrapePayload
+        {
+            OrderId = "113-1333397-2163455",
+            Items = [new AmazonOrderScrapeItem("Ancestral Supplements Grass Fed Beef Prostate Supplement", 52.00m, 3)]
+        }));
+        Services.AddSingleton<IStagedScrapeStore>(stagedStore);
+
+        var cut = Render<ReviewQueue>();
+
+        var panel = cut.Find("#item-staged-scrape-500");
+        Assert.Contains("Ancestral Supplements Grass Fed Beef Prostate Supplement", panel.TextContent);
+        Assert.Contains("52.00", panel.TextContent);
+        // Real bug found live 2026-08-14: "x@scrapedItem.Quantity" rendered as the literal
+        // text "x@scrapedItem.Quantity" instead of the actual number - Razor's parser treats
+        // a word character immediately before "@" as the start of an email address, not code
+        // (avoids misfiring on plain text like "contact us at x@example.com"), so the
+        // interpolation silently never ran. Fixed with explicit @(...) syntax.
+        Assert.Contains("x3", panel.TextContent);
+        Assert.DoesNotContain("@scrapedItem", panel.TextContent);
+        Assert.NotNull(cut.Find("#item-staged-accept-500"));
+        Assert.NotNull(cut.Find("#item-staged-cancel-500"));
+    }
+
+    [Fact]
+    public void StagedScrape_ShowsThePerItemAdjustmentAndRunningTotal_BeforeAccepting()
+    {
+        // Real gap found live 2026-08-14 (real order 113-1846569-0253060): the preview only
+        // ever showed the two raw scraped prices (50.00 + 44.20 = 94.20), never the 5.65 tax
+        // that only gets computed at Accept time - so there was no way to see it would
+        // actually total to the real 99.85 grand total before committing.
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 8, 13), ItemIds = [500], TotalPrice = 99.85m,
+                TaxAllocated = 0m, NeedsReview = true, OrderId = "113-1846569-0253060"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var stagedStore = new FakeStagedScrapeStore();
+        stagedStore.SetStaged(new StagedScrape(500, new AmazonOrderScrapePayload
+        {
+            OrderId = "113-1846569-0253060",
+            Items =
+            [
+                new AmazonOrderScrapeItem("Pure Encapsulations Daily Calm, 60 Capsules", 50.00m, 1),
+                new AmazonOrderScrapeItem("nutri-west Total Probiotics 120 Capsules, 2.4 Ounce", 44.20m, 1)
+            ]
+        }));
+        Services.AddSingleton<IStagedScrapeStore>(stagedStore);
+
+        var cut = Render<ReviewQueue>();
+
+        var panel = cut.Find("#item-staged-scrape-500");
+        Assert.Contains("3.00", panel.TextContent); // this item's share of the 5.65 tax
+        Assert.Contains("2.65", panel.TextContent); // the other item's share
+        Assert.Contains("53.00", panel.TextContent); // 50.00 + 3.00
+        Assert.Contains("46.85", panel.TextContent); // 44.20 + 2.65
+        var totalElement = cut.Find("#item-staged-total-500");
+        Assert.Contains("99.85", totalElement.TextContent);
+    }
+
+    [Fact]
+    public void StagedScrape_ClickingAccept_AppliesItAndClearsTheStore()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 8, 12), ItemIds = [500], TotalPrice = 36.54m,
+                TaxAllocated = 0m, NeedsReview = true, OrderId = "113-1333397-2163455"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var stagedStore = new FakeStagedScrapeStore();
+        stagedStore.SetStaged(new StagedScrape(500, new AmazonOrderScrapePayload
+        {
+            OrderId = "113-1333397-2163455",
+            Items = [new AmazonOrderScrapeItem("Ancestral Supplements Grass Fed Beef Prostate Supplement", 52.00m, 1)]
+        }));
+        Services.AddSingleton<IStagedScrapeStore>(stagedStore);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-staged-accept-500").Click();
+
+        Assert.Equal(500, provider.LastUpdatedItemId);
+        Assert.Equal("Ancestral Supplements Grass Fed Beef Prostate Supplement", provider.LastUpdatedTitle);
+        Assert.Equal(52.00m, provider.LastUpdatedPrice);
+        // Grand total 36.54 - item total 52.00 = -15.46, same gift-card-credit case this whole
+        // tax-allocation mechanism was built to handle correctly.
+        Assert.Equal(-15.46m, provider.LastUpdatedTaxAllocated);
+        Assert.Equal(1, stagedStore.ClearCallCount);
+        Assert.Empty(cut.FindAll("#item-staged-scrape-500"));
+    }
+
+    [Fact]
+    public void StagedScrape_ClickingCancel_ClearsWithoutApplyingAnything()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 8, 12), ItemIds = [500], TotalPrice = 36.54m,
+                NeedsReview = true, OrderId = "113-1333397-2163455"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var stagedStore = new FakeStagedScrapeStore();
+        stagedStore.SetStaged(new StagedScrape(500, new AmazonOrderScrapePayload
+        {
+            OrderId = "113-1333397-2163455",
+            Items = [new AmazonOrderScrapeItem("Ancestral Supplements Grass Fed Beef Prostate Supplement", 52.00m, 1)]
+        }));
+        Services.AddSingleton<IStagedScrapeStore>(stagedStore);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#item-staged-cancel-500").Click();
+
+        Assert.Null(provider.LastUpdatedItemId);
+        Assert.Equal(1, stagedStore.ClearCallCount);
+        Assert.Empty(cut.FindAll("#item-staged-scrape-500"));
+    }
+
+    [Fact]
+    public void StagedScrape_DetectedWhilePageIsAlreadyOpen_ShowsUpAutomatically()
+    {
+        var provider = MakeProvider();
+        provider.AmazonItemGroups =
+        [
+            new PendingAmazonItemGroup
+            {
+                SuggestedPattern = "x", ItemTitle = "x", SampleDate = new DateOnly(2026, 8, 12), ItemIds = [500], TotalPrice = 36.54m,
+                NeedsReview = true, OrderId = "113-1333397-2163455"
+            }
+        ];
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+        var stagedStore = new FakeStagedScrapeStore();
+        Services.AddSingleton<IStagedScrapeStore>(stagedStore);
+
+        var cut = Render<ReviewQueue>();
+        Assert.Empty(cut.FindAll("#item-staged-scrape-500"));
+
+        cut.InvokeAsync(() => stagedStore.SetStaged(new StagedScrape(500, new AmazonOrderScrapePayload
+        {
+            OrderId = "113-1333397-2163455",
+            Items = [new AmazonOrderScrapeItem("Ancestral Supplements Grass Fed Beef Prostate Supplement", 52.00m, 1)]
+        })));
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#item-staged-scrape-500")));
+    }
+
+    [Fact]
+    public void RenderingThePage_StartsTheClipboardWatcher()
+    {
+        Services.AddSingleton<IReviewQueueProvider>(MakeProvider());
+        var watcherController = new FakeClipboardWatcherController();
+        Services.AddSingleton<IClipboardWatcherController>(watcherController);
+
+        Render<ReviewQueue>();
+
+        Assert.Equal(1, watcherController.StartCallCount);
+        Assert.Equal(0, watcherController.StopCallCount);
+    }
+
+    [Fact]
+    public async Task LeavingThePage_StopsTheClipboardWatcher()
+    {
+        Services.AddSingleton<IReviewQueueProvider>(MakeProvider());
+        var watcherController = new FakeClipboardWatcherController();
+        Services.AddSingleton<IClipboardWatcherController>(watcherController);
+
+        var cut = Render<ReviewQueue>();
+        await cut.Instance.DisposeAsync();
+
+        Assert.Equal(1, watcherController.StopCallCount);
     }
 }

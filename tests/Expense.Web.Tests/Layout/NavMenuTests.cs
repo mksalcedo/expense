@@ -44,6 +44,20 @@ public class NavMenuTests : BunitContext
         public Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default) => Task.FromResult(new List<string>());
     }
 
+    private class FakeStagedScrapeStore : IStagedScrapeStore
+    {
+        public event Action? Staged;
+        public StagedScrape? Current => null;
+        public Task<bool> TryStageAsync(string json, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public void Clear() { }
+    }
+
+    private class FakeClipboardWatcherController : IClipboardWatcherController
+    {
+        public Task StartAsync() => Task.CompletedTask;
+        public Task StopAsync() => Task.CompletedTask;
+    }
+
     // Only NavMenu.razor's narrow "did the last sync fail" read is exercised here - the
     // full sync UI (buttons, modal, history, issues) lives on Sync Now and is tested there.
     private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null) : ISyncStatusProvider
@@ -267,6 +281,8 @@ public class NavMenuTests : BunitContext
             AmazonItemGroups = [],
             Categories = [new Category { Id = 1, Name = "Groceries" }]
         });
+        Services.AddSingleton<IStagedScrapeStore>(new FakeStagedScrapeStore());
+        Services.AddSingleton<IClipboardWatcherController>(new FakeClipboardWatcherController());
 
         var navCut = Render<NavMenu>();
         Assert.Equal("Review Queue (1 item needs review)", navCut.Find("#nav-review-queue-link").TextContent.Trim());

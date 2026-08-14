@@ -4,6 +4,8 @@
 @using Expense.Web.Services
 @inject IReviewQueueProvider ReviewQueueProvider
 @inject IReviewQueueChangeNotifier ReviewQueueChangeNotifier
+@inject IStagedScrapeStore StagedScrapeStore
+@inject IClipboardWatcherController WatcherController
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -268,6 +270,36 @@ else
                         </td>
                     </tr>
                 }
+                @if (group.NeedsReview && StagedScrapeStore.Current is { } staged && staged.ItemId == representativeId)
+                {
+                    <tr>
+                        <td colspan="9">
+                            <div id="item-staged-scrape-@representativeId" style="background: var(--color-surface, #f5f5f5); padding: 10px;">
+                                <p>The clipboard watcher found this on the order page:</p>
+                                <ul>
+                                    @foreach (var scrapedItem in staged.Payload.Items)
+                                    {
+                                        var itemAdjustment = ComputeItemAdjustment(staged.Payload, group.TotalPrice, scrapedItem);
+                                        var itemTotal = scrapedItem.Price * scrapedItem.Quantity + itemAdjustment;
+                                        <li>
+                                            @scrapedItem.Title ($@scrapedItem.Price.ToString("N2") x@(scrapedItem.Quantity),
+                                            @(itemAdjustment >= 0 ? "+" : "")@itemAdjustment.ToString("N2") adjustment = $@itemTotal.ToString("N2"))
+                                        </li>
+                                    }
+                                </ul>
+                                <p id="item-staged-total-@representativeId">
+                                    Total: $@(staged.Payload.Items.Sum(i => i.Price * i.Quantity + ComputeItemAdjustment(staged.Payload, group.TotalPrice, i)).ToString("N2"))
+                                </p>
+                                @if (_stagedScrapeError is not null)
+                                {
+                                    <p id="item-staged-error-@representativeId" style="color: #b00020;">@_stagedScrapeError</p>
+                                }
+                                <button id="item-staged-accept-@representativeId" @onclick="() => AcceptStagedScrapeAsync(representativeId)">Accept</button>
+                                <button id="item-staged-cancel-@representativeId" @onclick="CancelStagedScrape">Cancel</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
                 @if (group.OrderId is not null && _addingAnotherItemFor.Contains(representativeId))
                 {
                     var newItem = GetNewItemForm(representativeId);
@@ -335,11 +367,14 @@ else
     private bool _parsingScreenshot;
     private bool _applyingOrderData;
     private string? _screenshotParseError;
+    private string? _stagedScrapeError;
     private IJSObjectReference? _screenshotModule;
     private DotNetObjectReference<ReviewQueue>? _dotNetRef;
 
     protected override async Task OnInitializedAsync()
     {
+        StagedScrapeStore.Staged += OnScrapeStaged;
+        await WatcherController.StartAsync();
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
     }
 
@@ -441,35 +476,11 @@ else
                 return;
             }
 
-            var group = _data!.AmazonItemGroups.Single(g => g.ItemIds.Contains(itemId));
-            if (payload.OrderId is { } pastedOrderId && group.OrderId is { } expectedOrderId && pastedOrderId != expectedOrderId)
+            var error = await ApplyScrapedPayloadAsync(itemId, payload);
+            if (error is not null)
             {
-                _screenshotParseError = $"That looks like a different order (found {pastedOrderId}, expected {expectedOrderId}) - open the correct order page and try again.";
+                _screenshotParseError = error;
                 return;
-            }
-
-            // The placeholder's price is the order's whole tax-inclusive grand total (see
-            // AmazonOrderEmailParser.BuildPlaceholderOrder) - the scraped items only ever
-            // carry their own pre-tax prices, so whatever's left over is real tax, split
-            // proportionally across items by price share (same algorithm
-            // AmazonOrderEmailParser already uses for a normally-itemized email). Found live
-            // 2026-08-13: applying scraped data without this silently dropped the tax that
-            // had been implicitly included in the placeholder's price.
-            var grandTotal = group.TotalPrice;
-            var itemPriceSum = payload.Items.Sum(i => i.Price * i.Quantity);
-            var taxLeftover = grandTotal - itemPriceSum;
-            decimal TaxFor(AmazonOrderScrapeItem item) =>
-                itemPriceSum == 0m ? 0m : Math.Round(taxLeftover * (item.Price * item.Quantity / itemPriceSum), 2);
-
-            var first = payload.Items[0];
-            await ReviewQueueProvider.UpdateAmazonItemDetailsAsync(itemId, first.Title, first.Price, first.Quantity, taxAllocated: TaxFor(first));
-
-            if (group.OrderId is not null)
-            {
-                foreach (var extra in payload.Items.Skip(1))
-                {
-                    await ReviewQueueProvider.AddManualAmazonItemAsync(group.OrderId, group.SampleDate, extra.Title, extra.Price, extra.Quantity, taxAllocated: TaxFor(extra));
-                }
             }
 
             _pastingScreenshotForItemId = null;
@@ -490,8 +501,80 @@ else
         }
     }
 
+    // Shared by OnOrderDataPasted (manual paste) and the clipboard-watcher staged-scrape
+    // Accept flow - same apply logic either way, just triggered differently. Returns null on
+    // success, or a user-facing error message to show instead of applying anything.
+    private async Task<string?> ApplyScrapedPayloadAsync(int itemId, AmazonOrderScrapePayload payload)
+    {
+        var group = _data!.AmazonItemGroups.SingleOrDefault(g => g.ItemIds.Contains(itemId));
+        if (group is null)
+        {
+            return "That item is no longer in the queue - it may already have been resolved.";
+        }
+        if (payload.OrderId is { } pastedOrderId && group.OrderId is { } expectedOrderId && pastedOrderId != expectedOrderId)
+        {
+            return $"That looks like a different order (found {pastedOrderId}, expected {expectedOrderId}) - open the correct order page and try again.";
+        }
+
+        var first = payload.Items[0];
+        await ReviewQueueProvider.UpdateAmazonItemDetailsAsync(itemId, first.Title, first.Price, first.Quantity, taxAllocated: ComputeItemAdjustment(payload, group.TotalPrice, first));
+
+        if (group.OrderId is not null)
+        {
+            foreach (var extra in payload.Items.Skip(1))
+            {
+                await ReviewQueueProvider.AddManualAmazonItemAsync(group.OrderId, group.SampleDate, extra.Title, extra.Price, extra.Quantity, taxAllocated: ComputeItemAdjustment(payload, group.TotalPrice, extra));
+            }
+        }
+
+        return null;
+    }
+
+    // The placeholder's price is the order's whole tax-inclusive grand total (see
+    // AmazonOrderEmailParser.BuildPlaceholderOrder) - the scraped items only ever carry their
+    // own pre-tax prices, so whatever's left over is real tax (or, for a gift-card-discounted
+    // order, a negative adjustment - see the Ancestral Supplements case), split proportionally
+    // across items by price share (same algorithm AmazonOrderEmailParser already uses for a
+    // normally-itemized email). Static/shared between ApplyScrapedPayloadAsync and the staged
+    // preview panel below, so what you see before accepting is exactly what gets applied -
+    // found live 2026-08-14 that the preview never showed this at all, so there was no way to
+    // confirm it would actually add up before committing.
+    private static decimal ComputeItemAdjustment(AmazonOrderScrapePayload payload, decimal grandTotal, AmazonOrderScrapeItem item)
+    {
+        var itemPriceSum = payload.Items.Sum(i => i.Price * i.Quantity);
+        var adjustmentLeftover = grandTotal - itemPriceSum;
+        return itemPriceSum == 0m ? 0m : Math.Round(adjustmentLeftover * (item.Price * item.Quantity / itemPriceSum), 2);
+    }
+
+    // IStagedScrapeStore is a Singleton (shared across every circuit), so this event can
+    // fire from a completely different request's thread (the clipboard-watcher's HTTP POST) -
+    // InvokeAsync is required to marshal the resulting re-render back onto this circuit's own
+    // synchronization context.
+    private void OnScrapeStaged() => InvokeAsync(StateHasChanged);
+
+    private async Task AcceptStagedScrapeAsync(int itemId)
+    {
+        if (StagedScrapeStore.Current is not { } staged || staged.ItemId != itemId) return;
+
+        _stagedScrapeError = await ApplyScrapedPayloadAsync(itemId, staged.Payload);
+        if (_stagedScrapeError is null)
+        {
+            StagedScrapeStore.Clear();
+            await ReloadDataAsync();
+        }
+    }
+
+    private void CancelStagedScrape()
+    {
+        _stagedScrapeError = null;
+        StagedScrapeStore.Clear();
+    }
+
     public async ValueTask DisposeAsync()
     {
+        StagedScrapeStore.Staged -= OnScrapeStaged;
+        await WatcherController.StopAsync();
+
         if (_screenshotModule is not null)
         {
             try

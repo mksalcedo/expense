@@ -740,4 +740,52 @@ public class CategorizationServiceTests : DatabaseTestBase
         Assert.True(item.Dismissed);
         Assert.Null(item.CategoryId);
     }
+
+    [Fact]
+    public async Task FindNeedsReviewItemByOrderIdAsync_ReturnsTheMatchingItem()
+    {
+        // Used by the clipboard-watcher staging flow (see docs/amazon-order-scraper-
+        // bookmarklet.md) to figure out which flagged item a background-detected scrape
+        // belongs to, using only the order id it carries - no pre-selected row required.
+        var item = new AmazonOrderItem
+        {
+            OrderId = "113-1333397-2163455", OrderDate = new DateOnly(2026, 8, 12),
+            ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+            Price = 52.00m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.Add(item);
+        await Context.SaveChangesAsync();
+
+        var found = await _sut.FindNeedsReviewItemByOrderIdAsync(Context, "113-1333397-2163455");
+
+        Assert.NotNull(found);
+        Assert.Equal(item.Id, found.Id);
+    }
+
+    [Fact]
+    public async Task FindNeedsReviewItemByOrderIdAsync_ReturnsNull_ForAnAlreadyCorrectedItem()
+    {
+        // Once an item is corrected, NeedsReview flips false - a stray/duplicate clipboard
+        // detection for the same order afterward must not re-match and re-apply.
+        var item = new AmazonOrderItem
+        {
+            OrderId = "113-1333397-2163455", OrderDate = new DateOnly(2026, 8, 12),
+            ItemTitle = "Ancestral Supplements Grass Fed Beef Prostate Supplement with Liver, 180 Ct",
+            Price = 52.00m, Quantity = 1, NeedsReview = false, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.Add(item);
+        await Context.SaveChangesAsync();
+
+        var found = await _sut.FindNeedsReviewItemByOrderIdAsync(Context, "113-1333397-2163455");
+
+        Assert.Null(found);
+    }
+
+    [Fact]
+    public async Task FindNeedsReviewItemByOrderIdAsync_ReturnsNull_WhenNoOrderMatches()
+    {
+        var found = await _sut.FindNeedsReviewItemByOrderIdAsync(Context, "999-9999999-9999999");
+
+        Assert.Null(found);
+    }
 }

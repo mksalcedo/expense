@@ -8,6 +8,7 @@ obj/
 # Published build used by the desktop launcher (scripts/start-expense.sh) - regenerated
 # via `dotnet publish`, not source
 publish/
+publish-clipboard-watcher/
 
 # Local secrets / config overrides (real secrets go in dotnet user-secrets, not here)
 appsettings.Local.json

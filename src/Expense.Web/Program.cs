@@ -98,6 +98,9 @@ builder.Services.AddHostedService<BackupScheduler>();
 builder.Services.AddScoped<TransactionManagementService>();
 builder.Services.AddScoped<ITransactionsPageProvider, TransactionsPageProvider>();
 
+builder.Services.AddSingleton<IStagedScrapeStore, StagedScrapeStore>();
+builder.Services.AddScoped<IClipboardWatcherController, ClipboardWatcherController>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -122,6 +125,24 @@ app.MapGet("/export/forecast.xlsx", async (
     return Results.File(stream.ToArray(),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileNamer.GetNextFileName(asOfDate));
 });
+
+// Called only by the local clipboard-watcher process (see
+// docs/amazon-order-scraper-bookmarklet.md) - never exposed publicly, so it's restricted to
+// loopback regardless of whatever's in front of this app (nginx, etc.), as defense in depth
+// rather than relying solely on that not proxying this path.
+app.MapPost("/internal/scraped-order-data", async (HttpContext context, IStagedScrapeStore store) =>
+{
+    if (!System.Net.IPAddress.IsLoopback(context.Connection.RemoteIpAddress ?? System.Net.IPAddress.None))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    using var reader = new StreamReader(context.Request.Body);
+    var json = await reader.ReadToEndAsync();
+    var staged = await store.TryStageAsync(json);
+    return staged ? Results.Ok() : Results.BadRequest();
+})
+.DisableAntiforgery(); // called by the local watcher process, not a browser - no antiforgery token to present
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()

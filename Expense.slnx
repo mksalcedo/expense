@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Expense.ClipboardWatcher/Expense.ClipboardWatcher.csproj" />
     <Project Path="src/Expense.Domain/Expense.Domain.csproj" />
     <Project Path="src/Expense.Importers.AmazonGmail/Expense.Importers.AmazonGmail.csproj" />
     <Project Path="src/Expense.Importers.Plaid/Expense.Importers.Plaid.csproj" />

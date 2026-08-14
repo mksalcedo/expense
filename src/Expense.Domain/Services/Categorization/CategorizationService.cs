@@ -50,6 +50,17 @@ public class CategorizationService
             .ToListAsync();
 
     /// <summary>
+    /// Finds the single NeedsReview item matching a scraped order's id - used by the
+    /// clipboard-watcher staging flow (see docs/amazon-order-scraper-bookmarklet.md) to
+    /// figure out which flagged item a background-detected scrape belongs to, using only
+    /// the order id it carries rather than requiring a pre-selected row. Null once the item
+    /// has already been corrected (NeedsReview false) - a stray repeat detection for the
+    /// same order must not re-match and re-apply.
+    /// </summary>
+    public async Task<AmazonOrderItem?> FindNeedsReviewItemByOrderIdAsync(ExpenseDbContext context, string orderId) =>
+        await context.AmazonOrderItems.FirstOrDefaultAsync(i => i.OrderId == orderId && i.NeedsReview);
+
+    /// <summary>
     /// Categorizes one transaction. If merchantPatternToCreate is given, also creates
     /// that merchant_rule and applies it to every other still-pending transaction that
     /// matches. Returns how many OTHER transactions were retroactively categorized.
