@@ -75,6 +75,24 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
             var amount = -txn.Amount;
             var postedDate = txn.Pending ? (DateOnly?)null : txn.Date;
 
+            // If this exact transaction id has already been fully imported, it's done -
+            // regardless of what the amount+date fallback below might otherwise (wrongly)
+            // match it to. Must run before the pending-row merge attempt, not after: a
+            // transaction Plaid re-reports after it's already been fully resolved has no
+            // pending_transaction_id link back to the row it already resolved, so the
+            // fallback would otherwise grab any other unrelated still-pending row that
+            // happens to share the same account/amount/nearby-date and try to stamp this
+            // already-used ExternalId onto it - a real production bug (confirmed live
+            // 2026-08-14: a Gwinnett County vehicle tag payment and an unrelated Buffalo
+            // Emissions charge, both exactly $21.00 on the same day, collided this way and
+            // violated the ExternalId unique index).
+            if (await dedup.ExistsAsync(context, localAccountId, externalId: txn.TransactionId, fingerprint: null))
+            {
+                summary.DuplicatesSkipped++;
+                onProgress?.Invoke(new SyncProgressLine($"{txn.Name} {amount:N2} ({txn.Date:MM/dd/yyyy}) - duplicate, already imported"));
+                continue;
+            }
+
             // Plaid never updates a pending transaction in place when it posts - it issues
             // a brand new transaction_id and links back to the original via
             // pending_transaction_id, when it supplies that field at all (it's only
@@ -108,8 +126,8 @@ public class PlaidTransactionImportService(DedupService dedup, CategorizationSer
                 }
             }
 
-            var isDuplicate = await dedup.ExistsAsync(context, localAccountId, externalId: txn.TransactionId, fingerprint: null);
-            if (!isDuplicate && postedDate is not null)
+            var isDuplicate = false;
+            if (postedDate is not null)
             {
                 // Cross-source check - catches this same real transaction already having
                 // been imported via SimpleFin under a different id/description.

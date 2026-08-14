@@ -506,6 +506,52 @@ public class PlaidTransactionImportServiceTests : DatabaseTestBase
         Assert.Empty(await Context.BankTransactions.ToListAsync());
     }
 
+    // Real bug this guards (found live 2026-08-14): Plaid re-reported an already-fully-
+    // imported posted transaction (no pending_transaction_id supplied this time, so the
+    // direct-link match never even looks at it) - with nothing to link it back to the row
+    // it already resolved, the account+amount+nearby-date fallback instead grabbed a
+    // completely unrelated still-pending row that happened to share the same amount and
+    // date (a real Gwinnett County vehicle tag payment and a real Buffalo Emissions charge,
+    // both exactly $21.00 on the same day), tried to stamp the vehicle tag's already-used
+    // ExternalId onto the emissions row, and blew up the (account_id, external_id) unique
+    // index. The already-imported check must run before the fallback match is even
+    // attempted, not after.
+    private const string RepostedAlreadyResolvedCliOutput = """
+    {"diagnostic":{"code":"FETCHING_TRANSACTIONS","end_date":"2026-08-14","level":"info","message":"Fetching transactions...","start_date":"2026-08-01"}}
+    {"accounts":[{"account_id":"plaid-checking-1","balances":{"available":5092.71,"current":5136.49}}],"total_transactions":1,"transactions":[{"transaction_id":"already-used-id","account_id":"plaid-checking-1","amount":21.00,"date":"2026-08-11","name":"PMT*GWINNT VEH TAG 0LAWRENCEVILLE","merchant_name":null,"pending":false}]}
+    """;
+
+    [Fact]
+    public async Task ImportAsync_ARepostedAlreadyResolvedTransaction_IsSkipped_InsteadOfHijackingAnUnrelatedPendingRowWithTheSameAmountAndDate()
+    {
+        var account = await CreateCheckingAccountAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 11), PostedDate = new DateOnly(2026, 8, 12),
+            Description = "PMT*GWINNT VEH TAG 0LAWRENCEVILLE", Amount = -21.00m,
+            ImportSource = "Plaid", ExternalId = "already-used-id", CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 11), PostedDate = null,
+            Description = "Buffalo Emissions", Amount = -21.00m,
+            ImportSource = "Plaid", ExternalId = "buffalo-pending-id", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var summary = await CreateSut().ImportAsync(
+            Context, RepostedAlreadyResolvedCliOutput, BuildAccountMap(account), new DateTimeOffset(2026, 8, 14, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(0, summary.TransactionsAdded);
+        Assert.Equal(0, summary.PendingTransactionsUpdated);
+        Assert.Equal(1, summary.DuplicatesSkipped);
+        Assert.Equal(2, await Context.BankTransactions.CountAsync());
+
+        var buffalo = await Context.BankTransactions.SingleAsync(t => t.ExternalId == "buffalo-pending-id");
+        Assert.Null(buffalo.PostedDate);
+        Assert.Equal("Buffalo Emissions", buffalo.Description);
+    }
+
     [Fact]
     public async Task ImportAsync_APendingTransactionFarOutsideTheWindowFromAnAlreadyPostedRow_ImportsNormally()
     {
