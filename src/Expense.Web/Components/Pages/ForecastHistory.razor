@@ -1,6 +1,9 @@
 @page "/forecast-history"
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Forecast
+@implements IDisposable
 @inject IForecastHistoryPageProvider HistoryProvider
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Forecast History</PageTitle>
 
@@ -210,10 +213,37 @@ else
             _toSnapshotId = _snapshots[0].Id;
             _fromSnapshotId = _snapshots[1].Id;
         }
+
+        DataChangeNotifier.Changed += OnDataChanged;
     }
 
     private async Task CompareAsync()
     {
         _diff = await HistoryProvider.GetDiffAsync(_fromSnapshotId, _toSnapshotId);
+    }
+
+    // Fires from a background sync (scheduled or a manual Sync Now click from any page) -
+    // every sync captures a brand new snapshot, so this page is the one most likely to
+    // actually change under someone who's just sitting on it. Re-runs the *current*
+    // from/to comparison (whatever the picker is set to, default or manually chosen)
+    // rather than re-defaulting to "newest vs. second-newest" - refreshes the snapshot list
+    // (so the new one shows up as a pickable option) without silently discarding a
+    // manually-picked comparison.
+    private async void OnDataChanged()
+    {
+        _snapshots = await HistoryProvider.GetRecentSnapshotsAsync();
+        // Only re-runs the comparison once there's a real selection to preserve - avoids a
+        // meaningless GetDiffAsync(0, 0) call on the rare page load that started with fewer
+        // than 2 snapshots (self-corrects on the next real navigation regardless).
+        if (_fromSnapshotId != 0 && _toSnapshotId != 0)
+        {
+            _diff = await HistoryProvider.GetDiffAsync(_fromSnapshotId, _toSnapshotId);
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 }

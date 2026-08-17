@@ -86,6 +86,17 @@ button, select, input[type=text], input[type=number], input[type=date], input[ty
     padding-right: 0;
 }
 
+/* Transactions' editable Amazon item title - wide enough to show a full product title
+   without clipping, and closer in height/font-size to the plain (non-editable) Description
+   text in adjacent rows than the general button/select/input rule's default sizing gives. */
+.description-input {
+    width: 100%;
+    min-width: 320px;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-size: 1rem;
+}
+
 button {
     background: var(--color-primary);
     color: white;

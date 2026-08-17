@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.HistoricalAnalysis;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,13 @@ namespace Expense.Web.Tests.Pages;
 
 public class HistoricalAnalysisTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public HistoricalAnalysisTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+    }
+
     private class FakeHistoricalAnalysisPageProvider : IHistoricalAnalysisPageProvider
     {
         public HistoricalAnalysisPageData Data { get; set; } = null!;
@@ -52,6 +60,33 @@ public class HistoricalAnalysisTests : BunitContext
         var provider = new FakeHistoricalAnalysisPageProvider { Data = MakeData() };
         Services.AddSingleton<IHistoricalAnalysisPageProvider>(provider);
         return provider;
+    }
+
+    // Real gap this guards (2026-08-17): a background scheduled sync completing while the
+    // user just sits on this page never used to be reflected without a manual refresh.
+    [Fact]
+    public void DataChangeNotifier_Firing_RefreshesTheReport_WithoutNavigatingOrReloading()
+    {
+        var provider = RegisterFake();
+
+        var cut = Render<HistoricalAnalysis>();
+        Assert.Contains("9,500.00", cut.Markup);
+
+        // Simulates a background sync landing new YTD spend - nothing on this page did
+        // anything to cause it.
+        provider.Data = new HistoricalAnalysisPageData
+        {
+            WeeklyReport = provider.Data.WeeklyReport,
+            MonthlyReport = provider.Data.MonthlyReport,
+            YearToDate = [new PeriodSpendingSummary { PeriodStart = new DateOnly(2026, 1, 1), PeriodEnd = new DateOnly(2026, 7, 15), CategoryId = 1, CategoryName = "Groceries", Budget = null, Actual = 12345m }],
+            FourWeekAverage = provider.Data.FourWeekAverage,
+            ThirteenWeekAverage = provider.Data.ThirteenWeekAverage,
+            RecurringProducts = provider.Data.RecurringProducts,
+            Categories = provider.Data.Categories
+        };
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("12,345.00", cut.Markup));
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.OneTimeEvents;
 using Expense.Web.Components.Pages;
@@ -9,6 +10,13 @@ namespace Expense.Web.Tests.Pages;
 
 public class OneTimeEventsTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public OneTimeEventsTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+    }
+
     private class FakeOneTimeEventsPageProvider : IOneTimeEventsPageProvider
     {
         public List<OneTimeEventRow> Rows { get; set; } = [];
@@ -77,6 +85,41 @@ public class OneTimeEventsTests : BunitContext
         Accounts = [new AccountOption { Id = 1, Name = "Wells Fargo Checking" }],
         Categories = [new CategoryOption { Id = 5, Name = "Water" }]
     };
+
+    [Fact]
+    public void DataChangeNotifier_Firing_WithNothingSelected_SilentlyRefreshes()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IOneTimeEventsPageProvider>(provider);
+
+        var cut = Render<OneTimeEvents>();
+        Assert.DoesNotContain("Brand New Event", cut.Markup);
+
+        // Simulates an event added elsewhere - nothing on this page did anything to cause it.
+        provider.Rows.Add(new OneTimeEventRow { Id = 99, Name = "Brand New Event", Amount = 42m, Direction = Direction.Expense, Date = new DateOnly(2026, 8, 20), AccountId = 1, AccountName = "Wells Fargo Checking" });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("Brand New Event", cut.Markup));
+        Assert.Empty(cut.FindAll("#new-data-banner"));
+    }
+
+    [Fact]
+    public void DataChangeNotifier_Firing_WithAnEventSelected_ShowsTheBanner_WithoutDisturbingTheOpenForm()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IOneTimeEventsPageProvider>(provider);
+
+        var cut = Render<OneTimeEvents>();
+        cut.Find("#event-row-1").Click();
+        Assert.Equal("HVAC repair", cut.Find("#detail-name").GetAttribute("value"));
+
+        provider.Rows.Add(new OneTimeEventRow { Id = 99, Name = "Brand New Event", Amount = 42m, Direction = Direction.Expense, Date = new DateOnly(2026, 8, 20), AccountId = 1, AccountName = "Wells Fargo Checking" });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+        // The open form is untouched - still editing HVAC repair, not silently reset.
+        Assert.Equal("HVAC repair", cut.Find("#detail-name").GetAttribute("value"));
+    }
 
     [Fact]
     public void OneTimeEvents_RendersListWithoutAnOpenFormInitially()

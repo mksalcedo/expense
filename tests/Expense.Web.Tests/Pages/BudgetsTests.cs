@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Budgets;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,13 @@ namespace Expense.Web.Tests.Pages;
 
 public class BudgetsTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public BudgetsTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+    }
+
     private class FakeBudgetsPageProvider : IBudgetsPageProvider
     {
         public List<BudgetRow> Rows { get; set; } = [];
@@ -36,6 +44,44 @@ public class BudgetsTests : BunitContext
             new BudgetRow { CategoryId = 2, CategoryName = "Medical", Amount = null, Frequency = null, EffectiveFrom = null, MonthlyEquivalent = null }
         ]
     };
+
+    // Every row on this page is simultaneously an inline-editable field with no "nothing
+    // selected" state to fall back on, so unlike the DetailMode-based pages this one always
+    // shows the banner rather than risking a silent refresh clobbering an uncommitted edit.
+    [Fact]
+    public void DataChangeNotifier_Firing_ShowsTheBanner_WithoutDisturbingAnyInProgressEdits()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IBudgetsPageProvider>(provider);
+
+        var cut = Render<Budgets>();
+        Assert.Empty(cut.FindAll("#new-data-banner"));
+
+        provider.Rows.Add(new BudgetRow { CategoryId = 3, CategoryName = "Brand New Category", Amount = null, Frequency = null, EffectiveFrom = null, MonthlyEquivalent = null });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+        // The dictionaries backing the visible inputs are untouched - still reflecting
+        // whatever was last saved/loaded, not silently re-seeded from the background change.
+        Assert.Equal("450", cut.Find("#budget-amount-1").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void ClickingRefreshOnTheBanner_AppliesTheNewData_AndHidesTheBanner()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IBudgetsPageProvider>(provider);
+
+        var cut = Render<Budgets>();
+        provider.Rows.Add(new BudgetRow { CategoryId = 3, CategoryName = "Brand New Category", Amount = null, Frequency = null, EffectiveFrom = null, MonthlyEquivalent = null });
+        _dataChangeNotifier.NotifyChanged();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+
+        cut.Find("#refresh-now-btn").Click();
+
+        Assert.Contains("Brand New Category", cut.Markup);
+        Assert.Empty(cut.FindAll("#new-data-banner"));
+    }
 
     [Fact]
     public void Budgets_RendersEachCategoryWithItsCurrentAmountAndMonthlyEquivalent()

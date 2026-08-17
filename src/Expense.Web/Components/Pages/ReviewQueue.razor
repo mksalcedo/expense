@@ -1,17 +1,22 @@
 @page "/review-queue"
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Categorization
 @using Expense.Domain.Services.Ingestion.Amazon
+@using Expense.Web.Components.Shared
 @using Expense.Web.Services
 @inject IReviewQueueProvider ReviewQueueProvider
 @inject IReviewQueueChangeNotifier ReviewQueueChangeNotifier
 @inject IStagedScrapeStore StagedScrapeStore
 @inject IClipboardWatcherController WatcherController
+@inject IDataChangeNotifier DataChangeNotifier
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
 <PageTitle>Review Queue</PageTitle>
 
 <h1>Review Queue</h1>
+
+<NewDataBanner Show="_newDataAvailable" OnRefresh="RefreshNowAsync" />
 
 <p>
     <button id="reapply-rules-btn" @onclick="ReapplyRulesAsync" disabled="@_reapplyingRules">
@@ -92,10 +97,10 @@ else
                     <td>
                         <select id="txn-category-@representativeId"
                                 @onchange="e => CategorizeTransactionGroupAsync(group, int.Parse((string)e.Value!))">
-                            <option value="0">-- select --</option>
+                            <option value="0" selected="@(group.SuggestedCategoryId is null)">-- select --</option>
                             @foreach (var category in _data.Categories)
                             {
-                                <option value="@category.Id">@category.Name</option>
+                                <option value="@category.Id" selected="@(group.SuggestedCategoryId == category.Id)">@category.Name</option>
                             }
                         </select>
                     </td>
@@ -371,10 +376,39 @@ else
     private IJSObjectReference? _screenshotModule;
     private DotNetObjectReference<ReviewQueue>? _dotNetRef;
 
+    private bool _newDataAvailable;
+
+    private bool AnythingInProgress =>
+        _selectedTransactionIndexes.Count > 0 ||
+        _selectedItemIndexes.Count > 0 ||
+        _confirmSingleWordModalOpen ||
+        _pastingScreenshotForItemId is not null ||
+        _addingAnotherItemFor.Count > 0;
+
     protected override async Task OnInitializedAsync()
     {
         StagedScrapeStore.Staged += OnScrapeStaged;
         await WatcherController.StartAsync();
+        _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    private async void OnDataChanged()
+    {
+        if (AnythingInProgress)
+        {
+            _newDataAvailable = true;
+        }
+        else
+        {
+            _data = await ReviewQueueProvider.GetReviewQueueAsync();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshNowAsync()
+    {
+        _newDataAvailable = false;
         _data = await ReviewQueueProvider.GetReviewQueueAsync();
     }
 
@@ -573,6 +607,7 @@ else
     public async ValueTask DisposeAsync()
     {
         StagedScrapeStore.Staged -= OnScrapeStaged;
+        DataChangeNotifier.Changed -= OnDataChanged;
         await WatcherController.StopAsync();
 
         if (_screenshotModule is not null)

@@ -97,6 +97,156 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task Transaction_WithNoRule_ButUnanimousHistory_GetsAutoCategorizedFromHistory()
+    {
+        var account = await CreateAccountAsync();
+        var officeSupplies = new Category { Name = "Office Supplies" };
+        Context.Categories.Add(officeSupplies);
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 17),
+            Description = "IONOS www.ionos.com PA", Amount = -37m, ImportSource = "Plaid",
+            CategoryId = officeSupplies.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var transaction = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 16),
+            Description = "IONOS", Amount = -62m, ImportSource = "Plaid",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        await _sut.ApplyMerchantRuleAsync(Context, transaction);
+
+        Assert.Equal(officeSupplies.Id, transaction.CategoryId);
+    }
+
+    [Fact]
+    public async Task Transaction_WithNoRule_AndAmbiguousHistory_StaysPendingCategorization()
+    {
+        var account = await CreateAccountAsync();
+        var officeSupplies = new Category { Name = "Office Supplies" };
+        var subscriptions = new Category { Name = "Subscriptions" };
+        Context.Categories.AddRange(officeSupplies, subscriptions);
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 17),
+                Description = "IONOS www.ionos.com PA", Amount = -37m, ImportSource = "Plaid",
+                CategoryId = officeSupplies.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 17),
+                Description = "IONOS www.ionos.com PA", Amount = -37m, ImportSource = "Plaid",
+                CategoryId = subscriptions.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var transaction = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 16),
+            Description = "IONOS", Amount = -62m, ImportSource = "Plaid",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        await _sut.ApplyMerchantRuleAsync(Context, transaction);
+
+        Assert.Null(transaction.CategoryId);
+    }
+
+    [Fact]
+    public async Task Transaction_MatchingBothAnExplicitRuleAndHistory_PrefersTheExplicitRule()
+    {
+        var account = await CreateAccountAsync();
+        var officeSupplies = new Category { Name = "Office Supplies" };
+        var subscriptions = new Category { Name = "Subscriptions" };
+        Context.Categories.AddRange(officeSupplies, subscriptions);
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 17),
+            Description = "IONOS www.ionos.com PA", Amount = -37m, ImportSource = "Plaid",
+            CategoryId = officeSupplies.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "IONOS", CategoryId = subscriptions.Id });
+        await Context.SaveChangesAsync();
+
+        var transaction = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 16),
+            Description = "IONOS", Amount = -62m, ImportSource = "Plaid",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        await _sut.ApplyMerchantRuleAsync(Context, transaction);
+
+        Assert.Equal(subscriptions.Id, transaction.CategoryId);
+    }
+
+    [Fact]
+    public async Task FindHistoricalCategoryIdsAsync_OrdersByMostRecentOccurrenceOfEachCategoryFirst()
+    {
+        var account = await CreateAccountAsync();
+        var groceries = new Category { Name = "Groceries" };
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.AddRange(groceries, restaurants);
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 1),
+                Description = "TEDS MONTANA GRILL", Amount = -60m, ImportSource = "Plaid",
+                CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 1),
+                Description = "TEDS MONTANA GRILL", Amount = -60m, ImportSource = "Plaid",
+                CategoryId = restaurants.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.FindHistoricalCategoryIdsAsync(Context, "TEDS MONTANA GRILL 08/14");
+
+        Assert.Equal([restaurants.Id, groceries.Id], result);
+    }
+
+    [Fact]
+    public async Task FindHistoricalCategoryIdsAsync_ReturnsEmpty_WhenNothingMatches()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.FindHistoricalCategoryIdsAsync(Context, "SOME BRAND NEW MERCHANT");
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task FindHistoricalCategoryIdsAsync_IgnoresAmazonMerchantTransactions()
+    {
+        var account = await CreateAccountAsync();
+        var shopping = new Category { Name = "Shopping" };
+        Context.Categories.Add(shopping);
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 1),
+            Description = "AMAZON MARKETPLACE", Amount = -30m, ImportSource = "Plaid",
+            IsAmazonMerchant = true, CategoryId = shopping.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.FindHistoricalCategoryIdsAsync(Context, "AMAZON MARKETPLACE");
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
     public async Task GetPendingBankTransactionsAsync_ExcludesCategorizedAndAmazonRows()
     {
         var account = await CreateAccountAsync();
@@ -402,6 +552,36 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ReapplyRulesToPendingAsync_CategorizesAPendingTransaction_ViaUnanimousHistory_WithNoExplicitRule()
+    {
+        // Real scenario this guards: IONOS was categorized to Office Supplies by hand
+        // twice, with no merchant_rule ever created - a later IONOS charge landed
+        // pending. The sweep should still catch it via history alone, same as a real
+        // import would (see ApplyMerchantRuleAsync).
+        var account = await CreateAccountAsync();
+        var officeSupplies = new Category { Name = "Office Supplies" };
+        Context.Categories.Add(officeSupplies);
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 17), Description = "IONOS www.ionos.com PA",
+            Amount = -37m, ImportSource = "Test", CategoryId = officeSupplies.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        var stillPending = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 16),
+            Description = "IONOS", Amount = -62m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(stillPending);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.ReapplyRulesToPendingAsync(Context);
+
+        Assert.Equal(1, result.TransactionsUpdated);
+        Assert.Equal(officeSupplies.Id, stillPending.CategoryId);
+    }
+
+    [Fact]
     public async Task ReapplyRulesToPendingAsync_CategorizesAPendingAmazonItemThatNowMatchesAnExistingProduct()
     {
         var supplements = new Category { Name = "Supplements" };
@@ -541,6 +721,83 @@ public class CategorizationServiceTests : DatabaseTestBase
         Assert.Single(traderJoes.TransactionIds);
         Assert.Equal("Amex", publix.AccountName);
         Assert.Equal("Amex", traderJoes.AccountName);
+    }
+
+    [Fact]
+    public async Task GetPendingTransactionGroupsAsync_SetsSuggestedCategoryId_FromTheMostRecentHistoricalMatch()
+    {
+        var account = await CreateAccountAsync();
+        var officeSupplies = new Category { Name = "Office Supplies" };
+        Context.Categories.Add(officeSupplies);
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 17), Description = "IONOS www.ionos.com PA",
+            Amount = -37m, ImportSource = "Test", CategoryId = officeSupplies.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 16), Description = "IONOS",
+            Amount = -62m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingTransactionGroupsAsync(Context);
+
+        var ionos = groups.Single(g => g.SuggestedPattern == "IONOS");
+        Assert.Equal(officeSupplies.Id, ionos.SuggestedCategoryId);
+    }
+
+    [Fact]
+    public async Task GetPendingTransactionGroupsAsync_SuggestedCategoryId_IsNull_WhenNoHistoryExists()
+    {
+        var account = await CreateAccountAsync();
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 16), Description = "SOME BRAND NEW MERCHANT",
+            Amount = -20m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingTransactionGroupsAsync(Context);
+
+        Assert.Null(groups.Single().SuggestedCategoryId);
+    }
+
+    [Fact]
+    public async Task GetPendingTransactionGroupsAsync_SuggestedCategoryId_IsTheMostRecent_EvenWhenHistoryDisagrees()
+    {
+        // Unlike ApplyMerchantRuleAsync's auto-apply (which requires unanimous history),
+        // the Review Queue suggestion is just a starting point to speed up a manual
+        // decision - showing the most recent pick even when history is ambiguous is still
+        // more useful than leaving the dropdown on "-- select --".
+        var account = await CreateAccountAsync();
+        var officeSupplies = new Category { Name = "Office Supplies" };
+        var subscriptions = new Category { Name = "Subscriptions" };
+        Context.Categories.AddRange(officeSupplies, subscriptions);
+        await Context.SaveChangesAsync();
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 6, 17), Description = "IONOS www.ionos.com PA",
+            Amount = -37m, ImportSource = "Test", CategoryId = officeSupplies.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 7, 17), Description = "IONOS www.ionos.com PA",
+            Amount = -37m, ImportSource = "Test", CategoryId = subscriptions.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 8, 16), Description = "IONOS",
+            Amount = -62m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var groups = await _sut.GetPendingTransactionGroupsAsync(Context);
+
+        var ionos = groups.Single(g => g.SuggestedPattern == "IONOS");
+        Assert.Equal(subscriptions.Id, ionos.SuggestedCategoryId);
     }
 
     [Fact]

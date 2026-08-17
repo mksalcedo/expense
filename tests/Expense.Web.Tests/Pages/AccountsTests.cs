@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Accounts;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,13 @@ namespace Expense.Web.Tests.Pages;
 
 public class AccountsTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public AccountsTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+    }
+
     // Mutates Rows on write, like a real backing store, so a post-save re-fetch (which the
     // component always does) reflects the change - needed to test the new "stay open and show
     // the saved data" behavior, not just "was the right method called with the right args".
@@ -135,6 +143,47 @@ public class AccountsTests : BunitContext
             new AccountRow { Id = 4, Name = "SoFi (Paid Off 2026)", Type = AccountType.Debt, IsActive = false, MinPayment = 1084.53m, PaymentDueDay = 20 }
         ]
     };
+
+    // Real gap this guards (2026-08-17): with nothing selected, there's nothing an
+    // auto-refresh could disrupt, so it behaves like a pure display page and refreshes
+    // silently - same reasoning as Forecast/Categories.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithNothingSelected_SilentlyRefreshes()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IAccountsPageProvider>(provider);
+
+        var cut = Render<Accounts>();
+        Assert.DoesNotContain("Brand New Account", cut.Markup);
+
+        // Simulates an account added elsewhere - nothing on this page did anything to
+        // cause it.
+        provider.Rows.Add(new AccountRow { Id = 99, Name = "Brand New Account", Type = AccountType.Checking, IsActive = true });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("Brand New Account", cut.Markup));
+        Assert.Empty(cut.FindAll("#new-data-banner"));
+    }
+
+    // With an account selected and its edit form open, silently reloading the list could
+    // yank the form's row out from under an in-progress edit - shows the softer banner
+    // instead, leaving the open form untouched.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithAnAccountSelected_ShowsTheBanner_WithoutDisturbingTheOpenForm()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IAccountsPageProvider>(provider);
+
+        var cut = Render<Accounts>();
+        cut.Find("#account-row-3").Click();
+        Assert.Equal("Discover", cut.Find("#detail-name").GetAttribute("value"));
+
+        provider.Rows.Add(new AccountRow { Id = 99, Name = "Brand New Account", Type = AccountType.Checking, IsActive = true });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+        Assert.Equal("Discover", cut.Find("#detail-name").GetAttribute("value"));
+    }
 
     [Fact]
     public void Accounts_RendersListWithoutAnOpenFormInitially()

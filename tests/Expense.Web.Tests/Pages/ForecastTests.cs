@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Accounts;
 using Expense.Domain.Services.Forecast;
 using Expense.Web.Components.Pages;
@@ -9,6 +10,8 @@ namespace Expense.Web.Tests.Pages;
 
 public class ForecastTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
     public ForecastTests()
     {
         // The "show resolved items" preference is read/written via localStorage - Loose mode
@@ -20,6 +23,7 @@ public class ForecastTests : BunitContext
         // savings row). A test that cares about the savings row registers its own instance,
         // which overrides this one (last registration wins when resolving a single service).
         Services.AddSingleton<IAccountsPageProvider>(new FakeAccountsPageProvider([]));
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
     }
 
     private class FakeAccountsPageProvider(List<AccountRow> rows) : IAccountsPageProvider
@@ -44,8 +48,15 @@ public class ForecastTests : BunitContext
         private int _nextDeferralId = 1;
         private int _nextConfirmationId = 1;
         private int _nextPartialPaymentId = 1;
+        private int _nextAdjustmentId = 1;
 
-        public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(result);
+        // Settable so a test can simulate a background sync replacing the whole result
+        // wholesale (see DataChangeNotifier tests) - defaults to the constructor's own
+        // result, which every *other* method below still mutates in place directly
+        // (unaffected by reassigning this property, since none of those tests do both).
+        public ForecastResult Result { get; set; } = result;
+
+        public Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default) => Task.FromResult(Result);
 
         public Task DeferPaymentAsync(int accountId, DateOnly originalDate, DateOnly deferredToDate, string? note, CancellationToken cancellationToken = default)
         {
@@ -128,6 +139,26 @@ public class ForecastTests : BunitContext
             if (candidate is not null) candidate.PartialPaymentId = null;
             return Task.CompletedTask;
         }
+
+        public Task AdjustAmountAsync(int accountId, int? categoryId, DateOnly originalDate, decimal amount, CancellationToken cancellationToken = default)
+        {
+            var row = result.Rows.Single(r => r.AccountId == accountId && r.OriginalDate == originalDate);
+            row.OriginalScheduledAmount ??= row.Amount;
+            row.Amount = amount;
+            row.IsAmountAdjusted = true;
+            row.AdjustmentId = _nextAdjustmentId++;
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveAmountAdjustmentAsync(int adjustmentId, CancellationToken cancellationToken = default)
+        {
+            var row = result.Rows.Single(r => r.AdjustmentId == adjustmentId);
+            row.Amount = row.OriginalScheduledAmount!.Value;
+            row.OriginalScheduledAmount = null;
+            row.IsAmountAdjusted = false;
+            row.AdjustmentId = null;
+            return Task.CompletedTask;
+        }
     }
 
     private static ForecastLedgerRow AmexRow(decimal amount = -2000m, decimal runningBalance = -1000m) => new()
@@ -162,6 +193,72 @@ public class ForecastTests : BunitContext
         Assert.Contains("Discover Payment", cut.Markup);
         Assert.Contains("Paycheck", cut.Markup);
         Assert.Contains("8,313.02", cut.Markup);
+    }
+
+    // Real gap this guards (2026-08-17): a background scheduled sync completing while the
+    // user just sits on this page never used to be reflected without a manual refresh.
+    // Forecast is smart about it though (unlike the pure-display pages): with no modal
+    // open, there's nothing to disrupt, so it refreshes silently just like Dashboard does.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithNoModalOpen_SilentlyRefreshes()
+    {
+        var provider = new FakeForecastResultProvider(new ForecastResult { StartingBalance = 6463.02m, Rows = [] });
+        Services.AddSingleton<IForecastResultProvider>(provider);
+
+        var cut = Render<Forecast>();
+        Assert.Contains("6,463.02", cut.Markup);
+
+        // Simulates a background sync landing a new starting balance - nothing on this
+        // page did anything to cause it.
+        provider.Result = new ForecastResult { StartingBalance = 9999.99m, Rows = [] };
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("9,999.99", cut.Markup));
+        Assert.Empty(cut.FindAll("#new-data-banner"));
+    }
+
+    // With a modal open, silently swapping _result out from under it could leave the
+    // modal referencing a row that's since changed - shows the softer banner instead of
+    // forcing a refresh, and leaves the open modal's own pre-filled values untouched.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithAModalOpen_ShowsTheBanner_WithoutDisturbingTheOpenModal()
+    {
+        var row = AmexRow(amount: -76.68m);
+        var provider = new FakeForecastResultProvider(new ForecastResult { StartingBalance = 1000m, Rows = [row] });
+        Services.AddSingleton<IForecastResultProvider>(provider);
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+        Assert.Equal("-76.68", cut.Find("#modal-amount-input").GetAttribute("value"));
+
+        // Simulates a background sync landing new data while this modal is open - nothing
+        // on this page did anything to cause it.
+        provider.Result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow(amount: -999.99m)] };
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+        // The open modal is untouched - still showing what it was pre-filled with.
+        Assert.Equal("-76.68", cut.Find("#modal-amount-input").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void ClickingRefreshOnTheNewDataBanner_AppliesTheNewData_AndHidesTheBanner()
+    {
+        var row = AmexRow(amount: -76.68m);
+        var provider = new FakeForecastResultProvider(new ForecastResult { StartingBalance = 1000m, Rows = [row] });
+        Services.AddSingleton<IForecastResultProvider>(provider);
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+        provider.Result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow(amount: -999.99m)] };
+        _dataChangeNotifier.NotifyChanged();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+
+        cut.Find("#action-modal-cancel").Click(); // close the modal first, same as a real user would before refreshing
+        cut.Find("#refresh-now-btn").Click();
+
+        Assert.Contains("-999.99", cut.Markup);
+        Assert.Empty(cut.FindAll("#new-data-banner"));
     }
 
     [Fact]
@@ -597,7 +694,7 @@ public class ForecastTests : BunitContext
         var cut = Render<Forecast>();
         cut.Find("#override-btn-0").Click();
 
-        Assert.Equal("Change this amount?", cut.Find("#action-modal-title").TextContent);
+        Assert.Equal("Confirm this was paid at a different amount?", cut.Find("#action-modal-title").TextContent);
         Assert.Equal("-2000", cut.Find("#modal-amount-input").GetAttribute("value"));
         Assert.Equal("2026-08-20", cut.Find("#modal-date-input").GetAttribute("value"));
     }
@@ -622,6 +719,142 @@ public class ForecastTests : BunitContext
         var explanation = cut.Find("#action-modal-explanation").TextContent;
         Assert.Contains("-70.97", explanation);
         Assert.Contains("07/31/2026", explanation);
+    }
+
+    [Fact]
+    public void ModalExplanations_UseTheSameResolvedWordingAsTheShowResolvedItemsCheckbox()
+    {
+        // Real feedback (2026-08-17): "still-owed list" was invented jargon - there's no
+        // such list anywhere in the UI. The fix reuses "resolved", the term the page
+        // already shows in its own "Show resolved items (paid, overridden, or
+        // auto-reconciled)" checkbox, plus "struck through" (the actual CSS applied to
+        // such a row) instead of describing invented internal state. Checks all three
+        // places the old phrase appeared (Confirm Paid, Override with a suggested match,
+        // Override with none).
+        var row = AmexRow(amount: -76.68m);
+        row.SuggestedOverrideAmount = -70.97m;
+        row.SuggestedOverrideDate = new DateOnly(2026, 7, 31);
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        cut.Find("#confirm-btn-0").Click();
+        var confirmExplanation = cut.Find("#action-modal-explanation").TextContent;
+        Assert.DoesNotContain("still-owed", confirmExplanation);
+        Assert.Contains("resolved (struck through)", confirmExplanation);
+        cut.Find("#action-modal-cancel").Click();
+
+        cut.Find("#override-btn-0").Click();
+        var overrideExplanation = cut.Find("#action-modal-explanation").TextContent;
+        Assert.DoesNotContain("still-owed", overrideExplanation);
+        Assert.Contains("resolved (struck through)", overrideExplanation);
+    }
+
+    [Fact]
+    public void ClickingOverride_WithNoSuggestedAmount_ExplainsItAlsoWorksBeforeThingsAreActuallyPaid()
+    {
+        // Real confusion this guards (reported live, three times, with near-identical Gas
+        // bill numbers each time): first "enter what actually happened... resolved" read
+        // as if Override only applied to reconciling an already-posted transaction; the
+        // first fix still opened with "No matching transaction was found yet", which
+        // reports an irrelevant background-search result on a completely ordinary future
+        // row (every unposted bill has "no matching transaction" - that's not news, and
+        // implies something was checked/unusual when nothing was). Neither phrase belongs
+        // - lead with the instruction, not a search result.
+        var row = AmexRow(amount: -76.68m);
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#override-btn-0").Click();
+
+        var explanation = cut.Find("#action-modal-explanation").TextContent;
+        Assert.DoesNotContain("what actually happened", explanation);
+        Assert.DoesNotContain("No matching transaction", explanation);
+        Assert.DoesNotContain("still-owed", explanation);
+        Assert.Contains("even before it's paid", explanation);
+        Assert.Contains("resolved (struck through)", explanation);
+    }
+
+    // Real feature this guards (2026-08-17): the user wanted to correct a real Gas bill
+    // ($70.31 vs a $76.68 estimate) *before* it was paid, without the row being marked
+    // resolved/struck-through the way Confirm/Override both do. "Adjust amount" changes
+    // just the projected figure and leaves the row fully live.
+    [Fact]
+    public void AdjustAmountButton_OpensAModal_PreFilledWithTheCurrentAmount()
+    {
+        var row = AmexRow(amount: -76.68m);
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#adjust-amount-btn-0").Click();
+
+        Assert.Equal("Correct the estimate?", cut.Find("#action-modal-title").TextContent);
+        Assert.Equal("-76.68", cut.Find("#modal-amount-input").GetAttribute("value"));
+        var explanation = cut.Find("#action-modal-explanation").TextContent;
+        Assert.Contains("not resolved", explanation);
+    }
+
+    [Fact]
+    public void ApplyingAnAdjustment_UpdatesTheAmount_WithoutMarkingTheRowResolved()
+    {
+        var row = AmexRow(amount: -76.68m);
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#adjust-amount-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("-70.31");
+        cut.Find("#action-modal-apply").Click();
+
+        var updatedRow = cut.Find("#confirm-btn-0").Closest("tr")!;
+        Assert.DoesNotContain("line-through", updatedRow.GetAttribute("style") ?? "");
+        Assert.Contains("-70.31", updatedRow.TextContent);
+        // Still fully actionable - Confirm/Override/Defer/Partial buttons still present, not swapped for a lone Undo.
+        Assert.NotEmpty(cut.FindAll("#confirm-btn-0"));
+        Assert.NotEmpty(cut.FindAll("#override-btn-0"));
+    }
+
+    [Fact]
+    public void AdjustedRow_ShowsAnInlineNote_AndSwapsToARemoveAdjustmentButton()
+    {
+        var row = AmexRow(amount: -76.68m);
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#adjust-amount-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("-70.31");
+        cut.Find("#action-modal-apply").Click();
+
+        var note = cut.Find("#adjustment-note-0").TextContent;
+        Assert.Contains("76.68", note);
+        Assert.Contains("70.31", note);
+        Assert.Empty(cut.FindAll("#adjust-amount-btn-0"));
+        Assert.NotEmpty(cut.FindAll("#remove-adjustment-btn-0"));
+    }
+
+    [Fact]
+    public void RemovingAnAdjustment_RevertsToTheOriginallyScheduledAmount()
+    {
+        var row = AmexRow(amount: -76.68m);
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#adjust-amount-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("-70.31");
+        cut.Find("#action-modal-apply").Click();
+
+        cut.Find("#remove-adjustment-btn-0").Click();
+        Assert.Equal("Remove this adjustment?", cut.Find("#action-modal-title").TextContent);
+        cut.Find("#action-modal-apply").Click();
+
+        Assert.Contains("-76.68", cut.Find("#confirm-btn-0").Closest("tr")!.TextContent);
+        Assert.Empty(cut.FindAll("#remove-adjustment-btn-0"));
+        Assert.NotEmpty(cut.FindAll("#adjust-amount-btn-0"));
     }
 
     [Fact]
@@ -920,7 +1153,7 @@ public class ForecastTests : BunitContext
         Assert.Contains("25.00 on 08/03/2026", cut.Find("#suggested-partial-0-1").TextContent);
         Assert.NotNull(cut.Find("#record-suggested-partial-btn-0-0"));
         Assert.NotNull(cut.Find("#record-suggested-partial-btn-0-1"));
-        // No single "found nearby - review with Change Amount" prompt for this kind of category.
+        // No single "found nearby - review with Confirm paid (different amount)" prompt for this kind of category.
         Assert.Empty(cut.FindAll("#near-miss-note-0"));
     }
 
@@ -1106,8 +1339,12 @@ public class ForecastTests : BunitContext
         Assert.NotEqual("Confirm paid", confirmBtn.TextContent.Trim());
 
         var overrideBtn = cut.Find("#override-btn-0");
-        Assert.Equal("Change amount", overrideBtn.GetAttribute("title"));
-        Assert.NotEqual("Change amount", overrideBtn.TextContent.Trim());
+        Assert.Equal("Confirm paid (different amount)", overrideBtn.GetAttribute("title"));
+        Assert.NotEqual("Confirm paid (different amount)", overrideBtn.TextContent.Trim());
+
+        var adjustBtn = cut.Find("#adjust-amount-btn-0");
+        Assert.Equal("Correct estimate (not yet paid)", adjustBtn.GetAttribute("title"));
+        Assert.NotEqual("Correct estimate (not yet paid)", adjustBtn.TextContent.Trim());
     }
 
     [Fact]

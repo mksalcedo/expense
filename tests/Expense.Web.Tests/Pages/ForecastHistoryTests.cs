@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Forecast;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,17 +9,27 @@ namespace Expense.Web.Tests.Pages;
 
 public class ForecastHistoryTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public ForecastHistoryTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+    }
+
     private class FakeForecastHistoryPageProvider(List<ForecastSnapshot> snapshots, ForecastSnapshotDiff? diff) : IForecastHistoryPageProvider
     {
+        public List<ForecastSnapshot> Snapshots { get; set; } = snapshots;
         public ForecastSnapshotDiff? NextManualDiffResult { get; set; }
+        public int GetDiffCallCount { get; private set; }
         public int? LastRequestedOlderSnapshotId { get; private set; }
         public int? LastRequestedNewerSnapshotId { get; private set; }
 
-        public Task<List<ForecastSnapshot>> GetRecentSnapshotsAsync(int days = 30, CancellationToken cancellationToken = default) => Task.FromResult(snapshots);
+        public Task<List<ForecastSnapshot>> GetRecentSnapshotsAsync(int days = 30, CancellationToken cancellationToken = default) => Task.FromResult(Snapshots);
         public Task<ForecastSnapshotDiff?> GetLatestDiffAsync(CancellationToken cancellationToken = default) => Task.FromResult(diff);
 
         public Task<ForecastSnapshotDiff?> GetDiffAsync(int olderSnapshotId, int newerSnapshotId, CancellationToken cancellationToken = default)
         {
+            GetDiffCallCount++;
             LastRequestedOlderSnapshotId = olderSnapshotId;
             LastRequestedNewerSnapshotId = newerSnapshotId;
             return Task.FromResult(NextManualDiffResult);
@@ -30,6 +41,40 @@ public class ForecastHistoryTests : BunitContext
         var provider = new FakeForecastHistoryPageProvider(snapshots ?? [], diff);
         Services.AddSingleton<IForecastHistoryPageProvider>(provider);
         return provider;
+    }
+
+    // Real gap this guards (2026-08-17): a background scheduled sync captures a brand new
+    // snapshot on every run, so this page is the one most likely to actually change
+    // underneath someone who's just sitting on it - but naively re-running
+    // GetLatestDiffAsync() on that signal would have silently discarded a manually-picked
+    // from/to comparison and jumped back to "newest vs. second-newest" instead. Re-running
+    // GetDiffAsync with whatever's currently selected keeps the user's comparison intact
+    // while still picking up the new snapshot in the picker list.
+    [Fact]
+    public void DataChangeNotifier_Firing_RefreshesTheSnapshotList_ButKeepsTheCurrentComparisonSelected()
+    {
+        var provider = RegisterFakes(snapshots:
+        [
+            new ForecastSnapshot { Id = 2, AsOfDate = new DateOnly(2026, 7, 24), StartingBalance = 1000m, LowestProjectedBalance = 250m, LowestProjectedBalanceDate = new DateOnly(2026, 8, 1) },
+            new ForecastSnapshot { Id = 1, AsOfDate = new DateOnly(2026, 7, 23), StartingBalance = 1000m, LowestProjectedBalance = 1100m, LowestProjectedBalanceDate = new DateOnly(2026, 8, 3) }
+        ]);
+
+        var cut = Render<ForecastHistory>();
+        Assert.Equal(0, provider.GetDiffCallCount); // OnInitializedAsync uses GetLatestDiffAsync, not GetDiffAsync
+
+        // Simulates a background sync capturing a brand new snapshot (Id 3) - nothing on
+        // this page did anything to cause it.
+        provider.Snapshots =
+        [
+            new ForecastSnapshot { Id = 3, AsOfDate = new DateOnly(2026, 7, 25), StartingBalance = 1000m, LowestProjectedBalance = 500m, LowestProjectedBalanceDate = new DateOnly(2026, 8, 2) },
+            .. provider.Snapshots
+        ];
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Equal(1, provider.GetDiffCallCount));
+        // Still comparing the original two (2 vs 1), not silently reset to the new latest pair (3 vs 2).
+        Assert.Equal(1, provider.LastRequestedOlderSnapshotId);
+        Assert.Equal(2, provider.LastRequestedNewerSnapshotId);
     }
 
     [Fact]

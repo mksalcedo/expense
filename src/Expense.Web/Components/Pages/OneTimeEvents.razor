@@ -1,11 +1,17 @@
 @page "/one-time-events"
 @using Expense.Domain.Entities
+@using Expense.Domain.Services
 @using Expense.Domain.Services.OneTimeEvents
+@using Expense.Web.Components.Shared
+@implements IDisposable
 @inject IOneTimeEventsPageProvider EventsProvider
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>One-Time Events</PageTitle>
 
 <h1>One-Time Events</h1>
+
+<NewDataBanner Show="_newDataAvailable" OnRefresh="RefreshNowAsync" />
 
 @if (_data is null)
 {
@@ -137,9 +143,36 @@ else
     private int? _formAccountId;
     private int? _formCategoryId;
 
+    private bool _newDataAvailable;
+
     protected override async Task OnInitializedAsync()
     {
         _data = await EventsProvider.GetEventsAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    private async void OnDataChanged()
+    {
+        if (_mode == DetailMode.None)
+        {
+            _data = await EventsProvider.GetEventsAsync();
+        }
+        else
+        {
+            _newDataAvailable = true;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshNowAsync()
+    {
+        _newDataAvailable = false;
+        _data = await EventsProvider.GetEventsAsync();
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     private static int? ParseNullableInt(string value) =>

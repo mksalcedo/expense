@@ -1,7 +1,10 @@
 @page "/backup-data"
 @using Expense.Domain.Entities
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Backup
+@implements IDisposable
 @inject IDatabaseBackupService BackupService
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Backup Data</PageTitle>
 
@@ -62,6 +65,19 @@
     {
         _lastRun = await BackupService.GetLastRunAsync();
         await RefreshRecentRunsAsync(1);
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    private async void OnDataChanged()
+    {
+        _lastRun = await BackupService.GetLastRunAsync();
+        await RefreshRecentRunsAsync(_recentRunsPage);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     private async Task RefreshRecentRunsAsync(int page)

@@ -21,6 +21,7 @@ public class ExpenseDbContext(DbContextOptions<ExpenseDbContext> options) : DbCo
     public DbSet<PaymentDeferral> PaymentDeferrals => Set<PaymentDeferral>();
     public DbSet<PaymentConfirmation> PaymentConfirmations => Set<PaymentConfirmation>();
     public DbSet<PartialPayment> PartialPayments => Set<PartialPayment>();
+    public DbSet<PaymentAmountAdjustment> PaymentAmountAdjustments => Set<PaymentAmountAdjustment>();
     public DbSet<SyncIssue> SyncIssues => Set<SyncIssue>();
     public DbSet<ImportRunProgressLine> ImportRunProgressLines => Set<ImportRunProgressLine>();
     public DbSet<ForecastSnapshot> ForecastSnapshots => Set<ForecastSnapshot>();

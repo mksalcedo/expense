@@ -8,4 +8,7 @@ public class PendingTransactionGroup
     public required List<int> TransactionIds { get; set; }
     public decimal TotalAmount { get; set; }
     public required string AccountName { get; set; }
+
+    /// <summary>The most recently-used category for a similar-looking past transaction, if any - see CategorizationService.FindHistoricalCategoryIdsAsync.</summary>
+    public int? SuggestedCategoryId { get; set; }
 }

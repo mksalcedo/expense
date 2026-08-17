@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Categories;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,13 @@ namespace Expense.Web.Tests.Pages;
 
 public class CategoriesTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public CategoriesTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+    }
+
     private class FakeCategoriesPageProvider : ICategoriesPageProvider
     {
         public List<CategoryRow> Rows { get; set; } = [];
@@ -104,6 +112,48 @@ public class CategoriesTests : BunitContext
         ],
         Accounts = [new AccountOption { Id = 10, Name = "Wells Fargo Checking" }]
     };
+
+    // Real gap this guards (2026-08-17): with no row selected, there's nothing an
+    // auto-refresh could disrupt, so it behaves like a pure display page and refreshes
+    // silently - same reasoning as Forecast with no modal open.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithNothingSelected_SilentlyRefreshes()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        Assert.DoesNotContain("Brand New Category", cut.Markup);
+
+        // Simulates a category added elsewhere - nothing on this page did anything to
+        // cause it.
+        provider.Rows.Add(new CategoryRow { Id = 99, Name = "Brand New Category", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.None });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("Brand New Category", cut.Markup));
+        Assert.Empty(cut.FindAll("#new-data-banner"));
+    }
+
+    // With a category selected and its edit form open, silently reloading the list could
+    // yank the form's underlying row out from under an in-progress edit - shows the softer
+    // banner instead, leaving the open form untouched.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithACategorySelected_ShowsTheBanner_WithoutDisturbingTheOpenForm()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click();
+        Assert.Equal("Groceries", cut.Find("#detail-name").GetAttribute("value"));
+
+        provider.Rows.Add(new CategoryRow { Id = 99, Name = "Brand New Category", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.None });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+        // The open form is untouched - still editing Groceries, not silently reset.
+        Assert.Equal("Groceries", cut.Find("#detail-name").GetAttribute("value"));
+    }
 
     [Fact]
     public void Categories_RendersListWithoutAnOpenFormInitially()

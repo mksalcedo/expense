@@ -1,0 +1,17 @@
+@* Shown on any page that holds in-progress state (an open form, a selected row, an
+   open modal) when a background sync completes - unlike a pure display page (see
+   Dashboard/NavMenu/etc.), silently swapping the underlying data out from under an
+   active edit could yank it away mid-click, so this only offers a refresh rather than
+   forcing one. *@
+@if (Show)
+{
+    <div id="new-data-banner" style="background:#e0f2fe; color:#075985; border:1px solid #7dd3fc; border-radius:6px; padding:0.5em 1em; margin-bottom:1em; max-width:480px; display:flex; justify-content:space-between; align-items:center; gap:1em;">
+        <span>New data is available.</span>
+        <button id="refresh-now-btn" @onclick="OnRefresh">Refresh</button>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Show { get; set; }
+    [Parameter] public EventCallback OnRefresh { get; set; }
+}

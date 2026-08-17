@@ -1,6 +1,9 @@
 @page "/spending-tracker"
+@using Expense.Domain.Services
 @using Expense.Domain.Services.SpendingTracker
+@implements IDisposable
 @inject ISpendingTrackerPageProvider SpendingTrackerProvider
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Spending Tracker</PageTitle>
 
@@ -34,6 +37,28 @@ else
         _data = await SpendingTrackerProvider.GetSpendingTrackerAsync();
         _weekReferenceDate = _data.Week.PeriodStart;
         _monthReferenceDate = _data.Month.PeriodStart;
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    // Fires from a background sync (scheduled or a manual Sync Now click from any page) -
+    // re-fetches both tables using their current reference dates rather than
+    // GetSpendingTrackerAsync() (which always means "today"), so a background refresh
+    // never silently resets Previous/Next navigation back to the current week/month. Also
+    // refreshes whichever category detail table is currently open, same as the existing
+    // navigation methods below, so it doesn't go stale relative to the totals above it.
+    private async void OnDataChanged()
+    {
+        if (_data is null) return;
+        _data.Week = await SpendingTrackerProvider.GetWeekAsync(_weekReferenceDate);
+        _data.Month = await SpendingTrackerProvider.GetMonthAsync(_monthReferenceDate);
+        await RefreshSelectedCategoryAsync("week", _data.Week);
+        await RefreshSelectedCategoryAsync("month", _data.Month);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     private async Task ResetCarryoverAsync(int categoryId, bool startingNextPeriod)
@@ -146,7 +171,7 @@ else
         }
     }
 
-    private RenderFragment RenderPeriod(string title, string idPrefix, SpendingTrackerResult result, Func<Task> onPrevious, Func<Task> onNext, Func<Task> onCurrent) => @<div style="min-width: 520px;">
+    private RenderFragment RenderPeriod(string title, string idPrefix, SpendingTrackerResult result, Func<Task> onPrevious, Func<Task> onNext, Func<Task> onCurrent) => @<div style="min-width: 680px;">
         <h2>@title</h2>
         <p>@result.PeriodStart.ToString("yyyy-MM-dd") to @result.PeriodEnd.ToString("yyyy-MM-dd")</p>
         <div style="margin-bottom: 0.5em;">
@@ -159,9 +184,11 @@ else
                 <tr>
                     <th>Category</th>
                     <th class="text-right">Budget</th>
-                    <th class="text-right">Actual</th>
+                    <th class="text-right">Spent</th>
                     <th class="text-right">Remaining</th>
-                    <th>Carryover</th>
+                    <th class="text-right">Carried<br />Over</th>
+                    <th class="text-right">Net<br />Remaining</th>
+                    <th>Action</th>
                 </tr>
             </thead>
             <tbody>
@@ -177,18 +204,17 @@ else
                         </td>
                         <td class="text-right">@category.Budget.ToString("N2")</td>
                         <td class="text-right">@category.Actual.ToString("N2")</td>
+                        <td class="text-right">@category.Remaining.ToString("N2")</td>
                         <td class="text-right">
-                            @((category.RollingBalance ?? category.Remaining).ToString("N2"))
-                            @if (category.IsCarryoverTracked && category.CarriedIn != 0)
+                            @if (category.IsCarryoverTracked)
                             {
-                                <br />
-                                <span id="carried-in-note-@category.CategoryId" style="color:#666; font-size:0.85em;">
-                                    @(category.CarriedIn > 0 ? "+" : "")@category.CarriedIn.ToString("N2") carried in
-                                    @if (category.CarryoverCap is { } cap)
-                                    {
-                                        <text> (capped at &plusmn;@cap.ToString("N2"))</text>
-                                    }
-                                </span>
+                                <span id="carried-in-@category.CategoryId">@(category.CarriedIn > 0 ? "+" : "")@category.CarriedIn.ToString("N2")</span>
+                            }
+                        </td>
+                        <td class="text-right">
+                            @if (category.IsCarryoverTracked)
+                            {
+                                @((category.RollingBalance ?? category.Remaining).ToString("N2"))
                             }
                         </td>
                         <td style="white-space: nowrap;">
@@ -225,27 +251,36 @@ else
                     <td class="text-right">@result.PendingAmount.ToString("N2")</td>
                     <td></td>
                     <td></td>
+                    <td></td>
+                    <td></td>
                 </tr>
             </tbody>
             <tfoot>
                 @{
                     var budgetTotal = result.Categories.Sum(c => c.Budget);
                     // Pending is real money already spent, just not yet sorted into a
-                    // category - it has to count toward the actual/remaining totals or
+                    // category - it has to count toward the spent/remaining totals or
                     // this row would overstate how much budget is really left, the exact
                     // kind of "silently ignore uncategorized spend" mistake already fixed
                     // once before for the Amex forecast.
-                    var actualTotal = result.Categories.Sum(c => c.Actual) + result.PendingAmount;
-                    // Sums whatever's actually displayed per row (the carryover-adjusted
-                    // RollingBalance where tracked, plain Remaining otherwise) rather than
-                    // Budget-Actual, so the total reconciles with the column above it.
-                    var remainingTotal = result.Categories.Sum(c => c.RollingBalance ?? c.Remaining) - result.PendingAmount;
+                    var spentTotal = result.Categories.Sum(c => c.Actual) + result.PendingAmount;
+                    // Plain Budget-minus-Spent total, with no carryover adjustment - matches
+                    // the Remaining column above it, which is likewise carryover-agnostic.
+                    var remainingTotal = budgetTotal - spentTotal;
+                    var carriedOverTotal = result.Categories.Sum(c => c.CarriedIn);
+                    // Sums whatever's actually displayed per row in Net Remaining (the
+                    // carryover-adjusted RollingBalance where tracked, plain Remaining
+                    // otherwise) rather than Budget-Spent, so the total reconciles with the
+                    // column above it.
+                    var netRemainingTotal = result.Categories.Sum(c => c.RollingBalance ?? c.Remaining) - result.PendingAmount;
                 }
                 <tr id="@(idPrefix)-totals-row" style="font-weight: 600; border-top: 2px solid var(--color-border, #ccc)">
                     <td>Total</td>
                     <td class="text-right">@budgetTotal.ToString("N2")</td>
-                    <td class="text-right">@actualTotal.ToString("N2")</td>
+                    <td class="text-right">@spentTotal.ToString("N2")</td>
                     <td class="text-right">@remainingTotal.ToString("N2")</td>
+                    <td class="text-right">@carriedOverTotal.ToString("N2")</td>
+                    <td class="text-right">@netRemainingTotal.ToString("N2")</td>
                     <td></td>
                 </tr>
             </tfoot>

@@ -14,7 +14,7 @@ namespace Expense.Domain.Services.Forecast;
 public class ForecastResultProvider(
     IDbContextFactory<ExpenseDbContext> contextFactory, ForecastEngine engine, IOptions<AppSettings> options,
     PaymentDeferralService deferrals, PaymentConfirmationService confirmations, PartialPaymentService partialPayments,
-    TransactionReconciliationService reconciliation) : IForecastResultProvider
+    TransactionReconciliationService reconciliation, PaymentAmountAdjustmentService amountAdjustments) : IForecastResultProvider
 {
     public async Task<ForecastResult> GetForecastAsync(CancellationToken cancellationToken = default)
     {
@@ -75,5 +75,17 @@ public class ForecastResultProvider(
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await partialPayments.RemoveAsync(context, partialPaymentId, cancellationToken);
+    }
+
+    public async Task AdjustAmountAsync(int accountId, int? categoryId, DateOnly originalDate, decimal amount, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await amountAdjustments.CreateAsync(context, accountId, categoryId, originalDate, amount);
+    }
+
+    public async Task RemoveAmountAdjustmentAsync(int adjustmentId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await amountAdjustments.RemoveAsync(context, adjustmentId);
     }
 }

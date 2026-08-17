@@ -1,14 +1,17 @@
 @page "/"
 @using Expense.Domain.Entities
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Accounts
 @using Expense.Domain.Services.Dashboard
 @using Expense.Domain.Services.Forecast
 @using Expense.Domain.Services.SpendingTracker
 @using Expense.Web.Components.Shared
+@implements IDisposable
 @inject IForecastResultProvider ForecastProvider
 @inject ISpendingTrackerPageProvider SpendingTrackerProvider
 @inject ISyncStatusProvider SyncStatusProvider
 @inject IAccountsPageProvider AccountsProvider
+@inject IDataChangeNotifier DataChangeNotifier
 @inject IJSRuntime JS
 
 <PageTitle>Dashboard - @DateTime.Today.ToString("MMMM d, yyyy")</PageTitle>
@@ -153,6 +156,21 @@ else
     protected override async Task OnInitializedAsync()
     {
         await RefreshDashboardDataAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    // Fires from a background sync (scheduled or a manual Sync Now click from any page) -
+    // the Dashboard is a pure display, nothing here is mid-edit, so it's always safe to
+    // just silently pull fresh data and re-render.
+    private async void OnDataChanged()
+    {
+        await RefreshDashboardDataAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

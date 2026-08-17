@@ -1,4 +1,5 @@
 @using Microsoft.AspNetCore.Components.Routing
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Categorization
 @using Expense.Domain.Services.Dashboard
 @using Expense.Web.Services
@@ -6,6 +7,7 @@
 @inject IReviewQueueProvider ReviewQueueProvider
 @inject ISyncStatusProvider SyncStatusProvider
 @inject IReviewQueueChangeNotifier ReviewQueueChangeNotifier
+@inject IDataChangeNotifier DataChangeNotifier
 @inject NavigationManager Navigation
 @implements IDisposable
 
@@ -76,6 +78,7 @@
         await RefreshSyncFailureCountAsync();
         Navigation.LocationChanged += OnLocationChanged;
         ReviewQueueChangeNotifier.Changed += OnReviewQueueChanged;
+        DataChangeNotifier.Changed += OnDataChanged;
     }
 
     // The nav bar is part of the persistent layout, not a routable page, so it's only ever
@@ -97,6 +100,16 @@
     private async void OnReviewQueueChanged()
     {
         await RefreshPendingReviewCountAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // Fires from a background sync (scheduled or a manual Sync Now click from any page) -
+    // the only signal that reaches this page while the user is just sitting on one page
+    // without navigating anywhere, unlike OnLocationChanged above.
+    private async void OnDataChanged()
+    {
+        await RefreshPendingReviewCountAsync();
+        await RefreshSyncFailureCountAsync();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -131,5 +144,6 @@
     {
         Navigation.LocationChanged -= OnLocationChanged;
         ReviewQueueChangeNotifier.Changed -= OnReviewQueueChanged;
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 }

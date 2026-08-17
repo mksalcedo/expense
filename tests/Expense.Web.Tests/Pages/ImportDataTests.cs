@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Dashboard;
 using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Settings;
@@ -11,6 +12,13 @@ namespace Expense.Web.Tests.Pages;
 
 public class ImportDataTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public ImportDataTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+    }
+
     private class FakeSyncStatusProvider(ImportRun? lastSimpleFinRun = null, ImportRun? lastAmazonRun = null, ImportRun? lastPlaidRun = null) : ISyncStatusProvider
     {
         public int SimpleFinRunCount { get; private set; }
@@ -118,6 +126,44 @@ public class ImportDataTests : BunitContext
         Services.AddSingleton<ISyncStatusProvider>(provider);
         Services.AddSingleton<IOptions<AppSettings>>(Options.Create(new AppSettings { SimpleFinEnabled = simpleFinEnabled }));
         return provider;
+    }
+
+    // With no modal open and no resolve form started, there's nothing a reload could
+    // disrupt - refreshes the sync issue list silently.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithNothingInProgress_SilentlyRefreshes()
+    {
+        var provider = RegisterFakes();
+
+        var cut = Render<ImportData>();
+        Assert.DoesNotContain("Mystery Order", cut.Markup);
+
+        provider.ActiveSyncIssues.Add(new SyncIssue { Id = 5, MessageId = "m5", Subject = "Mystery Order", Reason = "Couldn't parse", ReceivedDate = new DateOnly(2026, 8, 17) });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("Mystery Order", cut.Markup));
+        Assert.Empty(cut.FindAll("#new-data-banner"));
+    }
+
+    // With the resolve form started for a sync issue, silently reloading the issue list
+    // could swap out the very issue being resolved - shows the banner instead, leaving the
+    // in-progress form untouched.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithAResolveFormStarted_ShowsTheBanner_WithoutDisturbingTheForm()
+    {
+        var provider = RegisterFakes(activeSyncIssues:
+        [
+            new SyncIssue { Id = 5, MessageId = "m5", Subject = "Mystery Order", Reason = "Couldn't parse", ReceivedDate = new DateOnly(2026, 8, 17) }
+        ]);
+
+        var cut = Render<ImportData>();
+        cut.Find("#resolve-order-id-5").Change("112-9999");
+
+        provider.ActiveSyncIssues.Add(new SyncIssue { Id = 6, MessageId = "m6", Subject = "Another One", Reason = "Couldn't parse", ReceivedDate = new DateOnly(2026, 8, 17) });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+        Assert.NotEmpty(cut.FindAll("#resolve-order-id-5"));
     }
 
     [Fact]

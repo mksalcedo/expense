@@ -1,12 +1,18 @@
 @page "/transactions"
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Transactions
+@using Expense.Web.Components.Shared
 @using Microsoft.AspNetCore.Components
+@implements IDisposable
 @inject ITransactionsPageProvider TransactionsProvider
 @inject IJSRuntime JS
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Transactions</PageTitle>
 
 <h1>Transactions</h1>
+
+<NewDataBanner Show="_newDataAvailable" OnRefresh="RefreshNowAsync" />
 
 @if (!string.IsNullOrEmpty(SearchQuery))
 {
@@ -118,7 +124,7 @@ else
                     <td>
                         @if (row.Source == TransactionSource.Amazon)
                         {
-                            <input id="amazon-title-@row.Id" value="@row.Description"
+                            <input id="amazon-title-@row.Id" type="text" class="description-input" value="@row.Description"
                                    @onchange="e => UpdateAmazonItemTitleAsync(row, (string)e.Value!)" />
                         }
                         else
@@ -177,10 +183,37 @@ else
     [SupplyParameterFromQuery(Name = "search")]
     public string? SearchQuery { get; set; }
 
+    private bool _newDataAvailable;
+
     protected override async Task OnInitializedAsync()
     {
         _searchText = SearchQuery;
         await LoadDataAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    private async void OnDataChanged()
+    {
+        if (_selectedBankIds.Count == 0 && _selectedAmazonIds.Count == 0)
+        {
+            await LoadDataAsync();
+        }
+        else
+        {
+            _newDataAvailable = true;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshNowAsync()
+    {
+        _newDataAvailable = false;
+        await LoadDataAsync();
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Dashboard;
 using Expense.Domain.Services.Ingestion.Amazon;
@@ -11,9 +12,12 @@ namespace Expense.Web.Tests.Layout;
 
 public class NavMenuTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
     public NavMenuTests()
     {
         Services.AddSingleton<IReviewQueueChangeNotifier>(new ReviewQueueChangeNotifier());
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
     }
 
     private class FakeReviewQueueProvider(ReviewQueueData data) : IReviewQueueProvider
@@ -270,6 +274,31 @@ public class NavMenuTests : BunitContext
         Assert.True(transactionsIndex < spendingTrackerIndex, "Transactions should come before Spending Tracker");
         Assert.True(spendingTrackerIndex < reviewQueueIndex, "Spending Tracker should come before Review Queue");
         Assert.Equal("DIVIDER", markers[reviewQueueIndex + 1]);
+    }
+
+    // Real gap this guards (2026-08-17): a background scheduled sync could add pending
+    // items or flip a sync to failed while the user just sits on one page without
+    // navigating anywhere - OnLocationChanged only fires on an actual navigation, so that
+    // case was never covered before IDataChangeNotifier existed.
+    [Fact]
+    public void DataChangeNotifier_Firing_RefreshesTheReviewQueueBadge_WithoutNavigatingOrResolvingAnything()
+    {
+        var provider = RegisterFakes();
+
+        var cut = Render<NavMenu>();
+        Assert.Equal("Review Queue", cut.Find("#nav-review-queue-link").TextContent.Trim());
+
+        // Simulates a background scheduled sync adding a new pending item - nothing on
+        // this page did anything to cause it.
+        provider.Data = new ReviewQueueData
+        {
+            TransactionGroups = [new PendingTransactionGroup { SuggestedPattern = "ACME STORE", SampleDescription = "ACME STORE #1", SampleDate = new DateOnly(2026, 7, 1), TransactionIds = [1], TotalAmount = -10m, AccountName = "Amex" }],
+            AmazonItemGroups = [],
+            Categories = []
+        };
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Equal("Review Queue (1 item needs review)", cut.Find("#nav-review-queue-link").TextContent.Trim()));
     }
 
     [Fact]

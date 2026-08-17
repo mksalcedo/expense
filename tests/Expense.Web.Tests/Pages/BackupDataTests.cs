@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Backup;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,8 +9,20 @@ namespace Expense.Web.Tests.Pages;
 
 public class BackupDataTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public BackupDataTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+    }
+
     private class FakeDatabaseBackupService(BackupRun? lastRun = null) : IDatabaseBackupService
     {
+        // Mutable so a test can simulate a background run (e.g. the scheduled daily backup)
+        // completing elsewhere, distinct from this page's own RunAsync button - same
+        // asymmetry deliberately used by the other pages' fakes (e.g. ForecastAccuracyTests).
+        public BackupRun? LastRun { get; set; } = lastRun;
+
         public int RunCount { get; private set; }
         public BackupRun NextRunResult { get; set; } = new() { RanAt = DateTimeOffset.UtcNow, Success = true, FilePath = "/home/user/dev/expense/db_backups/expense-2026-07-28.sql", FileSizeBytes = 245_000, Duration = TimeSpan.FromSeconds(1.4) };
         public List<BackupRun> RecentRuns { get; set; } = [];
@@ -17,10 +30,11 @@ public class BackupDataTests : BunitContext
         public Task<BackupRun> RunAsync(CancellationToken cancellationToken = default)
         {
             RunCount++;
+            LastRun = NextRunResult;
             return Task.FromResult(NextRunResult);
         }
 
-        public Task<BackupRun?> GetLastRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(lastRun);
+        public Task<BackupRun?> GetLastRunAsync(CancellationToken cancellationToken = default) => Task.FromResult(LastRun);
 
         public Task<RecentBackupRunsPage> GetRecentRunsAsync(int page, int pageSize, CancellationToken cancellationToken = default)
         {
@@ -34,6 +48,21 @@ public class BackupDataTests : BunitContext
         var service = new FakeDatabaseBackupService(lastRun) { RecentRuns = recentRuns ?? [] };
         Services.AddSingleton<IDatabaseBackupService>(service);
         return service;
+    }
+
+    [Fact]
+    public void DataChangeNotifier_Firing_RefreshesTheStatus_WithoutNavigatingOrReloading()
+    {
+        var service = RegisterFakes();
+
+        var cut = Render<BackupData>();
+        Assert.Contains("Last backup: never", cut.Find("#backup-status").TextContent);
+
+        // Simulates the scheduled daily backup running elsewhere, not this page's own button.
+        service.LastRun = new BackupRun { RanAt = new DateTimeOffset(2026, 8, 17, 3, 0, 0, TimeSpan.Zero), Success = true, FilePath = "/backup.sql", FileSizeBytes = 100_000, Duration = TimeSpan.FromSeconds(2) };
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.DoesNotContain("never", cut.Find("#backup-status").TextContent));
     }
 
     [Fact]

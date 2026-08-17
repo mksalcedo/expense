@@ -13,6 +13,7 @@ using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Domain.Services.Ingestion.ManualCharges;
 using Expense.Domain.Services.Ingestion.SimpleFin;
 using Expense.Domain.Services.OneTimeEvents;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Scheduling;
 using Expense.Domain.Services.SpendingTracker;
 using Expense.Domain.Services.Transactions;
@@ -42,6 +43,7 @@ builder.Services.AddScoped<AmexCycleCalculator>();
 builder.Services.AddScoped<ForecastEngine>();
 builder.Services.AddScoped<PaymentDeferralService>();
 builder.Services.AddScoped<PaymentConfirmationService>();
+builder.Services.AddScoped<PaymentAmountAdjustmentService>();
 builder.Services.AddScoped<PartialPaymentService>();
 builder.Services.AddScoped<IForecastResultProvider, ForecastResultProvider>();
 
@@ -99,6 +101,7 @@ builder.Services.AddScoped<TransactionManagementService>();
 builder.Services.AddScoped<ITransactionsPageProvider, TransactionsPageProvider>();
 
 builder.Services.AddSingleton<IStagedScrapeStore, StagedScrapeStore>();
+builder.Services.AddSingleton<IDataChangeNotifier, DataChangeNotifier>();
 builder.Services.AddScoped<IClipboardWatcherController, ClipboardWatcherController>();
 
 var app = builder.Build();

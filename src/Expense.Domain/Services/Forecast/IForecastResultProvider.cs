@@ -20,4 +20,8 @@ public interface IForecastResultProvider
     Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default);
 
     Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default);
+
+    Task AdjustAmountAsync(int accountId, int? categoryId, DateOnly originalDate, decimal amount, CancellationToken cancellationToken = default);
+
+    Task RemoveAmountAdjustmentAsync(int adjustmentId, CancellationToken cancellationToken = default);
 }

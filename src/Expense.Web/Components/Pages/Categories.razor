@@ -1,11 +1,17 @@
 @page "/categories"
 @using Expense.Domain.Entities
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Categories
+@using Expense.Web.Components.Shared
+@implements IDisposable
 @inject ICategoriesPageProvider CategoriesProvider
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Categories</PageTitle>
 
 <h1>Categories</h1>
+
+<NewDataBanner Show="_newDataAvailable" OnRefresh="RefreshNowAsync" />
 
 @if (_data is null)
 {
@@ -238,6 +244,7 @@ else
     private enum DetailMode { None, Editing, Creating }
 
     private CategoriesPageData? _data;
+    private bool _newDataAvailable;
     private DetailMode _mode = DetailMode.None;
     private int? _selectedId;
     private bool _selectedIsActive;
@@ -273,6 +280,36 @@ else
     protected override async Task OnInitializedAsync()
     {
         _data = await CategoriesProvider.GetCategoriesAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    // Fires from a background sync (scheduled or a manual Sync Now click from any page).
+    // With nothing selected, there's nothing an auto-refresh could disrupt, so it behaves
+    // like a pure display page and refreshes silently. With a category selected and its
+    // edit form open, silently reloading the list could yank the form's row out from
+    // under an in-progress edit - shows the softer banner instead.
+    private async void OnDataChanged()
+    {
+        if (_mode == DetailMode.None)
+        {
+            _data = await CategoriesProvider.GetCategoriesAsync();
+        }
+        else
+        {
+            _newDataAvailable = true;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshNowAsync()
+    {
+        _newDataAvailable = false;
+        _data = await CategoriesProvider.GetCategoriesAsync();
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     private static decimal? ParseNullableDecimal(string value) =>

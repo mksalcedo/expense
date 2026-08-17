@@ -1,6 +1,9 @@
 @page "/historical-analysis"
+@using Expense.Domain.Services
 @using Expense.Domain.Services.HistoricalAnalysis
+@implements IDisposable
 @inject IHistoricalAnalysisPageProvider AnalysisProvider
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Historical Analysis</PageTitle>
 
@@ -103,6 +106,20 @@ else
     protected override async Task OnInitializedAsync()
     {
         _data = await AnalysisProvider.GetHistoricalAnalysisAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    // Fires from a background sync (scheduled or a manual Sync Now click from any page) -
+    // pure display, nothing here is mid-edit, so it's always safe to silently refresh.
+    private async void OnDataChanged()
+    {
+        _data = await AnalysisProvider.GetHistoricalAnalysisAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     private async Task OnCategorySelectedAsync(ChangeEventArgs e)

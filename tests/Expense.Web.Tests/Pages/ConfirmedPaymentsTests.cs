@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Forecast;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,13 @@ namespace Expense.Web.Tests.Pages;
 
 public class ConfirmedPaymentsTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public ConfirmedPaymentsTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+    }
+
     private class FakeConfirmedPaymentsPageProvider(List<ConfirmedPaymentRow> rows) : IConfirmedPaymentsPageProvider
     {
         public Task<List<ConfirmedPaymentRow>> GetConfirmedPaymentsAsync(CancellationToken cancellationToken = default) =>
@@ -25,6 +33,26 @@ public class ConfirmedPaymentsTests : BunitContext
         ConfirmationId = id, Date = date, OriginalDate = date, AccountId = 5, AccountName = account, Amount = amount,
         Reason = ConfirmationReason.AlreadyPaid, ConfirmedAt = new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
     };
+
+    // Real gap this guards (2026-08-17): confirming a payment elsewhere (Forecast) or a
+    // background sync auto-reconciling one never used to be reflected here without a
+    // manual refresh, since this page only ever loaded its data once.
+    [Fact]
+    public void DataChangeNotifier_Firing_RefreshesTheList_WithoutNavigatingOrReloading()
+    {
+        var rows = new List<ConfirmedPaymentRow> { MakeRow(1, new DateOnly(2026, 7, 7)) };
+        Services.AddSingleton<IConfirmedPaymentsPageProvider>(new FakeConfirmedPaymentsPageProvider(rows));
+
+        var cut = Render<ConfirmedPayments>();
+        Assert.DoesNotContain("Piano", cut.Markup);
+
+        // Simulates a payment confirmed elsewhere (or auto-reconciled by a background
+        // sync) - nothing on this page did anything to cause it.
+        rows.Add(MakeRow(2, new DateOnly(2026, 8, 1), account: "Piano"));
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("Piano", cut.Markup));
+    }
 
     [Fact]
     public void ConfirmedPayments_RendersEveryRow_RegardlessOfAge()

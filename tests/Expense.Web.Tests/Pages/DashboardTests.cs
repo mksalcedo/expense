@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Accounts;
 using Expense.Domain.Services.Dashboard;
 using Expense.Domain.Services.Forecast;
@@ -12,12 +13,15 @@ namespace Expense.Web.Tests.Pages;
 
 public class DashboardTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
     public DashboardTests()
     {
         // Dashboard embeds CashFlowChart, which imports its own JS module on first render for
         // hover support - these tests don't exercise hovering, so let unconfigured JS interop
         // calls no-op rather than configuring the module in every single test here.
         JSInterop.Mode = JSRuntimeMode.Loose;
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
     }
 
     private class FakeForecastResultProvider(ForecastResult result) : IForecastResultProvider
@@ -31,6 +35,8 @@ public class DashboardTests : BunitContext
         public Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task AdjustAmountAsync(int accountId, int? categoryId, DateOnly originalDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task RemoveAmountAdjustmentAsync(int adjustmentId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private class FakeSpendingTrackerPageProvider(SpendingTrackerPageData data) : ISpendingTrackerPageProvider
@@ -138,6 +144,30 @@ public class DashboardTests : BunitContext
 
         Assert.Contains("6,463.02", cut.Markup);
         Assert.Contains("Discover Payment", cut.Markup);
+    }
+
+    // Real gap this guards (2026-08-17): every figure here only ever loaded once, in
+    // OnInitializedAsync - a background scheduled sync completing while the user just sits
+    // on this page (not navigating anywhere) never used to be reflected without a manual
+    // refresh.
+    [Fact]
+    public void DataChangeNotifier_Firing_RefreshesTheDashboardsFigures_WithoutNavigatingOrReloading()
+    {
+        var forecastProvider = new FakeForecastResultProvider(MakeForecast());
+        Services.AddSingleton<IForecastResultProvider>(forecastProvider);
+        Services.AddSingleton<ISpendingTrackerPageProvider>(new FakeSpendingTrackerPageProvider(MakeSpendingTracker()));
+        Services.AddSingleton<ISyncStatusProvider>(new FakeSyncStatusProvider());
+        Services.AddSingleton<IAccountsPageProvider>(new FakeAccountsPageProvider([]));
+
+        var cut = Render<Dashboard>();
+        Assert.Contains("6,463.02", cut.Markup);
+
+        // Simulates a background scheduled sync landing a new starting balance - nothing on
+        // this page did anything to cause it.
+        forecastProvider.Result = new ForecastResult { StartingBalance = 9999.99m, Rows = [] };
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("9,999.99", cut.Markup));
     }
 
     [Fact]

@@ -1,6 +1,9 @@
 @page "/pending-charges"
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Ingestion.ManualCharges
+@implements IDisposable
 @inject IPendingChargesPageProvider PendingChargesProvider
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Manually Entered Pending Charges</PageTitle>
 
@@ -57,6 +60,18 @@ else
     protected override async Task OnInitializedAsync()
     {
         await RefreshAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    private async void OnDataChanged()
+    {
+        await RefreshAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     private async Task DeleteAsync(PendingChargeRow row)

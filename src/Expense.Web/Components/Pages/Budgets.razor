@@ -1,11 +1,17 @@
 @page "/budgets"
 @using Expense.Domain.Entities
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Budgets
+@using Expense.Web.Components.Shared
+@implements IDisposable
 @inject IBudgetsPageProvider BudgetsProvider
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Budgets</PageTitle>
 
 <h1>Budgets</h1>
+
+<NewDataBanner Show="_newDataAvailable" OnRefresh="RefreshNowAsync" />
 
 @if (_data is null)
 {
@@ -55,6 +61,8 @@ else
     private readonly Dictionary<int, decimal?> _amounts = [];
     private readonly Dictionary<int, Frequency> _frequencies = [];
 
+    private bool _newDataAvailable;
+
     protected override async Task OnInitializedAsync()
     {
         _data = await BudgetsProvider.GetBudgetsAsync();
@@ -63,6 +71,29 @@ else
             _amounts[row.CategoryId] = row.Amount;
             _frequencies[row.CategoryId] = row.Frequency ?? Frequency.Weekly;
         }
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    private async void OnDataChanged()
+    {
+        _newDataAvailable = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshNowAsync()
+    {
+        _newDataAvailable = false;
+        _data = await BudgetsProvider.GetBudgetsAsync();
+        foreach (var row in _data.Budgets)
+        {
+            _amounts[row.CategoryId] = row.Amount;
+            _frequencies[row.CategoryId] = row.Frequency ?? Frequency.Weekly;
+        }
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     private decimal? Amount(int categoryId) => _amounts.GetValueOrDefault(categoryId);

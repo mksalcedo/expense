@@ -1,16 +1,22 @@
 @page "/import-data"
 @using System.Text.RegularExpressions
 @using Expense.Domain.Entities
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Dashboard
 @using Expense.Domain.Services.Ingestion.Amazon
 @using Expense.Domain.Settings
+@using Expense.Web.Components.Shared
 @using Microsoft.Extensions.Options
+@implements IDisposable
 @inject ISyncStatusProvider SyncStatusProvider
 @inject IOptions<AppSettings> AppSettingsOptions
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Import Data</PageTitle>
 
 <h1>Import Data</h1>
+
+<NewDataBanner Show="_newDataAvailable" OnRefresh="RefreshNowAsync" />
 
 @if (AppSettingsOptions.Value.SimpleFinEnabled)
 {
@@ -159,15 +165,49 @@
     // spirit as the Dashboard's own fixed row counts elsewhere in this app.
     private const int RecentRunsPageSize = 5;
 
+    private bool _newDataAvailable;
+
+    private bool AnythingInProgress => _amazonSyncModalOpen || _historyDetailModalOpen || _resolveForms.Count > 0;
+
     protected override async Task OnInitializedAsync()
+    {
+        await RefreshStatusAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    private async Task RefreshStatusAsync()
     {
         _lastSimpleFinRun = await SyncStatusProvider.GetLastSimpleFinRunAsync();
         _lastAmazonRun = await SyncStatusProvider.GetLastAmazonGmailRunAsync();
         _lastPlaidRun = await SyncStatusProvider.GetLastPlaidRunAsync();
         _syncIssues = await SyncStatusProvider.GetActiveSyncIssuesAsync();
-        await RefreshRecentSimpleFinRunsAsync(1);
-        await RefreshRecentAmazonRunsAsync(1);
-        await RefreshRecentPlaidRunsAsync(1);
+        await RefreshRecentSimpleFinRunsAsync(_recentSimpleFinRunsPage);
+        await RefreshRecentAmazonRunsAsync(_recentAmazonRunsPage);
+        await RefreshRecentPlaidRunsAsync(_recentPlaidRunsPage);
+    }
+
+    private async void OnDataChanged()
+    {
+        if (AnythingInProgress)
+        {
+            _newDataAvailable = true;
+        }
+        else
+        {
+            await RefreshStatusAsync();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshNowAsync()
+    {
+        _newDataAvailable = false;
+        await RefreshStatusAsync();
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     private async Task RefreshRecentSimpleFinRunsAsync(int page)

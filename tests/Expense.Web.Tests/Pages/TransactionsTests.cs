@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Transactions;
 using Expense.Web.Components.Pages;
@@ -10,12 +11,15 @@ namespace Expense.Web.Tests.Pages;
 
 public class TransactionsTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
     public TransactionsTests()
     {
         // The page-size preference is read/written via localStorage - Loose mode auto-
         // returns default values for any JS call not explicitly configured, so existing
         // tests that don't care about persistence don't all need their own JSInterop setup.
         JSInterop.Mode = JSRuntimeMode.Loose;
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
     }
 
     private class FakeTransactionsPageProvider : ITransactionsPageProvider
@@ -123,6 +127,46 @@ public class TransactionsTests : BunitContext
             new TransactionRow { Source = TransactionSource.Amazon, Id = 201, Date = new DateOnly(2026, 7, 4), Description = "(Item details unavailable in email - check Amazon order page)", Amount = -22m, CategoryId = null, CategoryName = null, OrderId = "113-456", Price = 22m, Quantity = 1, NeedsReview = true }
         ]
     };
+
+    // With nothing checked, there's nothing a reload could disrupt - behaves like a pure
+    // display page and refreshes silently, same reasoning as Categories/Accounts with
+    // nothing selected.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithNothingSelected_SilentlyRefreshes()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+        Assert.DoesNotContain("KROGER", cut.Markup);
+
+        provider.Transactions.Add(new TransactionRow { Source = TransactionSource.Bank, Id = 102, Date = new DateOnly(2026, 7, 6), Description = "KROGER", Amount = -15m, AccountName = "Wells Fargo Checking" });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("KROGER", cut.Markup));
+        Assert.Empty(cut.FindAll("#new-data-banner"));
+    }
+
+    // With rows checked for a pending bulk-categorize action, silently reloading the page
+    // could reshuffle which transactions are on it (or which ids they map to) out from
+    // under the selection - shows the banner instead, leaving the checkboxes untouched.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithRowsSelected_ShowsTheBanner_WithoutDisturbingTheSelection()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<ITransactionsPageProvider>(provider);
+
+        var cut = Render<Transactions>();
+        cut.Find("#select-bank-100").Click();
+        Assert.Contains("1 selected", cut.Markup);
+
+        provider.Transactions.Add(new TransactionRow { Source = TransactionSource.Bank, Id = 102, Date = new DateOnly(2026, 7, 6), Description = "KROGER", Amount = -15m, AccountName = "Wells Fargo Checking" });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+        Assert.True(cut.Find("#select-bank-100").HasAttribute("checked"));
+        Assert.Contains("1 selected", cut.Markup);
+    }
 
     [Fact]
     public void Transactions_RendersEveryRowWithDateDescriptionAmountAndCategory()

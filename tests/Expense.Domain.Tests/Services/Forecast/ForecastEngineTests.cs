@@ -2,6 +2,7 @@ using Expense.Domain.Entities;
 using Expense.Domain.Services.Budgets;
 using Expense.Domain.Services.Forecast;
 using Expense.Domain.Tests.TestSupport;
+using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Tests.Services.Forecast;
 
@@ -1033,6 +1034,118 @@ public class ForecastEngineTests : DatabaseTestBase
         var row = Assert.Single(result.Rows);
         Assert.Equal(new DateOnly(2026, 7, 10), row.Date);
         Assert.Equal(-2681.22m, row.Amount);
+    }
+
+    // Real scenario this guards (2026-08-17): a real Gas (utility) bill for $70.31 arrived,
+    // replacing the $76.68 recurring estimate, before it was due/paid. Override/Confirm
+    // both mark the occurrence resolved (struck through) - wrong for something not yet
+    // paid. PaymentAmountAdjustment corrects the projected amount while leaving the row
+    // fully live, still needing its own eventual Defer/Confirm/Override/Partial action.
+    [Fact]
+    public async Task AdjustedPayment_UsesTheAdjustedAmount_ButStaysUnresolved()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 17));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var gas = new Category { Name = "Gas (utility)" };
+        Context.Categories.Add(gas);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = gas.Id, Amount = 76.68m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 8, 28), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.PaymentAmountAdjustments.Add(new PaymentAmountAdjustment
+        {
+            AccountId = checking.Id, CategoryId = gas.Id, OriginalDate = new DateOnly(2026, 8, 28), Amount = -70.31m,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 17), new DateOnly(2026, 8, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(-70.31m, row.Amount);
+        Assert.False(row.IsExcluded); // still live/actionable, not marked resolved
+        Assert.True(row.IsAmountAdjusted);
+        Assert.NotNull(row.AdjustmentId);
+        Assert.Equal(-76.68m, row.OriginalScheduledAmount);
+    }
+
+    [Fact]
+    public async Task NonAdjustedPayment_IsNotFlaggedAsAdjusted()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 17));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var gas = new Category { Name = "Gas (utility)" };
+        Context.Categories.Add(gas);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = gas.Id, Amount = 76.68m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 8, 28), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 17), new DateOnly(2026, 8, 31));
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(-76.68m, row.Amount);
+        Assert.False(row.IsAmountAdjusted);
+        Assert.Null(row.AdjustmentId);
+        Assert.Null(row.OriginalScheduledAmount);
+    }
+
+    [Fact]
+    public async Task AdjustedPayment_PartialPaymentsReduceFromTheAdjustedAmount_NotTheOriginalEstimate()
+    {
+        await SeedCheckingBalanceAsync(1000m, new DateOnly(2026, 8, 17));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var gas = new Category { Name = "Gas (utility)" };
+        Context.Categories.Add(gas);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = gas.Id, Amount = 76.68m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 8, 28), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.PaymentAmountAdjustments.Add(new PaymentAmountAdjustment
+        {
+            AccountId = checking.Id, CategoryId = gas.Id, OriginalDate = new DateOnly(2026, 8, 28), Amount = -70.31m,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        Context.OneTimeEvents.Add(new OneTimeEvent
+        {
+            Name = "Gas (utility) partial payment", Amount = 30m, Direction = Direction.Expense,
+            Date = new DateOnly(2026, 8, 20), AccountId = checking.Id
+        });
+        await Context.SaveChangesAsync();
+        var partialPaymentEvent = (await Context.OneTimeEvents.ToListAsync()).Single(e => e.AccountId == checking.Id);
+        Context.PartialPayments.Add(new PartialPayment
+        {
+            AccountId = checking.Id, OriginalDate = new DateOnly(2026, 8, 28), PaidDate = new DateOnly(2026, 8, 20),
+            Amount = 30m, OneTimeEventId = partialPaymentEvent.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 17), new DateOnly(2026, 8, 31));
+
+        var row = Assert.Single(result.Rows, r => r.CategoryId == gas.Id);
+        Assert.Equal(-40.31m, row.Amount); // -70.31 adjusted, + 30 partial payment - not -46.68 (against the stale $76.68)
     }
 
     [Fact]

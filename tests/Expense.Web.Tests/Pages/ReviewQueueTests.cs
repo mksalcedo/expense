@@ -1,5 +1,6 @@
 using Bunit;
 using Expense.Domain.Entities;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Categorization;
 using Expense.Domain.Services.Ingestion.Amazon;
 using Expense.Web.Components.Pages;
@@ -11,8 +12,12 @@ namespace Expense.Web.Tests.Pages;
 
 public class ReviewQueueTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
     public ReviewQueueTests()
     {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+
         // The real (dependency-free) implementation is fine here - tests that care about
         // NavMenu's badge updating live register their own shared instance instead (see
         // NavMenuTests.cs), which overrides this one (last registration wins).
@@ -230,6 +235,52 @@ public class ReviewQueueTests : BunitContext
         ]
     };
 
+    // With nothing selected and no row-level mode (paste screenshot, add-another-item,
+    // single-word confirmation) open, there's nothing a reload could disrupt.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithNothingSelected_SilentlyRefreshes()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        Assert.DoesNotContain("WHOLE FOODS", cut.Markup);
+
+        provider.TransactionGroups.Add(new PendingTransactionGroup
+        {
+            SuggestedPattern = "WHOLE FOODS", SampleDescription = "WHOLE FOODS ATL GA", SampleDate = new DateOnly(2026, 8, 1),
+            TransactionIds = [99], TotalAmount = -20m, AccountName = "Wells Fargo Checking"
+        });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("WHOLE FOODS", cut.Markup));
+        Assert.Empty(cut.FindAll("#new-data-banner"));
+    }
+
+    // With a row checked for a pending bulk action, silently reloading could reshuffle
+    // which groups are on the page out from under the selection - shows the banner instead.
+    [Fact]
+    public void DataChangeNotifier_Firing_WithATransactionGroupSelected_ShowsTheBanner_WithoutDisturbingTheSelection()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-select-10").Click(); // Publix group
+        Assert.Contains("1 selected", cut.Markup);
+
+        provider.TransactionGroups.Add(new PendingTransactionGroup
+        {
+            SuggestedPattern = "WHOLE FOODS", SampleDescription = "WHOLE FOODS ATL GA", SampleDate = new DateOnly(2026, 8, 1),
+            TransactionIds = [99], TotalAmount = -20m, AccountName = "Wells Fargo Checking"
+        });
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#new-data-banner")));
+        Assert.True(cut.Find("#txn-select-10").HasAttribute("checked"));
+        Assert.Contains("1 selected", cut.Markup);
+    }
+
     [Fact]
     public void ReviewQueue_RendersGroupedRowsWithCountsAndPrefilledPattern()
     {
@@ -247,6 +298,32 @@ public class ReviewQueueTests : BunitContext
         Assert.Contains("07/10/2026", cut.Markup);
         Assert.Contains("Wells Fargo Checking", cut.Markup);
         Assert.Contains("Amex", cut.Markup);
+    }
+
+    [Fact]
+    public void TransactionGroup_WithASuggestedCategory_PreSelectsItInTheDropdown()
+    {
+        var provider = MakeProvider();
+        provider.TransactionGroups[1].SuggestedCategoryId = 2; // Kroger group -> Restaurants
+
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        var selectedOption = cut.Find("#txn-category-30 option[selected]");
+        Assert.Equal("2", selectedOption.GetAttribute("value"));
+    }
+
+    [Fact]
+    public void TransactionGroup_WithNoSuggestedCategory_LeavesTheDropdownOnSelect()
+    {
+        var provider = MakeProvider(); // Publix group has no SuggestedCategoryId set
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        var selectedOption = cut.Find("#txn-category-10 option[selected]");
+        Assert.Equal("0", selectedOption.GetAttribute("value"));
     }
 
     [Fact]

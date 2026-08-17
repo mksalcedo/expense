@@ -29,7 +29,58 @@ public class CategorizationService
         var rules = await context.MerchantRules.ToListAsync();
 
         var match = rules.FirstOrDefault(r => MerchantPatternMatcher.Matches(searchText, r.MerchantPattern));
-        transaction.CategoryId = match?.CategoryId;
+        if (match is not null)
+        {
+            transaction.CategoryId = match.CategoryId;
+            return;
+        }
+
+        // No explicit rule - fall back to history: only auto-apply when every past
+        // occurrence of this same derived merchant pattern agrees on one category, so a
+        // merchant categorized differently before (genuinely ambiguous) is left pending
+        // for Review Queue instead of silently guessing wrong.
+        var historicalCategoryIds = await FindHistoricalCategoryIdsAsync(context, transaction.Merchant ?? transaction.Description);
+        if (historicalCategoryIds.Count == 1)
+        {
+            transaction.CategoryId = historicalCategoryIds[0];
+        }
+    }
+
+    /// <summary>
+    /// Every distinct category ever used for a transaction whose derived merchant pattern
+    /// matches the given description - "have I categorized something like this before,
+    /// and what did I pick" - ordered by most recent occurrence of each category first.
+    /// Matches in either direction (does the candidate's own pattern appear in this
+    /// description, or does this description's pattern appear in the candidate) rather
+    /// than requiring the two derived patterns to be exactly equal, since real
+    /// descriptions for the same merchant vary in length between occurrences (e.g. a bare
+    /// "IONOS" one month, "IONOS www.ionos.com PA" the next) - same reasoning as
+    /// MerchantPatternMatcher's own Contains-based approach. Used both to auto-apply at
+    /// import time (only when this returns exactly one category - see
+    /// ApplyMerchantRuleAsync) and to pre-select a starting suggestion on Review Queue
+    /// even when it doesn't.
+    /// </summary>
+    public async Task<List<int>> FindHistoricalCategoryIdsAsync(ExpenseDbContext context, string description)
+    {
+        var pattern = DeriveMerchantPattern(description);
+
+        var categorized = await context.BankTransactions
+            .Where(t => t.CategoryId != null && !t.IsAmazonMerchant)
+            .OrderByDescending(t => t.TransactionDate)
+            .Select(t => new { CategoryId = t.CategoryId!.Value, t.Merchant, t.Description })
+            .ToListAsync();
+
+        return categorized
+            .Where(t =>
+            {
+                var candidateText = t.Merchant ?? t.Description;
+                var candidatePattern = DeriveMerchantPattern(candidateText);
+                return MerchantPatternMatcher.Matches(candidateText, pattern)
+                    || MerchantPatternMatcher.Matches(description, candidatePattern);
+            })
+            .Select(t => t.CategoryId)
+            .Distinct()
+            .ToList();
     }
 
     public async Task<List<BankTransaction>> GetPendingBankTransactionsAsync(ExpenseDbContext context) =>
@@ -192,6 +243,17 @@ public class CategorizationService
             {
                 transaction.CategoryId = match.CategoryId;
                 result.TransactionsUpdated++;
+                continue;
+            }
+
+            // No explicit rule - same unanimous-history fallback as ApplyMerchantRuleAsync,
+            // so a merchant that's only ever been categorized by hand still gets swept up
+            // here instead of needing a rule created first.
+            var historicalCategoryIds = await FindHistoricalCategoryIdsAsync(context, transaction.Merchant ?? transaction.Description);
+            if (historicalCategoryIds.Count == 1)
+            {
+                transaction.CategoryId = historicalCategoryIds[0];
+                result.TransactionsUpdated++;
             }
         }
 
@@ -220,7 +282,7 @@ public class CategorizationService
     public async Task<List<PendingTransactionGroup>> GetPendingTransactionGroupsAsync(ExpenseDbContext context)
     {
         var pending = (await GetPendingBankTransactionsAsync(context)).Where(t => !t.Dismissed);
-        return pending
+        var groups = pending
             .GroupBy(t => DeriveMerchantPattern(t.Merchant ?? t.Description))
             .Select(g => new PendingTransactionGroup
             {
@@ -233,6 +295,14 @@ public class CategorizationService
             })
             .OrderByDescending(g => g.TransactionIds.Count)
             .ToList();
+
+        foreach (var group in groups)
+        {
+            var historicalCategoryIds = await FindHistoricalCategoryIdsAsync(context, group.SampleDescription);
+            group.SuggestedCategoryId = historicalCategoryIds.Count > 0 ? historicalCategoryIds[0] : null;
+        }
+
+        return groups;
     }
 
     /// <summary>

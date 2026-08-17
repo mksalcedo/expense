@@ -1,4 +1,5 @@
 using Bunit;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Categories;
 using Expense.Domain.Services.Ingestion.ManualCharges;
 using Expense.Web.Components.Pages;
@@ -10,6 +11,18 @@ namespace Expense.Web.Tests.Pages;
 
 public class AddPendingChargesTests : BunitContext
 {
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public AddPendingChargesTests()
+    {
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+        // Loose mode: WaitForAssertion's polling can drive the render pipeline through the
+        // still-in-flight first-render JS calls more than once in real time, and the strict
+        // per-test SetupVoid handlers below only tolerate a single invocation each - same
+        // fix already used by ReviewQueueTests for the same screenshot-module JS surface.
+        JSInterop.Mode = JSRuntimeMode.Loose;
+    }
+
     private class FakeManualChargesPageProvider : IManualChargesPageProvider
     {
         public List<AccountOption> Accounts { get; set; } = [];
@@ -66,6 +79,50 @@ public class AddPendingChargesTests : BunitContext
         module.SetupVoid("unregisterPasteListener", _ => true);
 
         return Render<AddPendingCharges>();
+    }
+
+    // With no image loaded and no review rows in progress, there's nothing a refreshed
+    // account list could disrupt.
+    [Fact]
+    public async Task DataChangeNotifier_Firing_WithNothingInProgress_SilentlyRefreshesTheAccountList()
+    {
+        var provider = MakeProvider();
+        Services.AddSingleton<IManualChargesPageProvider>(provider);
+
+        var cut = RenderPage();
+        Assert.DoesNotContain(cut.FindAll("#account-select option"), o => o.TextContent == "Other Card");
+
+        provider.Accounts.Add(new AccountOption { Id = 2, Name = "Other Card" });
+        await cut.InvokeAsync(() => _dataChangeNotifier.NotifyChanged());
+
+        Assert.Contains(cut.FindAll("#account-select option"), o => o.TextContent == "Other Card");
+    }
+
+    // With a parsed review table on screen (edits not yet saved via "Add Selected"),
+    // silently reloading the account list could disrupt the in-progress review - shows the
+    // banner instead, leaving the review table untouched.
+    [Fact]
+    public async Task DataChangeNotifier_Firing_WithAReviewInProgress_ShowsTheBanner_WithoutDisturbingTheReviewRows()
+    {
+        var provider = MakeProvider();
+        provider.RowsToReturn =
+        [
+            new ManualChargeReviewRow { Date = new DateOnly(2026, 7, 20), Description = "MORGAN COMPOUDING", Amount = -131.65m, IsDuplicate = false }
+        ];
+        Services.AddSingleton<IManualChargesPageProvider>(provider);
+
+        var cut = RenderPage();
+        cut.Find("#account-select").Change("1");
+        cut.FindComponent<InputFile>().UploadFiles(InputFileContent.CreateFromText("bytes", "s.png", contentType: "image/png"));
+        cut.Find("#parse-btn").Click();
+        Assert.NotEmpty(cut.FindAll("#review-row-0"));
+
+        provider.Accounts.Add(new AccountOption { Id = 2, Name = "Other Card" });
+        await cut.InvokeAsync(() => _dataChangeNotifier.NotifyChanged());
+
+        Assert.NotEmpty(cut.FindAll("#new-data-banner"));
+        Assert.NotEmpty(cut.FindAll("#review-row-0"));
+        Assert.Equal("MORGAN COMPOUDING", cut.Find("#description-0").GetAttribute("value"));
     }
 
     [Fact]

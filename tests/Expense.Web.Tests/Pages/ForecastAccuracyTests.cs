@@ -1,4 +1,5 @@
 using Bunit;
+using Expense.Domain.Services;
 using Expense.Domain.Services.Forecast;
 using Expense.Web.Components.Pages;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,13 +8,57 @@ namespace Expense.Web.Tests.Pages;
 
 public class ForecastAccuracyTests : BunitContext
 {
-    private class FakeForecastAccuracyPageProvider(List<AccuracyComparison> results) : IForecastAccuracyPageProvider
+    private readonly DataChangeNotifier _dataChangeNotifier = new();
+
+    public ForecastAccuracyTests()
     {
-        public Task<List<AccuracyComparison>> GetRecentAccuracyAsync(CancellationToken cancellationToken = default) => Task.FromResult(results);
+        Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
     }
 
-    private void RegisterFakes(List<AccuracyComparison>? results = null) =>
-        Services.AddSingleton<IForecastAccuracyPageProvider>(new FakeForecastAccuracyPageProvider(results ?? []));
+    private class FakeForecastAccuracyPageProvider(List<AccuracyComparison> results) : IForecastAccuracyPageProvider
+    {
+        public List<AccuracyComparison> Results { get; set; } = results;
+        public Task<List<AccuracyComparison>> GetRecentAccuracyAsync(CancellationToken cancellationToken = default) => Task.FromResult(Results);
+    }
+
+    private FakeForecastAccuracyPageProvider RegisterFakes(List<AccuracyComparison>? results = null)
+    {
+        var provider = new FakeForecastAccuracyPageProvider(results ?? []);
+        Services.AddSingleton<IForecastAccuracyPageProvider>(provider);
+        return provider;
+    }
+
+    // Real gap this guards (2026-08-17): a background scheduled sync completing while the
+    // user just sits on this page never used to be reflected without a manual refresh.
+    [Fact]
+    public void DataChangeNotifier_Firing_RefreshesTheComparisons_WithoutNavigatingOrReloading()
+    {
+        var provider = RegisterFakes(
+        [
+            new AccuracyComparison
+            {
+                Name = "GPC", AccountId = 1, ScheduledDate = new DateOnly(2026, 7, 5), ScheduledAmount = 400m,
+                ActualDate = new DateOnly(2026, 7, 5), ActualAmount = 612.50m
+            }
+        ]);
+
+        var cut = Render<ForecastAccuracy>();
+        Assert.Contains("612.50", cut.Markup);
+
+        // Simulates a background sync landing a new real posting - nothing on this page did
+        // anything to cause it.
+        provider.Results =
+        [
+            new AccuracyComparison
+            {
+                Name = "GPC", AccountId = 1, ScheduledDate = new DateOnly(2026, 7, 5), ScheduledAmount = 400m,
+                ActualDate = new DateOnly(2026, 7, 5), ActualAmount = 999.99m
+            }
+        ];
+        _dataChangeNotifier.NotifyChanged();
+
+        cut.WaitForAssertion(() => Assert.Contains("999.99", cut.Markup));
+    }
 
     [Fact]
     public void RendersOneRowPerComparison_WithScheduledAndActualFigures()

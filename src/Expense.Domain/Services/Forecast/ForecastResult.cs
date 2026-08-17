@@ -13,6 +13,15 @@ public class ForecastLedgerRow
     public bool IsDeferred { get; set; }
     public int? DeferralId { get; set; }
 
+    /// <summary>True when a PaymentAmountAdjustment corrected this occurrence's projected
+    /// Amount to a real known figure - unlike IsExcluded, the row stays fully live/
+    /// actionable (not resolved/paid), just using a corrected estimate.</summary>
+    public bool IsAmountAdjusted { get; set; }
+    public int? AdjustmentId { get; set; }
+
+    /// <summary>The normally-computed amount before the adjustment was applied - null unless IsAmountAdjusted.</summary>
+    public decimal? OriginalScheduledAmount { get; set; }
+
     /// <summary>Propagated from LedgerLine.CategoryId (see there) - null for one-time
     /// events. Carried through so a captured ForecastSnapshotLine can later be checked
     /// against real reconciled transactions, to tell "genuinely removed" apart from

@@ -1,14 +1,20 @@
 @page "/forecast"
 @using Expense.Domain.Entities
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Accounts
 @using Expense.Domain.Services.Forecast
+@using Expense.Web.Components.Shared
+@implements IDisposable
 @inject IForecastResultProvider ForecastResultProvider
 @inject IAccountsPageProvider AccountsProvider
+@inject IDataChangeNotifier DataChangeNotifier
 @inject IJSRuntime JS
 
 <PageTitle>Forecast</PageTitle>
 
 <h1>Forecast</h1>
+
+<NewDataBanner Show="_newDataAvailable" OnRefresh="RefreshNowAsync" />
 
 @if (_result is null)
 {
@@ -92,12 +98,19 @@ else
                                     reschedule this payment for real.
                                 </span>
                             }
+                            @if (row.IsAmountAdjusted)
+                            {
+                                <br />
+                                <span id="adjustment-note-@index" style="color: #0969da">
+                                    Adjusted from @row.OriginalScheduledAmount!.Value.ToString("N2") to @row.Amount.ToString("N2").
+                                </span>
+                            }
                             @if (row.SuggestedOverrideAmount is { } suggestedAmount)
                             {
                                 <br />
                                 <span id="near-miss-note-@index" style="color: #0969da">
                                     A @suggestedAmount.ToString("N2") transaction was found nearby (posted @row.SuggestedOverrideDate!.Value.ToString("MM/dd/yyyy")) -
-                                    review with Change Amount.
+                                    review with Confirm paid (different amount).
                                 </span>
                             }
                         }
@@ -155,7 +168,15 @@ else
                                     <button id="defer-btn-@index" title="Defer..." @onclick="() => OpenDeferModal(row)">&#128337;</button>
                                 }
                                 <button id="confirm-btn-@index" title="Confirm paid" @onclick="() => OpenConfirmModal(row)">&#10003;</button>
-                                <button id="override-btn-@index" title="Change amount" @onclick="() => OpenOverrideModal(row)">&#8644;</button>
+                                <button id="override-btn-@index" title="Confirm paid (different amount)" @onclick="() => OpenOverrideModal(row)">&#8644;</button>
+                                @if (row.IsAmountAdjusted)
+                                {
+                                    <button id="remove-adjustment-btn-@index" title="Remove adjustment" @onclick="() => OpenRemoveAdjustmentModal(row)">&#8617;&#65039;</button>
+                                }
+                                else
+                                {
+                                    <button id="adjust-amount-btn-@index" title="Correct estimate (not yet paid)" @onclick="() => OpenAdjustAmountModal(row)">&#9998;</button>
+                                }
                                 <button id="partial-pay-btn-@index" title="@(IsIncomeLine(row) ? "Record partial income" : "Pay partial amount")" @onclick="() => OpenPayPartialModal(row)">&#128176;</button>
                             </div>
                         }
@@ -190,6 +211,14 @@ else
                                @onchange="e => _modalDate = DateOnly.Parse((string)e.Value!)" />
                     </div>
                 }
+                else if (_activeModal == ModalKind.AdjustAmount)
+                {
+                    <div class="detail-form">
+                        <label for="modal-amount-input">Amount</label>
+                        <input id="modal-amount-input" type="number" step="0.01" value="@_modalAmount"
+                               @onchange="e => _modalAmount = ParseNullableDecimal((string)e.Value!)" />
+                    </div>
+                }
                 else if (_activeModal == ModalKind.Override)
                 {
                     <div class="detail-form">
@@ -211,7 +240,7 @@ else
 }
 
 @code {
-    private enum ModalKind { None, Defer, ConfirmPaid, Override, PayPartial, RemoveDeferral, UndoConfirmation, UndoPartialPayment }
+    private enum ModalKind { None, Defer, ConfirmPaid, Override, PayPartial, RemoveDeferral, UndoConfirmation, UndoPartialPayment, AdjustAmount, RemoveAdjustment }
 
     private const string ShowResolvedStorageKey = "expense-forecast-show-resolved";
 
@@ -219,6 +248,7 @@ else
     private ForecastLedgerRow? _lowestRow;
     private bool _showResolved = true;
     private decimal? _savingsBalance;
+    private bool _newDataAvailable;
 
     private ModalKind _activeModal = ModalKind.None;
     private ForecastLedgerRow? _modalRow;
@@ -229,6 +259,37 @@ else
     protected override async Task OnInitializedAsync()
     {
         await RefreshAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    // Fires from a background sync (scheduled or a manual Sync Now click from any page).
+    // With no modal open, there's nothing an auto-refresh could disrupt, so it behaves
+    // just like a pure display page (Dashboard) and refreshes silently. With a modal open,
+    // silently swapping _result out from under it could leave the modal pointing at a row
+    // that's since changed - shows the softer banner instead, and leaves the open modal's
+    // own already-loaded values alone until the user closes it and refreshes on their own.
+    private async void OnDataChanged()
+    {
+        if (_activeModal == ModalKind.None)
+        {
+            await RefreshAsync();
+        }
+        else
+        {
+            _newDataAvailable = true;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshNowAsync()
+    {
+        _newDataAvailable = false;
+        await RefreshAsync();
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -279,6 +340,19 @@ else
         _modalRow = row;
         _modalAmount = row.SuggestedOverrideAmount ?? row.Amount;
         _modalDate = row.SuggestedOverrideDate ?? row.Date;
+    }
+
+    private void OpenAdjustAmountModal(ForecastLedgerRow row)
+    {
+        _activeModal = ModalKind.AdjustAmount;
+        _modalRow = row;
+        _modalAmount = row.Amount;
+    }
+
+    private void OpenRemoveAdjustmentModal(ForecastLedgerRow row)
+    {
+        _activeModal = ModalKind.RemoveAdjustment;
+        _modalRow = row;
     }
 
     private void OpenPayPartialModal(ForecastLedgerRow row, decimal? suggestedAmount = null, DateOnly? suggestedDate = null)
@@ -350,6 +424,13 @@ else
             case ModalKind.UndoPartialPayment:
                 if (_modalPartialPayment is { } partialPayment) await ForecastResultProvider.RemovePartialPaymentAsync(partialPayment.PartialPaymentId);
                 break;
+            case ModalKind.AdjustAmount:
+                if (_modalAmount is not { } adjustedAmount) { CloseModal(); return; }
+                await ForecastResultProvider.AdjustAmountAsync(row.AccountId, row.CategoryId, row.OriginalDate, adjustedAmount);
+                break;
+            case ModalKind.RemoveAdjustment:
+                if (row.AdjustmentId is { } adjustmentId) await ForecastResultProvider.RemoveAmountAdjustmentAsync(adjustmentId);
+                break;
         }
 
         CloseModal();
@@ -360,11 +441,13 @@ else
     {
         ModalKind.Defer => "Defer this payment?",
         ModalKind.ConfirmPaid => "Confirm this was paid as scheduled?",
-        ModalKind.Override => "Change this amount?",
+        ModalKind.Override => "Confirm this was paid at a different amount?",
         ModalKind.PayPartial => _modalRow is not null && IsIncomeLine(_modalRow) ? "Record partial income?" : "Record a partial payment?",
         ModalKind.RemoveDeferral => "Remove this deferral?",
         ModalKind.UndoConfirmation => "Undo this confirmation?",
         ModalKind.UndoPartialPayment => "Undo this partial payment?",
+        ModalKind.AdjustAmount => "Correct the estimate?",
+        ModalKind.RemoveAdjustment => "Remove this adjustment?",
         _ => ""
     };
 
@@ -373,10 +456,10 @@ else
         ModalKind.Defer =>
             $"Moves \"{_modalRow?.Description}\" to a new date. The amount stays the same - you'll still owe the same total, just later. Remember to actually reschedule the real bill if this is a real payment.",
         ModalKind.ConfirmPaid =>
-            $"Marks \"{_modalRow?.Description}\" as paid on {_modalRow?.Date.ToString("MM/dd/yyyy")} for {_modalRow?.Amount.ToString("N2")}, exactly as scheduled. It'll be removed from your still-owed list since it's already happened.",
+            $"Marks \"{_modalRow?.Description}\" as paid on {_modalRow?.Date.ToString("MM/dd/yyyy")} for {_modalRow?.Amount.ToString("N2")}, exactly as scheduled. It will be marked as resolved (struck through).",
         ModalKind.Override => _modalRow?.SuggestedOverrideAmount is { } suggested
-            ? $"A transaction for {suggested.ToString("N2")} posted {_modalRow?.SuggestedOverrideDate?.ToString("MM/dd/yyyy")} was found close to this line but didn't auto-match - edit the amount/date below if this isn't it, then apply to mark \"{_modalRow?.Description}\" resolved. It'll be removed from your still-owed list."
-            : $"No matching transaction was found - enter what actually happened below to mark \"{_modalRow?.Description}\" resolved, replacing what was scheduled. It'll be removed from your still-owed list.",
+            ? $"A transaction for {suggested.ToString("N2")} posted {_modalRow?.SuggestedOverrideDate?.ToString("MM/dd/yyyy")} was found close to this line but didn't auto-match - edit the amount/date below if this isn't it, then apply. It will be marked as resolved (struck through)."
+            : $"Enter the real amount below, whether from a transaction that's already posted or a bill you've received even before it's paid, to update \"{_modalRow?.Description}\". It will be marked as resolved (struck through), using this amount instead of the original estimate.",
         ModalKind.PayPartial => _modalRow is not null && IsIncomeLine(_modalRow)
             ? $"Records partial income received toward \"{_modalRow.Description}\". The remaining expected amount stays on the forecast for the rest."
             : $"Records a partial payment against \"{_modalRow?.Description}\". The remaining balance stays on the forecast for the rest.",
@@ -386,6 +469,10 @@ else
             $"Puts \"{_modalRow?.Description}\" back on the forecast as a projected, unpaid amount.",
         ModalKind.UndoPartialPayment =>
             $"Removes the {_modalPartialPayment?.Amount.ToString("N2")} partial payment made on {_modalPartialPayment?.PaidDate.ToString("MM/dd/yyyy")}, restoring that amount to \"{_modalRow?.Description}\"'s remaining balance.",
+        ModalKind.AdjustAmount =>
+            $"Updates the projected amount for \"{_modalRow?.Description}\" to the real number below - e.g. from a bill you've received, even before it's paid. Unlike Confirm/Change Amount, this stays on your forecast as still owed, not resolved.",
+        ModalKind.RemoveAdjustment =>
+            $"Reverts \"{_modalRow?.Description}\" back to its normally computed amount of {_modalRow?.OriginalScheduledAmount?.ToString("N2")}.",
         _ => ""
     };
 

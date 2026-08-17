@@ -1,7 +1,10 @@
 @page "/confirmed-payments"
 @using System.Globalization
+@using Expense.Domain.Services
 @using Expense.Domain.Services.Forecast
+@implements IDisposable
 @inject IConfirmedPaymentsPageProvider ConfirmedPaymentsProvider
+@inject IDataChangeNotifier DataChangeNotifier
 
 <PageTitle>Confirmed Payments</PageTitle>
 
@@ -72,6 +75,22 @@ else
     protected override async Task OnInitializedAsync()
     {
         await RefreshAsync();
+        DataChangeNotifier.Changed += OnDataChanged;
+    }
+
+    // Fires from a background sync (scheduled or a manual Sync Now click from any page),
+    // or a confirmation made elsewhere (e.g. Forecast) - pure display, filters are applied
+    // client-side against whatever _rows currently holds, so a refresh here never disturbs
+    // the year/month filter already selected.
+    private async void OnDataChanged()
+    {
+        await RefreshAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        DataChangeNotifier.Changed -= OnDataChanged;
     }
 
     private IEnumerable<int> AvailableYears() =>

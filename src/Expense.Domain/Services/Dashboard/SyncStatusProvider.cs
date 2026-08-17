@@ -29,7 +29,8 @@ public class SyncStatusProvider(
     IConfiguration configuration,
     SyncIssueService syncIssues,
     IForecastResultProvider forecastResultProvider,
-    ForecastSnapshotService forecastSnapshotService) : ISyncStatusProvider
+    ForecastSnapshotService forecastSnapshotService,
+    IDataChangeNotifier dataChangeNotifier) : ISyncStatusProvider
 {
     public async Task<ImportRun?> GetLastSimpleFinRunAsync(CancellationToken cancellationToken = default)
     {
@@ -49,7 +50,17 @@ public class SyncStatusProvider(
         return await ImportRunLookup.GetLastRunAsync(context, ImportSource.Plaid, cancellationToken);
     }
 
+    // Wraps *CoreAsync so IDataChangeNotifier fires exactly once regardless of which
+    // internal branch (success, or one of several early-return failure paths) was taken,
+    // without needing to touch every one of those return points individually.
     public async Task<ImportRun> RunSimpleFinSyncAsync(CancellationToken cancellationToken = default)
+    {
+        var run = await RunSimpleFinSyncCoreAsync(cancellationToken);
+        dataChangeNotifier.NotifyChanged();
+        return run;
+    }
+
+    private async Task<ImportRun> RunSimpleFinSyncCoreAsync(CancellationToken cancellationToken)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
 
@@ -68,11 +79,19 @@ public class SyncStatusProvider(
             ?? [];
 
         var run = await simpleFinSync.RunAsync(context, accessUrl, accountMap, DateTimeOffset.UtcNow.AddDays(-45), cancellationToken);
+        await categorization.ReapplyRulesToPendingAsync(context);
         await CaptureForecastSnapshotAsync(cancellationToken);
         return run;
     }
 
     public async Task<ImportRun> RunAmazonGmailSyncAsync(Action<SyncProgressLine>? onProgress = null, CancellationToken cancellationToken = default)
+    {
+        var run = await RunAmazonGmailSyncCoreAsync(onProgress, cancellationToken);
+        dataChangeNotifier.NotifyChanged();
+        return run;
+    }
+
+    private async Task<ImportRun> RunAmazonGmailSyncCoreAsync(Action<SyncProgressLine>? onProgress, CancellationToken cancellationToken)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
 
@@ -99,8 +118,12 @@ public class SyncStatusProvider(
     // "Run Plaid Import" button. Shells out to the real plaid-cli (already linked to the
     // user's own Plaid account) exactly the way the console importer's usage instructions
     // already describe running it by hand.
-    public Task<ImportRun> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default) =>
-        RunPlaidImportCoreAsync(startDate, endDate, cancellationToken);
+    public async Task<ImportRun> RunPlaidImportAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken = default)
+    {
+        var run = await RunPlaidImportCoreAsync(startDate, endDate, cancellationToken);
+        dataChangeNotifier.NotifyChanged();
+        return run;
+    }
 
     // Scheduled run - see PlaidSyncWindowCalculator for why the window is "OverlapDays
     // before the last successful run" with no separate bootstrap-window special case (the
@@ -113,7 +136,9 @@ public class SyncStatusProvider(
         var now = DateTimeOffset.UtcNow;
         var startDate = PlaidSyncWindowCalculator.GetWindowStartDate(lastSuccessfulRun?.RanAt, now);
         var endDate = DateOnly.FromDateTime(now.DateTime);
-        return await RunPlaidImportCoreAsync(startDate, endDate, cancellationToken);
+        var run = await RunPlaidImportCoreAsync(startDate, endDate, cancellationToken);
+        dataChangeNotifier.NotifyChanged();
+        return run;
     }
 
     private async Task<ImportRun> RunPlaidImportCoreAsync(DateOnly startDate, DateOnly endDate, CancellationToken cancellationToken)
@@ -190,6 +215,7 @@ public class SyncStatusProvider(
                 progressLines.Add(new ImportRunProgressLine { Sequence = progressLines.Count, Text = line.Text, IsError = line.IsError });
 
             var summary = await service.ImportAsync(context, stdout, accountMap, DateTimeOffset.UtcNow, CaptureProgress, cancellationToken);
+            await categorization.ReapplyRulesToPendingAsync(context);
 
             var run = new ImportRun
             {

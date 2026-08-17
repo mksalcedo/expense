@@ -215,6 +215,14 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
         var deferrals = await context.PaymentDeferrals.ToListAsync(cancellationToken);
         var deferralsByAccountAndDate = deferrals.ToDictionary(d => (d.AccountId, d.OriginalDate));
 
+        // A user-known correction to one occurrence's projected amount (e.g. a real bill
+        // replacing a recurring estimate, known before it's even due) - unlike a
+        // confirmation/override, this never excludes the row; it only changes what amount
+        // it uses going into the partial-payment math below. Keyed the same shape as
+        // PaymentConfirmation, for the same reason (see its own CategoryId doc comment).
+        var amountAdjustments = await context.PaymentAmountAdjustments.ToListAsync(cancellationToken);
+        var amountAdjustmentsByAccountCategoryAndDate = amountAdjustments.ToDictionary(a => (a.AccountId, a.CategoryId, a.OriginalDate));
+
         // Real partial payments already made toward an occurrence - reduce its remaining
         // amount without excluding it entirely (unlike a confirmation), and independent of
         // deferral status, same reasoning as above.
@@ -350,6 +358,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             }
 
             var isDeferred = deferralsByAccountAndDate.TryGetValue((line.AccountId, line.Date), out var deferral);
+            var hasAmountAdjustment = amountAdjustmentsByAccountCategoryAndDate.TryGetValue(
+                (line.AccountId, line.CategoryId, line.Date), out var amountAdjustment);
             var appliedPartialPayments = partialPaymentsByAccountAndDate.GetValueOrDefault((line.AccountId, line.Date), []);
             var isCalendarMonthCategory = line.CategoryId is { } lineCategoryId && calendarMonthCategoryIds.Contains(lineCategoryId);
 
@@ -379,10 +389,11 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
             // real payments, and the extra is already reflected in the Forecast's real
             // starting balance (it already posted), so it must never appear as a second,
             // separate negative/positive line item once fully covered (found live 2026-08-10).
+            var baseAmount = hasAmountAdjustment ? amountAdjustment!.Amount : line.Amount;
             var partialPaymentTotal = appliedPartialPayments.Sum(p => p.Amount);
-            var adjustedAmount = line.Amount < 0
-                ? Math.Min(0m, line.Amount + partialPaymentTotal)
-                : Math.Max(0m, line.Amount - partialPaymentTotal);
+            var adjustedAmount = baseAmount < 0
+                ? Math.Min(0m, baseAmount + partialPaymentTotal)
+                : Math.Max(0m, baseAmount - partialPaymentTotal);
 
             // Once fully covered, the row should drop off the active ledger like any other
             // resolved item - but only once there's truly nothing left to do: a calendar-month
@@ -411,6 +422,9 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                     .ToList(),
                 IsDeferred = isDeferred,
                 DeferralId = isDeferred ? deferral!.Id : null,
+                IsAmountAdjusted = hasAmountAdjustment,
+                AdjustmentId = hasAmountAdjustment ? amountAdjustment!.Id : null,
+                OriginalScheduledAmount = hasAmountAdjustment ? line.Amount : null,
                 SuggestedOverrideAmount = nearMissAmount,
                 SuggestedOverrideDate = nearMissDate,
                 PartialPaymentCandidates = partialPaymentCandidates,
