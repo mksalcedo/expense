@@ -103,6 +103,16 @@ else
                                 <option value="@category.Id" selected="@(group.SuggestedCategoryId == category.Id)">@category.Name</option>
                             }
                         </select>
+                        @if (group.SuggestedCategoryId is { } suggestedCategoryId)
+                        {
+                            @* A <select>'s @onchange only fires when its value actually changes - with the
+                               suggestion already pre-selected, re-choosing the same option fires nothing,
+                               so there was no way to commit it. This button is the explicit "yes, that's
+                               right" action the dropdown alone can't provide. *@
+                            <button id="txn-confirm-category-@representativeId" @onclick="() => CategorizeTransactionGroupAsync(group, suggestedCategoryId)">
+                                Confirm
+                            </button>
+                        }
                     </td>
                     <td>
                         <a id="txn-view-individual-@representativeId" href="@($"/transactions?search={Uri.EscapeDataString(group.SuggestedPattern)}")">

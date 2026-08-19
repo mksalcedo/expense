@@ -314,6 +314,57 @@ public class ReviewQueueTests : BunitContext
         Assert.Equal("2", selectedOption.GetAttribute("value"));
     }
 
+    // Real gap this guards (2026-08-19): a plain HTML <select> only fires @onchange when
+    // its value actually changes - with the suggestion already pre-selected, there was no
+    // way to commit it, since choosing the same option again fires nothing. This button is
+    // the explicit "yes, that's right" action the dropdown alone couldn't provide.
+    [Fact]
+    public void TransactionGroup_WithASuggestedCategory_HasAConfirmButton_ThatCommitsIt()
+    {
+        // Trader Joe's group: "TRADER JOE S" is multi-word, so Confirm commits directly -
+        // Kroger's single-word "KROGER" pattern would instead trigger the existing
+        // single-word confirmation modal, which is separately covered below.
+        var provider = MakeProvider();
+        provider.TransactionGroups[2].SuggestedCategoryId = 1; // Trader Joe's group -> Groceries
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-confirm-category-40").Click();
+
+        Assert.Equal(40, provider.LastTransactionId);
+        Assert.Equal(1, provider.LastCategoryId);
+    }
+
+    [Fact]
+    public void TransactionGroup_WithASuggestedSingleWordPattern_ConfirmButton_AsksForConfirmationFirst()
+    {
+        var provider = MakeProvider();
+        provider.TransactionGroups[1].SuggestedCategoryId = 2; // Kroger group -> Restaurants ("KROGER" is single-word)
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+        cut.Find("#txn-confirm-category-30").Click();
+
+        Assert.NotEmpty(cut.FindAll("#confirm-single-word-modal"));
+        Assert.Null(provider.LastTransactionId);
+
+        cut.Find("#confirm-single-word-btn").Click();
+
+        Assert.Equal(30, provider.LastTransactionId);
+        Assert.Equal(2, provider.LastCategoryId);
+    }
+
+    [Fact]
+    public void TransactionGroup_WithNoSuggestedCategory_HasNoConfirmButton()
+    {
+        var provider = MakeProvider(); // Publix group has no SuggestedCategoryId set
+        Services.AddSingleton<IReviewQueueProvider>(provider);
+
+        var cut = Render<ReviewQueue>();
+
+        Assert.Empty(cut.FindAll("#txn-confirm-category-10"));
+    }
+
     [Fact]
     public void TransactionGroup_WithNoSuggestedCategory_LeavesTheDropdownOnSelect()
     {

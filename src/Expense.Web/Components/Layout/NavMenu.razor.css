@@ -63,3 +63,12 @@
     color: var(--color-primary-dark);
     cursor: pointer;
 }
+
+/* Matches ::deep .nav-link's spacing/size/color for visual consistency with the rest of
+   the nav, but kept separate from that class (rather than reusing it) since this text
+   isn't clickable and shouldn't pick up the link hover highlight. */
+.nav-heartbeat {
+    display: block;
+    padding: 0.5rem 1.25rem;
+    color: #b00020;
+}

@@ -13,11 +13,44 @@ namespace Expense.Web.Tests.Layout;
 public class NavMenuTests : BunitContext
 {
     private readonly DataChangeNotifier _dataChangeNotifier = new();
+    private readonly FakeTimeProvider _timeProvider = new();
 
     public NavMenuTests()
     {
         Services.AddSingleton<IReviewQueueChangeNotifier>(new ReviewQueueChangeNotifier());
         Services.AddSingleton<IDataChangeNotifier>(_dataChangeNotifier);
+        Services.AddSingleton<TimeProvider>(_timeProvider);
+    }
+
+    // Minimal fake, not a NuGet dependency - CreateTimer captures the callback/period so a
+    // test can fire a tick manually instead of waiting a real 5 minutes.
+    private class FakeTimeProvider : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = new DateTimeOffset(2026, 8, 17, 15, 5, 0, TimeSpan.Zero);
+        private TimerCallback? _callback;
+        private TimeSpan _period;
+
+        public override DateTimeOffset GetUtcNow() => Now;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            _callback = callback;
+            _period = period;
+            return new NoOpTimer();
+        }
+
+        public void Tick()
+        {
+            Now = Now.Add(_period);
+            _callback?.Invoke(null);
+        }
+
+        private class NoOpTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     private class FakeReviewQueueProvider(ReviewQueueData data) : IReviewQueueProvider
@@ -88,6 +121,33 @@ public class NavMenuTests : BunitContext
         Services.AddSingleton<IReviewQueueProvider>(provider);
         Services.AddSingleton<ISyncStatusProvider>(new FakeSyncStatusProvider(lastSimpleFinRun, lastAmazonRun, lastPlaidRun));
         return provider;
+    }
+
+    [Fact]
+    public void NavMenu_ShowsAHeartbeatIndicator_WithTheCurrentTimeOnLoad()
+    {
+        RegisterFakes();
+
+        var cut = Render<NavMenu>();
+
+        var expected = _timeProvider.Now.ToLocalTime().ToString("h:mm tt");
+        Assert.Contains(expected, cut.Find("#nav-heartbeat").TextContent);
+    }
+
+    // Real gap this guards: a purely CSS-animated dot would keep "looking alive" even if
+    // the server-side circuit died, since CSS keeps animating client-side regardless of the
+    // Blazor connection - only a value the server actually has to push on a timer proves
+    // the circuit itself is still ticking, independent of whether any real data changed.
+    [Fact]
+    public void HeartbeatTimer_Ticking_UpdatesTheDisplayedTime()
+    {
+        RegisterFakes();
+        var cut = Render<NavMenu>();
+
+        _timeProvider.Tick();
+
+        var expected = _timeProvider.Now.ToLocalTime().ToString("h:mm tt");
+        cut.WaitForAssertion(() => Assert.Contains(expected, cut.Find("#nav-heartbeat").TextContent));
     }
 
     [Fact]

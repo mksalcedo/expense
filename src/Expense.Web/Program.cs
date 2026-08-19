@@ -102,6 +102,7 @@ builder.Services.AddScoped<ITransactionsPageProvider, TransactionsPageProvider>(
 
 builder.Services.AddSingleton<IStagedScrapeStore, StagedScrapeStore>();
 builder.Services.AddSingleton<IDataChangeNotifier, DataChangeNotifier>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IClipboardWatcherController, ClipboardWatcherController>();
 
 var app = builder.Build();

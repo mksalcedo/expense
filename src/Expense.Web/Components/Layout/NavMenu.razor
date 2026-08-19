@@ -9,6 +9,7 @@
 @inject IReviewQueueChangeNotifier ReviewQueueChangeNotifier
 @inject IDataChangeNotifier DataChangeNotifier
 @inject NavigationManager Navigation
+@inject TimeProvider Clock
 @implements IDisposable
 
 <nav class="nav-menu">
@@ -35,6 +36,11 @@
     <NavLink href="accounts" class="nav-link">Accounts</NavLink>
     <div class="nav-divider"></div>
     <button id="nav-refresh-btn" class="nav-link nav-refresh-btn" @onclick="RefreshAsync">Refresh</button>
+    <div class="nav-divider"></div>
+    <span id="nav-heartbeat" class="nav-heartbeat"
+          title="Confirms this page is still connected and receiving live updates - ticks every 5 minutes, independent of whether anything actually changed">
+        Live &middot; @_lastHeartbeat.ToLocalTime().ToString("h:mm tt")
+    </span>
 </nav>
 
 @code {
@@ -72,6 +78,10 @@
         _ => $" ({_failedSyncCount} syncs failed)"
     };
 
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(5);
+    private DateTimeOffset _lastHeartbeat;
+    private ITimer? _heartbeatTimer;
+
     protected override async Task OnInitializedAsync()
     {
         await RefreshPendingReviewCountAsync();
@@ -79,6 +89,19 @@
         Navigation.LocationChanged += OnLocationChanged;
         ReviewQueueChangeNotifier.Changed += OnReviewQueueChanged;
         DataChangeNotifier.Changed += OnDataChanged;
+
+        _lastHeartbeat = Clock.GetUtcNow();
+        _heartbeatTimer = Clock.CreateTimer(OnHeartbeatTick, null, HeartbeatInterval, HeartbeatInterval);
+    }
+
+    // Deliberately independent of IDataChangeNotifier - a heartbeat that only moved when
+    // data actually changed would look "stale" during a perfectly healthy multi-hour gap
+    // between syncs. The point is to prove the circuit itself is still alive and rendering,
+    // not that anything happened.
+    private void OnHeartbeatTick(object? state)
+    {
+        _lastHeartbeat = Clock.GetUtcNow();
+        InvokeAsync(StateHasChanged);
     }
 
     // The nav bar is part of the persistent layout, not a routable page, so it's only ever
@@ -145,5 +168,6 @@
         Navigation.LocationChanged -= OnLocationChanged;
         ReviewQueueChangeNotifier.Changed -= OnReviewQueueChanged;
         DataChangeNotifier.Changed -= OnDataChanged;
+        _heartbeatTimer?.Dispose();
     }
 }
