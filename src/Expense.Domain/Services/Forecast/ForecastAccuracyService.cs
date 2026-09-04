@@ -129,26 +129,23 @@ public class ForecastAccuracyService(RecurrenceExpander recurrenceExpander, Amex
 
         foreach (var account in activeSpendingAccounts)
         {
-            var qualifyingCategoryIds = await context.FundingRules
-                .Where(f => f.Strategy == FundingStrategies.PayInFullAmex)
-                .Select(f => f.CategoryId)
-                .ToListAsync(cancellationToken);
-
             // Every historical version overlapping the lookback window, not just the
             // current one - each past cycle needs the budget that was actually in effect
             // while it was open, not whatever it is as of asOfDate (same fix as the
-            // Direct-funded periods above).
+            // Direct-funded periods above). Scoped to this specific account, not every
+            // TrackedBudget category regardless of account - same reasoning as
+            // ForecastEngine's identical fix: a category funded from a different account
+            // must not still inflate this card's budgeted amount.
             var allPeriods = await context.BudgetPeriods
-                .Where(p => qualifyingCategoryIds.Contains(p.CategoryId)
+                .Where(p => p.AccountId == account.Id
                             && p.EffectiveFrom <= asOfDate && (p.EffectiveThrough == null || p.EffectiveThrough >= windowStart))
+                .Join(context.FundingRules.Where(f => f.Strategy == FundingStrategies.TrackedBudget),
+                    p => p.CategoryId, f => f.CategoryId, (p, _) => p)
                 .ToListAsync(cancellationToken);
 
-            decimal MonthlyBudgetTotalAsOf(DateOnly date) => qualifyingCategoryIds.Sum(categoryId =>
-            {
-                var period = allPeriods.FirstOrDefault(p =>
-                    p.CategoryId == categoryId && p.EffectiveFrom <= date && (p.EffectiveThrough == null || p.EffectiveThrough >= date));
-                return period is null ? 0m : proration.Convert(period.Amount, period.Frequency, Frequency.Monthly);
-            });
+            decimal MonthlyBudgetTotalAsOf(DateOnly date) => allPeriods
+                .Where(p => p.EffectiveFrom <= date && (p.EffectiveThrough == null || p.EffectiveThrough >= date))
+                .Sum(p => proration.Convert(p.Amount, p.Frequency, Frequency.Monthly));
 
             var chargeTransactions = await context.BankTransactions
                 .Where(t => t.AccountId == account.Id && t.Amount < 0)

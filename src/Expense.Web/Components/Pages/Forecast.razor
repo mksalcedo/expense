@@ -122,7 +122,7 @@ else
                                 @if (candidate.PartialPaymentId is { } recordedId)
                                 {
                                     <span style="color: #555; text-decoration: line-through;">
-                                        Received $@candidate.Amount.ToString("N2") on @candidate.Date.ToString("MM/dd/yyyy")
+                                        @PartialPaymentLabel(row, candidate.Amount, candidate.Date)
                                     </span>
                                     <button id="undo-partial-payment-btn-@recordedId"
                                             @onclick="() => OpenUndoPartialPaymentModal(row, new PartialPaymentSummary { PartialPaymentId = recordedId, Amount = candidate.Amount, PaidDate = candidate.Date })">Undo</button>
@@ -133,7 +133,7 @@ else
                                         $@candidate.Amount.ToString("N2") on @candidate.Date.ToString("MM/dd/yyyy") - not yet recorded
                                     </span>
                                     <button id="record-suggested-partial-btn-@index-@candidateIndex"
-                                            @onclick="() => OpenPayPartialModal(row, candidate.Amount, candidate.Date)">Record partial income</button>
+                                            @onclick="() => OpenPayPartialModal(row, candidate.Amount, candidate.Date)">@(IsIncomeLine(row) ? "Record partial income" : "Pay partial amount")</button>
                                 }
                             }
                         }
@@ -143,7 +143,7 @@ else
                             {
                                 <br />
                                 <span style="color: #555">
-                                    @(IsIncomeLine(row) ? "Received" : "Paid") $@partialPayment.Amount.ToString("N2") on @partialPayment.PaidDate.ToString("MM/dd/yyyy")
+                                    @PartialPaymentLabel(row, partialPayment.Amount, partialPayment.PaidDate)
                                     <button id="undo-partial-payment-btn-@partialPayment.PartialPaymentId" @onclick="() => OpenUndoPartialPaymentModal(row, partialPayment)">Undo</button>
                                 </span>
                             }
@@ -156,7 +156,7 @@ else
                         {
                             <button id="undo-confirmation-btn-@row.ConfirmationId" @onclick="() => OpenUndoConfirmationModal(row)">Undo</button>
                         }
-                        else if (!row.IsExcluded)
+                        else if (!row.IsExcluded && !row.IsTrackedBudgetLine)
                         {
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 @if (row.IsDeferred)
@@ -321,6 +321,20 @@ else
     // netted display value - see ForecastEngine).
     private static bool IsIncomeLine(ForecastLedgerRow row) => row.Amount >= 0;
 
+    // A recorded partial payment's PaidDate can be in the future - e.g. splitting a bill
+    // across two dates ahead of time, as with a real Amex payment split into a now portion
+    // and a later one. Past tense ("Paid"/"Received") only reads correctly once that date has
+    // actually arrived; before then it wrongly claims money already moved.
+    private static string PartialPaymentLabel(ForecastLedgerRow row, decimal amount, DateOnly date)
+    {
+        var isIncome = IsIncomeLine(row);
+        var amountText = amount.ToString("N2");
+        var dateText = date.ToString("MM/dd/yyyy");
+        return date > DateOnly.FromDateTime(DateTime.Today)
+            ? $"${amountText} scheduled to be {(isIncome ? "received" : "paid")} on {dateText}"
+            : $"{(isIncome ? "Received" : "Paid")} ${amountText} on {dateText}";
+    }
+
     private void OpenDeferModal(ForecastLedgerRow row)
     {
         _activeModal = ModalKind.Defer;
@@ -467,8 +481,9 @@ else
             $"Puts \"{_modalRow?.Description}\" back on its originally scheduled date of {_modalRow?.OriginalDate.ToString("MM/dd/yyyy")}.",
         ModalKind.UndoConfirmation =>
             $"Puts \"{_modalRow?.Description}\" back on the forecast as a projected, unpaid amount.",
-        ModalKind.UndoPartialPayment =>
-            $"Removes the {_modalPartialPayment?.Amount.ToString("N2")} partial payment made on {_modalPartialPayment?.PaidDate.ToString("MM/dd/yyyy")}, restoring that amount to \"{_modalRow?.Description}\"'s remaining balance.",
+        ModalKind.UndoPartialPayment => _modalPartialPayment is { } undoPayment
+            ? $"Removes the {undoPayment.Amount.ToString("N2")} partial payment {(undoPayment.PaidDate > DateOnly.FromDateTime(DateTime.Today) ? $"scheduled for {undoPayment.PaidDate:MM/dd/yyyy}" : $"made on {undoPayment.PaidDate:MM/dd/yyyy}")}, restoring that amount to \"{_modalRow?.Description}\"'s remaining balance."
+            : "",
         ModalKind.AdjustAmount =>
             $"Updates the projected amount for \"{_modalRow?.Description}\" to the real number below - e.g. from a bill you've received, even before it's paid. Unlike Confirm/Change Amount, this stays on your forecast as still owed, not resolved.",
         ModalKind.RemoveAdjustment =>

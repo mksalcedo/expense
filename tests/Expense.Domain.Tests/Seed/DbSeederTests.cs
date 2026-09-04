@@ -23,12 +23,12 @@ public class DbSeederTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task SeedAsync_SetsPayInFullAmex_OnExactlyTheFourSpendingCategories()
+    public async Task SeedAsync_SetsTrackedBudget_OnExactlyTheFourSpendingCategories()
     {
         await _sut.SeedAsync(Context);
 
         var payInFullCategoryNames = await Context.FundingRules
-            .Where(r => r.Strategy == FundingStrategies.PayInFullAmex)
+            .Where(r => r.Strategy == FundingStrategies.TrackedBudget)
             .Select(r => r.Category.Name)
             .ToListAsync();
 

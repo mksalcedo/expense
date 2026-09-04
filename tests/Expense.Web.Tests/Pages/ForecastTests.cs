@@ -173,6 +173,12 @@ public class ForecastTests : BunitContext
         AccountId = 1, OriginalDate = new DateOnly(2026, 8, 5)
     };
 
+    private static ForecastLedgerRow RestaurantsRow(decimal amount = -195m, decimal runningBalance = 1400m) => new()
+    {
+        Date = new DateOnly(2026, 8, 19), Description = "Restaurants", Amount = amount, RunningBalance = runningBalance,
+        AccountId = 1, OriginalDate = new DateOnly(2026, 8, 19)
+    };
+
     [Fact]
     public void Forecast_RendersStartingBalanceAndLedgerRows()
     {
@@ -440,6 +446,27 @@ public class ForecastTests : BunitContext
         Assert.Empty(cut.FindAll("#remove-deferral-btn-0"));
         // No inline date input anymore - the modal is the only place a date gets entered.
         Assert.Empty(cut.FindAll("#defer-date-0"));
+    }
+
+    // A TrackedBudget standalone line recomputes and resolves itself automatically - none of
+    // these actions apply, and clicking one would just create a confirmation/deferral/
+    // adjustment record that duplicates or conflicts with the row instead of doing anything
+    // useful.
+    [Fact]
+    public void TrackedBudgetLine_ShowsNoActionButtons_WhileStillOpen()
+    {
+        var row = RestaurantsRow();
+        row.IsTrackedBudgetLine = true;
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Empty(cut.FindAll("#defer-btn-0"));
+        Assert.Empty(cut.FindAll("#confirm-btn-0"));
+        Assert.Empty(cut.FindAll("#override-btn-0"));
+        Assert.Empty(cut.FindAll("#adjust-amount-btn-0"));
+        Assert.Empty(cut.FindAll("#partial-pay-btn-0"));
     }
 
     [Fact]
@@ -1157,6 +1184,90 @@ public class ForecastTests : BunitContext
         Assert.Empty(cut.FindAll("#near-miss-note-0"));
     }
 
+    // Real bug this guards (2026-08-19): this whole rendering path was built only for Piano
+    // (income) so far and hardcoded "Received"/"Record partial income" unconditionally - an
+    // expense category with multiple contributors (e.g. Restaurants) would wrongly show the
+    // same income wording on a real dining charge.
+    [Fact]
+    public void RowWithPartialPaymentCandidates_OnAnExpenseLine_UsesPaidWording_NotIncomeWording()
+    {
+        var row = RestaurantsRow();
+        row.PartialPaymentCandidates = [new PartialPaymentCandidate { Amount = 38.32m, Date = new DateOnly(2026, 8, 17) }];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        Assert.Equal("Pay partial amount", cut.Find("#record-suggested-partial-btn-0-0").TextContent.Trim());
+    }
+
+    [Fact]
+    public void RecordingACandidate_OnAnExpenseLine_ShowsPaidNotReceived()
+    {
+        var row = RestaurantsRow();
+        row.PartialPaymentCandidates = [new PartialPaymentCandidate { Amount = 38.32m, Date = new DateOnly(2026, 8, 17) }];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+        cut.Find("#record-suggested-partial-btn-0-0").Click();
+        cut.Find("#action-modal-apply").Click();
+
+        var ledgerRow = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("Paid $38.32 on 08/17/2026", ledgerRow!.TextContent);
+        Assert.DoesNotContain("Received", ledgerRow.TextContent);
+    }
+
+    // Real bug reported live (2026-09-04): a partial payment recorded with a future PaidDate
+    // (e.g. splitting a bill's Amex payment into a now portion and a later one) showed as
+    // "Paid $1,000.00 on 10/03/2026" while 10/03 was still weeks away - past tense read as if
+    // the money had already moved. "Paid"/"Received" must only apply once that date arrives.
+    [Fact]
+    public void RecordedPartialPayment_WithAFutureDate_ReadsAsScheduled_NotAlreadyPaid()
+    {
+        var row = AmexRow();
+        var futureDate = DateOnly.FromDateTime(DateTime.Today).AddDays(14);
+        row.PartialPayments = [new PartialPaymentSummary { PartialPaymentId = 1, Amount = 1000m, PaidDate = futureDate }];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var ledgerRow = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains($"$1,000.00 scheduled to be paid on {futureDate:MM/dd/yyyy}", ledgerRow!.TextContent);
+        Assert.DoesNotContain("Paid $1,000.00", ledgerRow.TextContent);
+    }
+
+    [Fact]
+    public void RecordedPartialIncome_WithAFutureDate_ReadsAsScheduledToBeReceived()
+    {
+        var row = PianoRow();
+        var futureDate = DateOnly.FromDateTime(DateTime.Today).AddDays(14);
+        row.PartialPayments = [new PartialPaymentSummary { PartialPaymentId = 1, Amount = 95m, PaidDate = futureDate }];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var ledgerRow = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains($"$95.00 scheduled to be received on {futureDate:MM/dd/yyyy}", ledgerRow!.TextContent);
+        Assert.DoesNotContain("Received $95.00", ledgerRow.TextContent);
+    }
+
+    [Fact]
+    public void RecordedPartialPayment_WithATodayOrPastDate_StillReadsAsAlreadyPaid()
+    {
+        var row = AmexRow();
+        row.PartialPayments = [new PartialPaymentSummary { PartialPaymentId = 1, Amount = 1000m, PaidDate = new DateOnly(2026, 8, 20) }];
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [row] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+
+        var cut = Render<Forecast>();
+
+        var ledgerRow = cut.Find("#ledger-table").QuerySelector("tbody tr");
+        Assert.Contains("Paid $1,000.00 on 08/20/2026", ledgerRow!.TextContent);
+    }
+
     [Fact]
     public void ClickingRecordOnACandidate_PreFillsTheModalWithItsExactAmountAndDate()
     {
@@ -1272,6 +1383,25 @@ public class ForecastTests : BunitContext
         // Still applied - nothing undone yet, just prompted.
         var row = cut.Find("#ledger-table").QuerySelector("tbody tr");
         Assert.Contains("1,000.00", row!.TextContent);
+    }
+
+    [Fact]
+    public void UndoModalExplanation_UsesScheduledForWording_WhenThePartialPaymentDateIsInTheFuture()
+    {
+        var result = new ForecastResult { StartingBalance = 1000m, Rows = [AmexRow()] };
+        Services.AddSingleton<IForecastResultProvider>(new FakeForecastResultProvider(result));
+        var futureDate = DateOnly.FromDateTime(DateTime.Today).AddDays(14);
+
+        var cut = Render<Forecast>();
+        cut.Find("#partial-pay-btn-0").Click();
+        cut.Find("#modal-amount-input").Change("1000");
+        cut.Find("#modal-date-input").Change(futureDate.ToString("yyyy-MM-dd"));
+        cut.Find("#action-modal-apply").Click();
+        cut.Find("#undo-partial-payment-btn-1").Click();
+
+        var explanation = cut.Find("#action-modal-explanation").TextContent;
+        Assert.Contains($"scheduled for {futureDate:MM/dd/yyyy}", explanation);
+        Assert.DoesNotContain("made on", explanation);
     }
 
     [Fact]

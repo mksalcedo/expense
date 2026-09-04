@@ -13,7 +13,7 @@ public class FundingRuleTests : DatabaseTestBase
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 
-        var rule = new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.PayInFullAmex };
+        var rule = new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.TrackedBudget };
         Context.FundingRules.Add(rule);
         await Context.SaveChangesAsync();
 
@@ -22,12 +22,12 @@ public class FundingRuleTests : DatabaseTestBase
             .Include(r => r.Category)
             .SingleAsync(r => r.Id == rule.Id);
 
-        Assert.Equal(FundingStrategies.PayInFullAmex, reloaded.Strategy);
+        Assert.Equal(FundingStrategies.TrackedBudget, reloaded.Strategy);
         Assert.Equal("Groceries", reloaded.Category.Name);
     }
 
     [Fact]
-    public async Task Query_PayInFullAmexCategories_NeverHardcodesNamesInTheQuery()
+    public async Task Query_TrackedBudgetCategories_NeverHardcodesNamesInTheQuery()
     {
         var groceries = new Category { Name = "Groceries" };
         var restaurants = new Category { Name = "Restaurants" };
@@ -36,15 +36,15 @@ public class FundingRuleTests : DatabaseTestBase
         await Context.SaveChangesAsync();
 
         Context.FundingRules.AddRange(
-            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex },
-            new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.PayInFullAmex },
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget },
+            new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget },
             new FundingRule { CategoryId = amexPayment.Id, Strategy = FundingStrategies.None }
         );
         await Context.SaveChangesAsync();
 
         await using var reloadContext = CreateContextInSameTransaction();
         var amexFundedCategoryIds = await reloadContext.FundingRules
-            .Where(r => r.Strategy == FundingStrategies.PayInFullAmex)
+            .Where(r => r.Strategy == FundingStrategies.TrackedBudget)
             .Select(r => r.CategoryId)
             .ToListAsync();
 
@@ -82,7 +82,7 @@ public class FundingRuleTests : DatabaseTestBase
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 
-        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.TrackedBudget });
         await Context.SaveChangesAsync();
 
         await using var reloadContext = CreateContextInSameTransaction();

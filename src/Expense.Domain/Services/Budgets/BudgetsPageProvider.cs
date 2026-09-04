@@ -15,7 +15,7 @@ public class BudgetsPageProvider(
         // Only categories whose amount is actually entered via BudgetPeriod belong on this
         // (currently still editable) page - AccountPayment categories' amounts live on their
         // linked Account instead, and editing them here would silently do nothing.
-        var budgetableStrategies = new[] { FundingStrategies.Direct, FundingStrategies.PayInFullAmex };
+        var budgetableStrategies = new[] { FundingStrategies.Direct, FundingStrategies.TrackedBudget };
         var budgetedCategories = await context.Categories
             .Where(c => c.IsActive)
             .Join(context.FundingRules.Where(r => budgetableStrategies.Contains(r.Strategy)),

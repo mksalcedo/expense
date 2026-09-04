@@ -12,17 +12,24 @@
 }
 else
 {
-    var startBalance = Forecast.StartingBalance;
-    var endBalance = Forecast.Rows[^1].RunningBalance;
-    var delta = endBalance - startBalance;
-    // The trend word comes from the fitted trend line's slope, not simply comparing the first
-    // and last raw points - a single early/late spike shouldn't flip the overall reading.
-    var trendWord = model.TrendSlopePerDay > 0 ? "up" : model.TrendSlopePerDay < 0 ? "down" : "flat";
+    // Everything in this line comes from the fitted trend line, never from comparing the
+    // first raw balance to the last one: either of those two endpoints can land anywhere in
+    // a pay cycle, so their difference on its own says nothing about direction (a window
+    // that happened to start and end on cycle lows once showed a ~$89 raw delta sitting next
+    // to a ~$900/yr actual upward trend).
+    var trendPerMonth = model.TrendSlopePerDay * 365.25m / 12m;
+    var trendChange = model.TrendPoints[^1].Balance - model.TrendPoints[0].Balance;
+    var trendSpanMonths = (model.Points[^1].Date.DayNumber - model.Points[0].Date.DayNumber) / (365.25 / 12);
+    // "up"/"down" only once the slope is steep enough to mean something - a few dollars a
+    // month is regression noise, not a direction worth an arrow.
+    var trendWord = Math.Abs(trendPerMonth) < 10m ? "flat" : trendPerMonth > 0m ? "up" : "down";
+    var perMonthText = (trendPerMonth >= 0 ? "+" : "") + trendPerMonth.ToString("N0");
+    var changeText = (trendChange >= 0 ? "+" : "") + trendChange.ToString("N0");
+    var trendSummary = trendWord == "flat"
+        ? $"Roughly flat: about {perMonthText}/month"
+        : $"Trending {trendWord}: about {perMonthText}/month ({changeText} projected across ~{trendSpanMonths:N0} months)";
 
-    <p id="cash-flow-trend-summary">
-        Trending @trendWord: @startBalance.ToString("N2") &rarr; @endBalance.ToString("N2")
-        (@(delta >= 0 ? "+" : "")@delta.ToString("N2"))
-    </p>
+    <p id="cash-flow-trend-summary">@trendSummary</p>
     <p>
         <label>
             <input type="checkbox" id="cash-flow-chart-toggle-raw-line" checked="@_showRawLine"

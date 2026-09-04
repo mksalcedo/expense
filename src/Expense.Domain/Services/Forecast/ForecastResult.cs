@@ -80,6 +80,17 @@ public class ForecastLedgerRow
     /// so nothing recorded here is ever silently lost from view.
     /// </summary>
     public List<PartialPaymentCandidate>? PartialPaymentCandidates { get; set; }
+
+    /// <summary>
+    /// True for a TrackedBudget category's standalone per-period line (see ForecastEngine) -
+    /// its Amount already recomputes itself automatically from real spending every render,
+    /// and it resolves itself once its period passes, with no separate "payment" event to
+    /// confirm. None of Defer/Confirm/Override/Adjust/Partial-pay apply - clicking any of
+    /// them would just create a confirmation/deferral/adjustment record that duplicates or
+    /// conflicts with this row instead of doing anything useful, so the Forecast page hides
+    /// them entirely for a row like this.
+    /// </summary>
+    public bool IsTrackedBudgetLine { get; set; }
 }
 
 public class PartialPaymentSummary

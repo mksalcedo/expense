@@ -104,7 +104,13 @@ public class RecurrenceExpander
         return dates;
     }
 
-    private static DateOnly Occurrence(DateOnly anchor, Frequency frequency, int k) => frequency switch
+    /// <summary>
+    /// The k-th occurrence of a recurring anchor/frequency pattern (k=0 is the anchor
+    /// itself, negative k walks backward) - exposed for TrackedBudgetLineCalculator, which
+    /// needs each period's own start/end boundary (a pair of consecutive occurrences), not
+    /// just the flat occurrence-date list Expand/Occurrences produce.
+    /// </summary>
+    public static DateOnly Occurrence(DateOnly anchor, Frequency frequency, int k) => frequency switch
     {
         Frequency.Weekly => anchor.AddDays(7 * k),
         Frequency.Biweekly => anchor.AddDays(14 * k),

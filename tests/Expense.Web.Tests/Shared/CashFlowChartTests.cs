@@ -53,7 +53,7 @@ public class CashFlowChartTests : BunitContext
     }
 
     [Fact]
-    public void RendersTheTrendSummary_ComparingStartAndEndBalances()
+    public void RendersTheTrendSummary_FromTheFittedRate_NotRawStartAndEndBalances()
     {
         var forecast = new ForecastResult
         {
@@ -64,8 +64,35 @@ public class CashFlowChartTests : BunitContext
         var cut = RenderChart(forecast);
 
         var summary = cut.Find("#cash-flow-trend-summary").TextContent;
-        Assert.Contains("1,000.00", summary);
-        Assert.Contains("4,000.00", summary);
+        // A steady climb from 1,000 to 4,000 over ~12 months: ~8.24/day -> ~+251/month,
+        // and the fitted line rises the full +3,000 across the window.
+        Assert.Contains("Trending up", summary);
+        Assert.Contains("+251/month", summary);
+        Assert.Contains("+3,000 projected across ~12 months", summary);
+        // The raw endpoint balances themselves are deliberately not shown here any more.
+        Assert.DoesNotContain("1,000.00", summary);
+        Assert.DoesNotContain("4,000.00", summary);
+    }
+
+    [Fact]
+    public void TrendSummary_SaysRoughlyFlat_WhenTheSlopeIsOnlyAFewDollarsAMonth()
+    {
+        var forecast = new ForecastResult
+        {
+            StartingBalance = 5000m,
+            Rows =
+            [
+                Row(new DateOnly(2026, 1, 1), 5000m),
+                Row(new DateOnly(2026, 6, 1), 4980m),
+                Row(new DateOnly(2026, 12, 31), 5010m)
+            ]
+        };
+
+        var cut = RenderChart(forecast);
+
+        var summary = cut.Find("#cash-flow-trend-summary").TextContent;
+        Assert.Contains("Roughly flat", summary);
+        Assert.DoesNotContain("Trending", summary);
     }
 
     [Fact]

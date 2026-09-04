@@ -114,40 +114,10 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
             assumptionsRowByName[assumptions.Cell(r, NameCol).GetString()] = r;
         }
 
-        // Qualifying spending categories (Groceries, Gas, etc.) - each gets its own Assumptions
-        // row (in whatever frequency it was actually budgeted in) so the budget behind the Amex
-        // payment is visible and editable, not just baked into the payment amount.
-        var qualifyingCategoryIds = await context.FundingRules
-            .Where(f => f.Strategy == FundingStrategies.PayInFullAmex)
-            .Select(f => f.CategoryId)
-            .ToListAsync(cancellationToken);
-
-        decimal monthlyBudgetTotal = 0m;
-        var categoryAssumptionsRows = new List<(int Row, Frequency Frequency)>();
-        foreach (var categoryId in qualifyingCategoryIds)
-        {
-            var currentPeriod = await context.BudgetPeriods
-                .Where(p => p.CategoryId == categoryId && p.EffectiveFrom <= asOfDate && (p.EffectiveThrough == null || p.EffectiveThrough >= asOfDate))
-                .Include(p => p.Category)
-                .FirstOrDefaultAsync(cancellationToken);
-            if (currentPeriod is not null)
-            {
-                monthlyBudgetTotal += proration.Convert(currentPeriod.Amount, currentPeriod.Frequency, Frequency.Monthly);
-
-                var categoryRow = nextAssumptionsRow++;
-                WriteAssumptionsRow(assumptions, categoryRow, currentPeriod.Category.Name, currentPeriod.Amount, 0m, currentPeriod.Frequency, Direction.Expense, null);
-                categoryAssumptionsRows.Add((categoryRow, currentPeriod.Frequency));
-            }
-        }
-
-        var budgetSumFormula = categoryAssumptionsRows.Count == 0
-            ? "0"
-            : string.Join("+", categoryAssumptionsRows.Select(r => MonthlyEquivalentFormula(r.Row, r.Frequency)));
-
-        // Amex/ActiveSpending accounts - the Extra Payment portion is a master cell, and now so
-        // is the budget portion (it references the category rows above); only the real,
-        // already-posted actual-charges figure for a closed/in-progress cycle stays a literal,
-        // since Excel can't query Postgres for that live.
+        // Amex/ActiveSpending accounts - the Extra Payment portion is a master cell, and so is
+        // the budget portion (it references this account's own qualifying category rows,
+        // added below); only the real, already-posted actual-charges figure for a closed/
+        // in-progress cycle stays a literal, since Excel can't query Postgres for that live.
         var amexFormulaOverrides = new Dictionary<(DateOnly Date, string Description), string>();
         var activeSpendingAccounts = await context.Accounts
             .Where(a => a.Type == AccountType.ActiveSpending && a.IsActive && a.StatementCloseDay != null && a.PaymentDueDay != null)
@@ -155,8 +125,36 @@ public class ForecastExcelExporter(BudgetProrationService proration, RecurrenceE
 
         foreach (var account in activeSpendingAccounts)
         {
+            // Qualifying spending categories (Groceries, Gas, etc.) funded from THIS account -
+            // each gets its own Assumptions row (in whatever frequency it was actually
+            // budgeted in) so the budget behind this card's payment is visible and editable,
+            // not just baked into the payment amount. Scoped per account, not shared across
+            // every ActiveSpending account - a category funded from a different account must
+            // not contribute to this one's budget total.
+            var trackedBudgetPeriods = await context.BudgetPeriods
+                .Where(p => p.AccountId == account.Id && p.EffectiveFrom <= asOfDate && (p.EffectiveThrough == null || p.EffectiveThrough >= asOfDate))
+                .Join(context.FundingRules.Where(f => f.Strategy == FundingStrategies.TrackedBudget),
+                    p => p.CategoryId, f => f.CategoryId, (p, _) => p)
+                .Include(p => p.Category)
+                .ToListAsync(cancellationToken);
+
+            decimal monthlyBudgetTotal = 0m;
+            var categoryAssumptionsRows = new List<(int Row, Frequency Frequency)>();
+            foreach (var period in trackedBudgetPeriods)
+            {
+                monthlyBudgetTotal += proration.Convert(period.Amount, period.Frequency, Frequency.Monthly);
+
+                var categoryRow = nextAssumptionsRow++;
+                WriteAssumptionsRow(assumptions, categoryRow, period.Category.Name, period.Amount, 0m, period.Frequency, Direction.Expense, null);
+                categoryAssumptionsRows.Add((categoryRow, period.Frequency));
+            }
+
+            var budgetSumFormula = categoryAssumptionsRows.Count == 0
+                ? "0"
+                : string.Join("+", categoryAssumptionsRows.Select(r => MonthlyEquivalentFormula(r.Row, r.Frequency)));
+
             // Every real charge on the account this cycle counts toward "how much do I owe" -
-            // not just the ones already sorted into a PayInFullAmex category. This is a
+            // not just the ones already sorted into a TrackedBudget category. This is a
             // pay-in-full card: an uncategorized charge still needs to be paid, so it can't
             // be invisible just because it hasn't been categorized yet. Amount < 0 excludes
             // payments/credits (positive amounts) - those must never offset real spending.

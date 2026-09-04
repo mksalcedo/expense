@@ -80,7 +80,7 @@ public class CategoriesTests : BunitContext
         [
             new CategoryRow
             {
-                Id = 1, Name = "Groceries", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.PayInFullAmex,
+                Id = 1, Name = "Groceries", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.TrackedBudget,
                 BudgetAmount = 450m, BudgetFrequency = Frequency.Weekly, BudgetDirection = Direction.Expense
             },
             new CategoryRow { Id = 2, Name = "Off-Budget/Misc", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.None },
@@ -261,7 +261,7 @@ public class CategoriesTests : BunitContext
         cut.Find("#category-row-1").Click();
 
         Assert.Equal("Groceries", cut.Find("#detail-name").GetAttribute("value"));
-        Assert.Equal(FundingStrategies.PayInFullAmex,
+        Assert.Equal(FundingStrategies.TrackedBudget,
             cut.Find("#detail-funding-strategy option[selected]").GetAttribute("value"));
     }
 
@@ -274,12 +274,12 @@ public class CategoriesTests : BunitContext
         var cut = Render<Categories>();
         cut.Find("#category-row-2").Click(); // Off-Budget/Misc: not funded
         cut.Find("#detail-name").Change("Off-Budget & Misc");
-        cut.Find("#detail-funding-strategy").Change(FundingStrategies.PayInFullAmex);
+        cut.Find("#detail-funding-strategy").Change(FundingStrategies.TrackedBudget);
         cut.Find("#detail-save").Click();
 
         Assert.Equal(2, provider.LastUpdatedId);
         Assert.Equal("Off-Budget & Misc", provider.LastUpdatedName);
-        Assert.Equal(FundingStrategies.PayInFullAmex, provider.LastUpdatedFundingStrategy);
+        Assert.Equal(FundingStrategies.TrackedBudget, provider.LastUpdatedFundingStrategy);
     }
 
     [Fact]
@@ -359,7 +359,7 @@ public class CategoriesTests : BunitContext
 
         var cut = Render<Categories>();
 
-        var groceriesRow = cut.Find("#category-row-1"); // PayInFullAmex, not linked to an account payment
+        var groceriesRow = cut.Find("#category-row-1"); // TrackedBudget, not linked to an account payment
         var cell = groceriesRow.QuerySelectorAll("td")[5]; // Payment due day column
         Assert.Equal("", cell.TextContent);
     }
@@ -454,8 +454,8 @@ public class CategoriesTests : BunitContext
         {
             Rows =
             [
-                new CategoryRow { Id = 1, Name = "Small", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.PayInFullAmex, BudgetAmount = 9m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense },
-                new CategoryRow { Id = 2, Name = "Big", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.PayInFullAmex, BudgetAmount = 80m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense }
+                new CategoryRow { Id = 1, Name = "Small", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.TrackedBudget, BudgetAmount = 9m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense },
+                new CategoryRow { Id = 2, Name = "Big", IsActive = true, ReconcileByCalendarMonth = false, FundingStrategy = FundingStrategies.TrackedBudget, BudgetAmount = 80m, BudgetFrequency = Frequency.Monthly, BudgetDirection = Direction.Expense }
             ]
         };
         Services.AddSingleton<ICategoriesPageProvider>(provider);
@@ -596,10 +596,10 @@ public class CategoriesTests : BunitContext
     }
 
     [Fact]
-    public void SelectingAPayInFullAmexCategory_ShowsTheCarryoverCapField_WithItsValue()
+    public void SelectingATrackedBudgetCategory_ShowsTheCarryoverCapField_WithItsValue()
     {
         var provider = MakeProvider();
-        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = 2.0m; // Groceries: PayInFullAmex
+        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = 2.0m; // Groceries: TrackedBudget
         Services.AddSingleton<ICategoriesPageProvider>(provider);
 
         var cut = Render<Categories>();
@@ -610,10 +610,10 @@ public class CategoriesTests : BunitContext
     }
 
     [Fact]
-    public void SelectingAPayInFullAmexCategory_WithNoCap_ShowsNoLimitCheckedAndTheFieldDisabled()
+    public void SelectingATrackedBudgetCategory_WithNoCap_ShowsNoLimitCheckedAndTheFieldDisabled()
     {
         var provider = MakeProvider();
-        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = null; // Groceries: PayInFullAmex
+        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = null; // Groceries: TrackedBudget
         Services.AddSingleton<ICategoriesPageProvider>(provider);
 
         var cut = Render<Categories>();
@@ -624,7 +624,7 @@ public class CategoriesTests : BunitContext
     }
 
     [Fact]
-    public void SelectingANonPayInFullAmexCategory_DoesNotShowTheCarryoverCapField()
+    public void SelectingANonTrackedBudgetCategory_DoesNotShowTheCarryoverCapField()
     {
         var provider = MakeProvider();
         Services.AddSingleton<ICategoriesPageProvider>(provider);
@@ -636,14 +636,14 @@ public class CategoriesTests : BunitContext
     }
 
     [Fact]
-    public void CreatingANewPayInFullAmexCategory_DoesNotShowTheCarryoverCapField()
+    public void CreatingANewTrackedBudgetCategory_DoesNotShowTheCarryoverCapField()
     {
         var provider = MakeProvider();
         Services.AddSingleton<ICategoriesPageProvider>(provider);
 
         var cut = Render<Categories>();
         cut.Find("#new-category-button").Click();
-        cut.Find("#detail-funding-strategy").Change(FundingStrategies.PayInFullAmex);
+        cut.Find("#detail-funding-strategy").Change(FundingStrategies.TrackedBudget);
 
         Assert.Empty(cut.FindAll("#detail-carryover-cap"));
     }
@@ -652,7 +652,7 @@ public class CategoriesTests : BunitContext
     public void ChangingTheCarryoverCap_AndSaving_PassesItThrough()
     {
         var provider = MakeProvider();
-        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = 1.0m; // Groceries: PayInFullAmex, field enabled
+        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = 1.0m; // Groceries: TrackedBudget, field enabled
         Services.AddSingleton<ICategoriesPageProvider>(provider);
 
         var cut = Render<Categories>();
@@ -667,7 +667,7 @@ public class CategoriesTests : BunitContext
     public void CheckingNoLimit_AndSaving_PassesNullCarryoverCap()
     {
         var provider = MakeProvider();
-        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = 1.0m; // Groceries: PayInFullAmex
+        provider.Rows.Single(r => r.Id == 1).CarryoverCapMultiplier = 1.0m; // Groceries: TrackedBudget
         Services.AddSingleton<ICategoriesPageProvider>(provider);
 
         var cut = Render<Categories>();
@@ -799,23 +799,26 @@ public class CategoriesTests : BunitContext
     }
 
     [Fact]
-    public void SelectingAPayInFullAmexCategory_ShowsAmountAndFrequencyButNotDirectionAnchorOrAccount()
+    public void SelectingATrackedBudgetCategory_ShowsAmountFrequencyAnchorAndAccount_ButNotDirection()
     {
         var provider = MakeProvider();
         Services.AddSingleton<ICategoriesPageProvider>(provider);
 
         var cut = Render<Categories>();
-        cut.Find("#category-row-1").Click(); // Groceries: pay-in-full-amex
+        cut.Find("#category-row-1").Click(); // Groceries: tracked-budget
 
         Assert.Equal("450", cut.Find("#detail-amount").GetAttribute("value"));
         Assert.NotNull(cut.Find("#detail-frequency"));
         Assert.Empty(cut.FindAll("#detail-direction"));
-        Assert.Empty(cut.FindAll("#detail-anchor"));
-        Assert.Empty(cut.FindAll("#detail-account"));
+        // Which account this category is funded from - a pay-in-full card (pooling into its
+        // shared payment line) or an ordinary account (its own standalone line) - see
+        // ForecastEngine's account-scoped TrackedBudget handling.
+        Assert.NotNull(cut.Find("#detail-anchor"));
+        Assert.NotNull(cut.Find("#detail-account"));
     }
 
     [Fact]
-    public void SavingAPayInFullAmexCategory_PassesOnlyAmountAndFrequency()
+    public void SavingATrackedBudgetCategory_PassesAmountFrequencyAnchorAndAccount()
     {
         var provider = MakeProvider();
         Services.AddSingleton<ICategoriesPageProvider>(provider);
@@ -824,13 +827,34 @@ public class CategoriesTests : BunitContext
         cut.Find("#category-row-1").Click(); // Groceries
         cut.Find("#detail-amount").Change("500");
         cut.Find("#detail-frequency").Change(nameof(Frequency.Weekly));
+        cut.Find("#detail-anchor").Change("2026-08-19");
+        cut.Find("#detail-account").Change("10");
         cut.Find("#detail-save").Click();
 
         Assert.NotNull(provider.LastUpdatedBudget);
         Assert.Equal(500m, provider.LastUpdatedBudget!.Amount);
         Assert.Equal(Frequency.Weekly, provider.LastUpdatedBudget.Frequency);
         Assert.Equal(Direction.Expense, provider.LastUpdatedBudget.Direction);
-        Assert.Null(provider.LastUpdatedBudget.Anchor);
-        Assert.Null(provider.LastUpdatedBudget.AccountId);
+        Assert.Equal(new DateOnly(2026, 8, 19), provider.LastUpdatedBudget.Anchor);
+        Assert.Equal(10, provider.LastUpdatedBudget.AccountId);
+    }
+
+    // Real scenario this guards (2026-08-19): switching an existing category from Direct to
+    // TrackedBudget (e.g. Restaurants moving between the two while its funding account
+    // stayed the same) must not lose the anchor/account it already had - both fields are
+    // pre-filled from the category's current budget the same way Direct's already are.
+    [Fact]
+    public void SelectingATrackedBudgetCategory_WithAnExistingAnchorAndAccount_PreFillsThem()
+    {
+        var provider = MakeProvider();
+        provider.Rows.Single(r => r.Id == 1).BudgetAnchor = new DateOnly(2026, 8, 19);
+        provider.Rows.Single(r => r.Id == 1).BudgetAccountId = 10;
+        Services.AddSingleton<ICategoriesPageProvider>(provider);
+
+        var cut = Render<Categories>();
+        cut.Find("#category-row-1").Click();
+
+        Assert.Equal("2026-08-19", cut.Find("#detail-anchor").GetAttribute("value"));
+        Assert.Equal("10", cut.Find("#detail-account option[selected]").GetAttribute("value"));
     }
 }

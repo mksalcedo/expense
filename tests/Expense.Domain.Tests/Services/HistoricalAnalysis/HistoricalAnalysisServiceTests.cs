@@ -24,7 +24,7 @@ public class HistoricalAnalysisServiceTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.AddRange(
             new BudgetPeriod { CategoryId = groceries.Id, Amount = 400m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), EffectiveThrough = new DateOnly(2026, 6, 30) },
             new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 7, 1) });
@@ -43,7 +43,7 @@ public class HistoricalAnalysisServiceTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1) });
         var amex = await CreateAccountAsync();
         Context.BankTransactions.Add(new BankTransaction
@@ -65,7 +65,7 @@ public class HistoricalAnalysisServiceTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1) });
         await Context.SaveChangesAsync();
 
@@ -109,7 +109,7 @@ public class HistoricalAnalysisServiceTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task WeeklyReport_IncludesDirectCategories_NotJustPayInFullAmex()
+    public async Task WeeklyReport_IncludesDirectCategories_NotJustTrackedBudget()
     {
         var truist = new Category { Name = "Truist" };
         Context.Categories.Add(truist);
@@ -134,7 +134,7 @@ public class HistoricalAnalysisServiceTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         var amex = await CreateAccountAsync();
         Context.BankTransactions.AddRange(
             new BankTransaction { AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1), Description = "INGLES", Amount = -100m, ImportSource = "Test", CategoryId = groceries.Id, CreatedAt = DateTimeOffset.UtcNow },
@@ -156,7 +156,7 @@ public class HistoricalAnalysisServiceTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1) });
         var amex = await CreateAccountAsync();
         Context.BankTransactions.AddRange(
@@ -182,7 +182,7 @@ public class HistoricalAnalysisServiceTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         // Budget changed recently - the rolling average should compare against the CURRENT (500) budget, not the old one
         Context.BudgetPeriods.AddRange(
             new BudgetPeriod { CategoryId = groceries.Id, Amount = 400m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), EffectiveThrough = new DateOnly(2026, 6, 20) },

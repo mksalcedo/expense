@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Expense.Domain.Services.SpendingTracker;
 
 /// <summary>
-/// Current-week/current-month budget vs. actual vs. remaining, scoped to PayInFullAmex
+/// Current-week/current-month budget vs. actual vs. remaining, scoped to TrackedBudget
 /// categories (the only ones with real day-to-day variable spending to track - Direct
 /// categories are fixed bills/income, AccountPayment categories are paydown-only debt).
 ///
@@ -129,7 +129,7 @@ public class SpendingTrackerService(BudgetProrationService proration)
         ExpenseDbContext context, DateOnly periodStart, DateOnly periodEnd, Frequency periodFrequency, DateOnly asOfDate, CancellationToken cancellationToken)
     {
         var qualifyingCategoryIds = await context.FundingRules
-            .Where(r => r.Strategy == FundingStrategies.PayInFullAmex)
+            .Where(r => r.Strategy == FundingStrategies.TrackedBudget)
             .Select(r => r.CategoryId)
             .ToListAsync(cancellationToken);
 

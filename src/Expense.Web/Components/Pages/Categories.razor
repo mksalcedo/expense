@@ -27,7 +27,7 @@ else
                 <select id="filter-funding-strategy" @onchange="e => _filterFundingStrategy = (string)e.Value!">
                     <option value="">All funding strategies</option>
                     <option value="@FundingStrategies.None">None</option>
-                    <option value="@FundingStrategies.PayInFullAmex">Pay in full (Amex)</option>
+                    <option value="@FundingStrategies.TrackedBudget">Tracked budget (multiple transactions)</option>
                     <option value="@FundingStrategies.Direct">Direct</option>
                     <option value="@FundingStrategies.AccountPayment">Account payment</option>
                 </select>
@@ -91,7 +91,7 @@ else
             else
             {
                 <h2>@(_mode == DetailMode.Creating ? "New category" : "Edit category")</h2>
-                <div style="display: grid; grid-template-columns: max-content max-content; gap: 10px 12px; align-items: center;">
+                <div style="display: grid; grid-template-columns: 220px 400px; gap: 10px 12px; align-items: center;">
                     <div style="display: contents">
                         <label for="detail-name">Name</label>
                         <input id="detail-name" value="@_formName" @onchange="e => _formName = (string)e.Value!" />
@@ -100,7 +100,7 @@ else
                         <label for="detail-funding-strategy">Funding strategy</label>
                         <select id="detail-funding-strategy" @onchange="e => _formFundingStrategy = (string)e.Value!">
                             <option value="@FundingStrategies.None" selected="@(_formFundingStrategy == FundingStrategies.None)">None</option>
-                            <option value="@FundingStrategies.PayInFullAmex" selected="@(_formFundingStrategy == FundingStrategies.PayInFullAmex)">Pay in full (Amex)</option>
+                            <option value="@FundingStrategies.TrackedBudget" selected="@(_formFundingStrategy == FundingStrategies.TrackedBudget)">Tracked budget (multiple transactions)</option>
                             <option value="@FundingStrategies.Direct" selected="@(_formFundingStrategy == FundingStrategies.Direct)">Direct (recurring income/bill)</option>
                             <option value="@FundingStrategies.AccountPayment" selected="@(_formFundingStrategy == FundingStrategies.AccountPayment)">Account payment (debt account)</option>
                         </select>
@@ -166,7 +166,7 @@ else
                             </p>
                         }
                     }
-                    @if (_formFundingStrategy == FundingStrategies.Direct || _formFundingStrategy == FundingStrategies.PayInFullAmex)
+                    @if (_formFundingStrategy == FundingStrategies.Direct || _formFundingStrategy == FundingStrategies.TrackedBudget)
                     {
                         <div style="display: contents">
                             <label for="detail-amount">Amount</label>
@@ -183,7 +183,7 @@ else
                             </select>
                         </div>
                     }
-                    @if (_formFundingStrategy == FundingStrategies.PayInFullAmex && _mode == DetailMode.Editing)
+                    @if (_formFundingStrategy == FundingStrategies.TrackedBudget && _mode == DetailMode.Editing)
                     {
                         <div style="display: contents">
                             <label for="detail-carryover-cap">Carryover cap (&times; period budget)</label>
@@ -202,7 +202,7 @@ else
                             for a category you're deliberately saving up in across several periods.
                         </p>
                     }
-                    @if (_formFundingStrategy == FundingStrategies.Direct)
+                    @if (_formFundingStrategy == FundingStrategies.Direct || _formFundingStrategy == FundingStrategies.TrackedBudget)
                     {
                         <div style="display: contents">
                             <label for="detail-anchor">Anchor date</label>
@@ -330,7 +330,7 @@ else
 
     private static string FundingStrategyLabel(string strategy) => strategy switch
     {
-        FundingStrategies.PayInFullAmex => "Pay in full (Amex)",
+        FundingStrategies.TrackedBudget => "Tracked budget (multiple transactions)",
         FundingStrategies.Direct => "Direct",
         FundingStrategies.AccountPayment => "Account payment",
         _ => "None"
@@ -446,8 +446,12 @@ else
         {
             FundingStrategies.Direct when _formAccountId is { } accountId =>
                 new BudgetInput(_formAmount, _formFrequency, _formDirection, _formAnchor, accountId),
-            FundingStrategies.PayInFullAmex =>
-                new BudgetInput(_formAmount, _formFrequency),
+            // Anchor/account are optional here (unlike Direct) - a category pooling into a
+            // pay-in-full card's shared payment doesn't need its own anchor, only an account
+            // for ForecastEngine's account-scoping; only a category funded from an ordinary
+            // account (its own standalone line) actually needs both.
+            FundingStrategies.TrackedBudget =>
+                new BudgetInput(_formAmount, _formFrequency, Anchor: _formAnchor, AccountId: _formAccountId),
             _ => null
         };
 

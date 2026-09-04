@@ -30,10 +30,10 @@ public class DbSeeder
         await context.SaveChangesAsync();
 
         context.FundingRules.AddRange(
-            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex },
-            new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.PayInFullAmex },
-            new FundingRule { CategoryId = supplements.Id, Strategy = FundingStrategies.PayInFullAmex },
-            new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.PayInFullAmex }
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget },
+            new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget },
+            new FundingRule { CategoryId = supplements.Id, Strategy = FundingStrategies.TrackedBudget },
+            new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.TrackedBudget }
         );
         await context.SaveChangesAsync();
 

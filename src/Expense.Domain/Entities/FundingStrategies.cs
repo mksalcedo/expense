@@ -7,7 +7,17 @@ namespace Expense.Domain.Entities;
 /// </summary>
 public static class FundingStrategies
 {
-    public const string PayInFullAmex = "pay_in_full_amex";
+    /// <summary>
+    /// Many real transactions in this category, each contributing to one recurring period
+    /// budget (weekly/monthly/etc.) - tracked on Spending Tracker and reconciled
+    /// cumulatively (see ForecastEngine's PartialPaymentCandidates path), never by a single
+    /// "this one transaction is the whole story" match. Funded from whichever account
+    /// budget_period.account_id names - a statement-cycle account (e.g. a pay-in-full
+    /// credit card) pools every such category into one shared payment-due line; any other
+    /// account gets its own standalone per-category line instead, since there's no
+    /// separate "pay the bill later" step for money that already left the account.
+    /// </summary>
+    public const string TrackedBudget = "tracked_budget";
     public const string None = "none";
     public const string Direct = "direct";
 

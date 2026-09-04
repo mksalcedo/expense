@@ -90,10 +90,10 @@ public class ForecastAccuracyServiceTests : DatabaseTestBase
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         // Cycle: 2026-05-26 to 2026-06-25, due 2026-07-15 - closed well before asOfDate.
         Context.BankTransactions.Add(new BankTransaction
@@ -109,6 +109,45 @@ public class ForecastAccuracyServiceTests : DatabaseTestBase
         Assert.Equal(2000m, comparison.ScheduledAmount); // 900 budget + 1100 extra
         Assert.Equal(2500m, comparison.ActualAmount); // 1400 real charges + 1100 extra
         Assert.Equal(500m, comparison.Delta);
+    }
+
+    // Same account-scoping bug as ForecastEngine (2026-08-19): a TrackedBudget category
+    // funded from a different account must not still inflate this card's budgeted amount.
+    [Fact]
+    public async Task AmexClosedCycle_ExcludesTrackedBudgetCategoriesFundedFromADifferentAccount()
+    {
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.AddRange(amex, checking);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.AddRange(groceries, restaurants);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.AddRange(
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget },
+            new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.AddRange(
+            new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id },
+            new BudgetPeriod { CategoryId = restaurants.Id, Amount = 195m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = checking.Id });
+        // Cycle: 2026-05-26 to 2026-06-25, due 2026-07-15 - well under the 900 Groceries budget alone.
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = amex.Id, TransactionDate = new DateOnly(2026, 6, 10), PostedDate = new DateOnly(2026, 6, 10),
+            Description = "WHOLE FOODS", Amount = -500m, ImportSource = "Test", CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var results = await _sut.GetRecentAccuracyAsync(Context, new DateOnly(2026, 7, 20), lookbackDays: 90);
+
+        var comparison = Assert.Single(results, r => r.Name == "Amex Payment" && r.ScheduledDate == new DateOnly(2026, 7, 15));
+        Assert.Equal(900m, comparison.ScheduledAmount); // Restaurants' budget must not be pooled in
     }
 
     [Fact]
@@ -129,10 +168,10 @@ public class ForecastAccuracyServiceTests : DatabaseTestBase
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         // Cycle: 2026-05-26 to 2026-06-25, due 2026-07-15 - closed well before asOfDate.
         Context.BankTransactions.Add(new BankTransaction
@@ -286,18 +325,18 @@ public class ForecastAccuracyServiceTests : DatabaseTestBase
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         // Cycle: 2026-05-26 to 2026-06-25, due 2026-07-15 - budgeted at 900 while it was open.
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
             CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly,
-            EffectiveFrom = new DateOnly(2026, 1, 1), EffectiveThrough = new DateOnly(2026, 7, 21)
+            EffectiveFrom = new DateOnly(2026, 1, 1), EffectiveThrough = new DateOnly(2026, 7, 21), AccountId = amex.Id
         });
         // Edited down to 700 on 7/22 - AFTER that cycle already closed and posted.
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
             CategoryId = groceries.Id, Amount = 700m, Frequency = Frequency.Monthly,
-            EffectiveFrom = new DateOnly(2026, 7, 22), EffectiveThrough = null
+            EffectiveFrom = new DateOnly(2026, 7, 22), EffectiveThrough = null, AccountId = amex.Id
         });
         Context.BankTransactions.Add(new BankTransaction
         {

@@ -40,6 +40,7 @@ builder.Services.Configure<AppSettings>(builder.Configuration.GetSection("AppSet
 builder.Services.AddScoped<BudgetProrationService>();
 builder.Services.AddScoped<RecurrenceExpander>();
 builder.Services.AddScoped<AmexCycleCalculator>();
+builder.Services.AddScoped<TrackedBudgetLineCalculator>();
 builder.Services.AddScoped<ForecastEngine>();
 builder.Services.AddScoped<PaymentDeferralService>();
 builder.Services.AddScoped<PaymentConfirmationService>();

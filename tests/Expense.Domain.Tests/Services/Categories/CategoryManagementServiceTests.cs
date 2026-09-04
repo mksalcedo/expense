@@ -22,18 +22,18 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task CreateCategoryAsync_WithPayInFullAmexStrategy_CreatesRuleAccordingly()
+    public async Task CreateCategoryAsync_WithTrackedBudgetStrategy_CreatesRuleAccordingly()
     {
-        var category = await _sut.CreateCategoryAsync(Context, "Medical", fundingStrategy: FundingStrategies.PayInFullAmex);
+        var category = await _sut.CreateCategoryAsync(Context, "Medical", fundingStrategy: FundingStrategies.TrackedBudget);
 
         var rule = await Context.FundingRules.SingleAsync(r => r.CategoryId == category.Id);
-        Assert.Equal(FundingStrategies.PayInFullAmex, rule.Strategy);
+        Assert.Equal(FundingStrategies.TrackedBudget, rule.Strategy);
     }
 
     [Fact]
     public async Task RenameCategoryAsync_UpdatesTheName()
     {
-        var category = await _sut.CreateCategoryAsync(Context, "Groceries", fundingStrategy: FundingStrategies.PayInFullAmex);
+        var category = await _sut.CreateCategoryAsync(Context, "Groceries", fundingStrategy: FundingStrategies.TrackedBudget);
 
         await _sut.RenameCategoryAsync(Context, category.Id, "Groceries & Household");
 
@@ -46,10 +46,10 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     {
         var category = await _sut.CreateCategoryAsync(Context, "Groceries", fundingStrategy: FundingStrategies.None);
 
-        await _sut.SetFundingStrategyAsync(Context, category.Id, FundingStrategies.PayInFullAmex);
+        await _sut.SetFundingStrategyAsync(Context, category.Id, FundingStrategies.TrackedBudget);
 
         var rule = await Context.FundingRules.SingleAsync(r => r.CategoryId == category.Id);
-        Assert.Equal(FundingStrategies.PayInFullAmex, rule.Strategy);
+        Assert.Equal(FundingStrategies.TrackedBudget, rule.Strategy);
     }
 
     [Fact]
@@ -94,12 +94,12 @@ public class CategoryManagementServiceTests : DatabaseTestBase
     {
         var category = await _sut.CreateCategoryAsync(Context, "Groceries", fundingStrategy: FundingStrategies.None);
 
-        await _sut.UpdateCategoryAsync(Context, category.Id, "Groceries & Household", fundingStrategy: FundingStrategies.PayInFullAmex);
+        await _sut.UpdateCategoryAsync(Context, category.Id, "Groceries & Household", fundingStrategy: FundingStrategies.TrackedBudget);
 
         var reloaded = await Context.Categories.SingleAsync(c => c.Id == category.Id);
         Assert.Equal("Groceries & Household", reloaded.Name);
 
         var rule = await Context.FundingRules.SingleAsync(r => r.CategoryId == category.Id);
-        Assert.Equal(FundingStrategies.PayInFullAmex, rule.Strategy);
+        Assert.Equal(FundingStrategies.TrackedBudget, rule.Strategy);
     }
 }

@@ -7,7 +7,7 @@ namespace Expense.Domain.Services.HistoricalAnalysis;
 
 /// <summary>
 /// "Is my current plan realistic?" - computed entirely on demand from bank_transactions/
-/// amazon_order_items, never stored. Scoped to Direct and PayInFullAmex categories - both
+/// amazon_order_items, never stored. Scoped to Direct and TrackedBudget categories - both
 /// have real BudgetPeriod history to compare against (AccountPayment categories have no
 /// BudgetPeriod at all; None-strategy categories have no budget to compare).
 ///
@@ -17,7 +17,7 @@ namespace Expense.Domain.Services.HistoricalAnalysis;
 /// </summary>
 public class HistoricalAnalysisService(BudgetProrationService proration)
 {
-    private static readonly string[] QualifyingStrategies = [FundingStrategies.Direct, FundingStrategies.PayInFullAmex];
+    private static readonly string[] QualifyingStrategies = [FundingStrategies.Direct, FundingStrategies.TrackedBudget];
 
     public Task<List<PeriodSpendingSummary>> GetWeeklyReportAsync(ExpenseDbContext context, DateOnly weekStart, CancellationToken cancellationToken = default) =>
         GetPeriodReportAsync(context, weekStart, weekStart.AddDays(6), Frequency.Weekly, cancellationToken);

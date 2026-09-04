@@ -203,8 +203,8 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
-        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id });
         Context.BankTransactions.Add(new BankTransaction
         {
             AccountId = amex.Id, TransactionDate = new DateOnly(2026, 2, 1), PostedDate = new DateOnly(2026, 2, 1),
@@ -231,7 +231,7 @@ public class ForecastExcelExporterTests : DatabaseTestBase
     public async Task Export_AmexPayment_CountsUncategorizedCharges_NotJustCategorizedOnes()
     {
         // Real bug: the actual-charges literal used to only sum transactions already sorted
-        // into a PayInFullAmex category - an uncategorized charge (still in the Review Queue
+        // into a TrackedBudget category - an uncategorized charge (still in the Review Queue
         // backlog) was invisible to "how much do I owe". The card is pay-in-full: every real
         // charge needs to be paid regardless of whether it's been categorized yet.
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
@@ -242,8 +242,8 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
-        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id });
         Context.BankTransactions.AddRange(
             new BankTransaction
             {
@@ -282,8 +282,8 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
-        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id });
         Context.BankTransactions.AddRange(
             new BankTransaction
             {
@@ -317,8 +317,8 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
-        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id });
         Context.BankTransactions.AddRange(
             new BankTransaction
             {
@@ -355,8 +355,8 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
-        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id });
         await Context.SaveChangesAsync();
 
         using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
@@ -373,7 +373,7 @@ public class ForecastExcelExporterTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task Export_PayInFullAmexCategories_EachGetTheirOwnAssumptionsRow()
+    public async Task Export_TrackedBudgetCategories_EachGetTheirOwnAssumptionsRow()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
         var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 1100m, StatementCloseDay = 25, PaymentDueDay = 15 };
@@ -385,11 +385,11 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         Context.Categories.AddRange(groceries, gas);
         await Context.SaveChangesAsync();
         Context.FundingRules.AddRange(
-            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex },
-            new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.PayInFullAmex });
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget },
+            new FundingRule { CategoryId = gas.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.AddRange(
-            new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) },
-            new BudgetPeriod { CategoryId = gas.Id, Amount = 100m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+            new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id },
+            new BudgetPeriod { CategoryId = gas.Id, Amount = 100m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id });
         await Context.SaveChangesAsync();
 
         using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));
@@ -402,6 +402,38 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         Assert.Equal("Monthly", assumptions.Cell(groceriesRow, 5).GetString());
         Assert.Equal(100m, assumptions.Cell(gasRow, 2).GetValue<decimal>());
         Assert.Equal("Weekly", assumptions.Cell(gasRow, 5).GetString());
+    }
+
+    // Same account-scoping bug as ForecastEngine/ForecastAccuracyService (2026-08-19) - this
+    // exporter has its own separate copy of the same calculation, and it had an even more
+    // basic version of the bug: qualifyingCategoryIds was computed once, entirely outside the
+    // per-account loop, so it would double-count into every ActiveSpending account's total.
+    [Fact]
+    public async Task Export_ExcludesTrackedBudgetCategoriesFundedFromADifferentAccount()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 1, 1));
+        var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m, StatementCloseDay = 25, PaymentDueDay = 15 };
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.AddRange(amex, checking);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.AddRange(groceries, restaurants);
+        await Context.SaveChangesAsync();
+        Context.FundingRules.AddRange(
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget },
+            new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.AddRange(
+            new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id },
+            new BudgetPeriod { CategoryId = restaurants.Id, Amount = 195m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = checking.Id });
+        await Context.SaveChangesAsync();
+
+        using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 1, 1), new DateOnly(2026, 7, 31));
+
+        var assumptions = workbook.Worksheet("Assumptions");
+        Assert.NotEqual(0, FindRowByName(assumptions, "Groceries"));
+        Assert.Throws<InvalidOperationException>(() => FindRowByName(assumptions, "Restaurants")); // never got its own row on this export at all
     }
 
     [Fact]
@@ -417,8 +449,8 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
-        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id });
         await Context.SaveChangesAsync();
 
         using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31));
@@ -748,7 +780,7 @@ public class ForecastExcelExporterTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task Export_MonthlyAmountColumn_ForAWeeklyPayInFullAmexCategory_UsesWeeklyFactor()
+    public async Task Export_MonthlyAmountColumn_ForAWeeklyTrackedBudgetCategory_UsesWeeklyFactor()
     {
         await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 3, 1));
         var amex = new Account { Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m, StatementCloseDay = 25, PaymentDueDay = 15 };
@@ -757,8 +789,8 @@ public class ForecastExcelExporterTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
-        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1) });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id });
         await Context.SaveChangesAsync();
 
         using var workbook = await _sut.ExportAsync(Context, new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31));

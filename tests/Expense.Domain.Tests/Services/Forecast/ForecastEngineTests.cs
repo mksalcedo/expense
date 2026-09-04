@@ -8,7 +8,7 @@ namespace Expense.Domain.Tests.Services.Forecast;
 
 public class ForecastEngineTests : DatabaseTestBase
 {
-    private readonly ForecastEngine _sut = new(new BudgetProrationService(), new RecurrenceExpander(), new AmexCycleCalculator());
+    private readonly ForecastEngine _sut = new(new BudgetProrationService(), new RecurrenceExpander(), new AmexCycleCalculator(), new TrackedBudgetLineCalculator());
 
     private async Task SeedCheckingBalanceAsync(decimal balance, DateOnly asOfDate, DateTimeOffset? asOfTimestamp = null)
     {
@@ -280,11 +280,11 @@ public class ForecastEngineTests : DatabaseTestBase
         await Context.SaveChangesAsync();
 
         Context.FundingRules.AddRange(
-            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex },
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget },
             new FundingRule { CategoryId = offBudget.Id, Strategy = FundingStrategies.None });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         await Context.SaveChangesAsync();
 
@@ -312,10 +312,10 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         // cycle for the Mar 15 due date runs Jan 26 - Feb 25 - well over the $900 budget
         Context.BankTransactions.Add(new BankTransaction
@@ -335,7 +335,7 @@ public class ForecastEngineTests : DatabaseTestBase
     public async Task AmexClosedCycle_CountsUncategorizedCharges_NotJustCategorizedOnes()
     {
         // Real bug: the payment amount used to only count charges already sorted into a
-        // PayInFullAmex category - an uncategorized charge (still sitting in the Review
+        // TrackedBudget category - an uncategorized charge (still sitting in the Review
         // Queue backlog) was invisible to "how much do I owe", understating the forecast.
         // The card is pay-in-full: every real charge needs to be paid regardless of whether
         // it's been categorized yet.
@@ -352,10 +352,10 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         Context.BankTransactions.AddRange(
             new BankTransaction
@@ -395,10 +395,10 @@ public class ForecastEngineTests : DatabaseTestBase
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
 
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 100m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         Context.BankTransactions.AddRange(
             new BankTransaction
@@ -417,6 +417,277 @@ public class ForecastEngineTests : DatabaseTestBase
 
         var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment" && r.Date == new DateOnly(2026, 3, 15));
         Assert.Equal(-200m, amexRow.Amount); // the $150 payment must not offset the $200 charge
+    }
+
+    // Real bug this guards (2026-08-19): a TrackedBudget category funded from a different
+    // account (e.g. Restaurants moved off Amex onto checking) must not still inflate Amex's
+    // own future-cycle budget estimate just because it shares the strategy - only categories
+    // whose own budget_period.account_id actually points at THIS account count toward it.
+    [Fact]
+    public async Task AmexFutureCycle_ExcludesTrackedBudgetCategoriesFundedFromADifferentAccount()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 1, 1));
+        var amex = new Account
+        {
+            Name = "Amex", Type = AccountType.ActiveSpending, ExtraPayment = 0m,
+            StatementCloseDay = 25, PaymentDueDay = 15
+        };
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.AddRange(amex, checking);
+        await Context.SaveChangesAsync();
+
+        var groceries = new Category { Name = "Groceries" };
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.AddRange(groceries, restaurants);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.AddRange(
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget },
+            new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.AddRange(
+            new BudgetPeriod { CategoryId = groceries.Id, Amount = 450m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id },
+            new BudgetPeriod { CategoryId = restaurants.Id, Amount = 195m, Frequency = Frequency.Weekly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = checking.Id });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 1, 1), new DateOnly(2026, 7, 31));
+
+        var amexRow = Assert.Single(result.Rows, r => r.Description == "Amex Payment" && r.Date == new DateOnly(2026, 7, 15));
+        var expectedMonthlyGroceries = new BudgetProrationService().Convert(450m, Frequency.Weekly, Frequency.Monthly);
+        Assert.Equal(-expectedMonthlyGroceries, amexRow.Amount); // Restaurants' budget must not be pooled in
+    }
+
+    // Real scenario this guards (2026-08-19): Restaurants moved off Amex onto checking, with
+    // no separate "pay the bill later" step - it needs its own standalone line, not just a
+    // silent disappearance from the forecast.
+    [Fact]
+    public async Task TrackedBudgetCategory_FundedFromAnOrdinaryAccount_GetsItsOwnStandaloneLine()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 8, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.Add(restaurants);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = restaurants.Id, Amount = 195m, Frequency = Frequency.Weekly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 8, 19), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        // asOfDate is well before the period even starts - budget only, no actual data.
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 1), new DateOnly(2026, 9, 30));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Restaurants" && r.Date == new DateOnly(2026, 8, 19));
+        Assert.Equal(-195m, row.Amount);
+        Assert.Equal(checking.Id, row.AccountId);
+        Assert.False(row.IsExcluded);
+        // Flags this as a self-managed line - Forecast.razor uses this to hide the
+        // Defer/Confirm/Override/Adjust/Partial-pay buttons, none of which apply to a line
+        // that recomputes and resolves itself automatically.
+        Assert.True(row.IsTrackedBudgetLine);
+    }
+
+    // Regression guard: an ordinary Direct/Amex line must NOT be flagged this way, or it
+    // would lose its real manual actions.
+    [Fact]
+    public async Task NonTrackedBudgetLines_AreNotFlaggedAsTrackedBudgetLines()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 7, 1));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var attCategory = new Category { Name = "AT&T" };
+        Context.Categories.Add(attCategory);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = attCategory.Id, Strategy = FundingStrategies.Direct });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = attCategory.Id, Amount = 80m, Frequency = Frequency.Monthly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 7, 12), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 31));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "AT&T");
+        Assert.False(row.IsTrackedBudgetLine);
+    }
+
+    [Fact]
+    public async Task TrackedBudgetStandaloneLine_ClosedPeriod_ActualSpendingUnderBudget_ShowsOnlyTheRemainingAmount()
+    {
+        // Real bug this guards (2026-08-19): the $38.32 already left checking for real, and
+        // the real starting balance already reflects it - this line must only project the
+        // REMAINING $156.68 still expected before the period ends, never the full $195 (that
+        // would double-count the $38.32 that's already gone).
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 8, 19));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.Add(restaurants);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = restaurants.Id, Amount = 195m, Frequency = Frequency.Weekly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 8, 19), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 17), PostedDate = new DateOnly(2026, 8, 17),
+            Description = "SOME RESTAURANT", Amount = -38.32m, ImportSource = "Test", CategoryId = restaurants.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 19), new DateOnly(2026, 9, 30));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Restaurants" && r.Date == new DateOnly(2026, 8, 19));
+        Assert.Equal(-156.68m, row.Amount); // 195 budgeted - 38.32 already spent = 156.68 still projected
+    }
+
+    [Fact]
+    public async Task TrackedBudgetStandaloneLine_ClosedPeriod_ActualSpendingReachesOrExceedsBudget_DropsToZero()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 8, 19));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.Add(restaurants);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = restaurants.Id, Amount = 195m, Frequency = Frequency.Weekly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 8, 19), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.AddRange(
+            new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 14), PostedDate = new DateOnly(2026, 8, 14),
+                Description = "STEAKHOUSE", Amount = -150m, ImportSource = "Test", CategoryId = restaurants.Id, CreatedAt = DateTimeOffset.UtcNow
+            },
+            new BankTransaction
+            {
+                AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 17), PostedDate = new DateOnly(2026, 8, 17),
+                Description = "SOME RESTAURANT", Amount = -80m, ImportSource = "Test", CategoryId = restaurants.Id, CreatedAt = DateTimeOffset.UtcNow
+            });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 19), new DateOnly(2026, 9, 30));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Restaurants" && r.Date == new DateOnly(2026, 8, 19));
+        Assert.Equal(0m, row.Amount); // already spent more (230) than budgeted (195) - nothing further to project
+    }
+
+    [Fact]
+    public async Task TrackedBudgetStandaloneLine_AutoResolves_OncePeriodHasFullyPassed_WithNoManualConfirmationNeeded()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 8, 22));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.Add(restaurants);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = restaurants.Id, Amount = 195m, Frequency = Frequency.Weekly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 8, 19), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        await Context.SaveChangesAsync();
+
+        // asOfDate (8/22) is 3 days after the period ended (8/19) - fully closed, nothing left to do.
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 22), new DateOnly(2026, 9, 30));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Restaurants" && r.Date == new DateOnly(2026, 8, 19));
+        Assert.True(row.IsExcluded);
+        Assert.Equal(ConfirmationReason.AutoReconciled, row.ExclusionReason);
+    }
+
+    [Fact]
+    public async Task TrackedBudgetStandaloneLine_StaysOpen_WhilePeriodIsStillInProgress()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 8, 17));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.Add(restaurants);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = restaurants.Id, Amount = 195m, Frequency = Frequency.Weekly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 8, 19), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 15), PostedDate = new DateOnly(2026, 8, 15),
+            Description = "SOME RESTAURANT", Amount = -38.32m, ImportSource = "Test", CategoryId = restaurants.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        // asOfDate (8/17) is mid-period - the period doesn't end until 8/19.
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 17), new DateOnly(2026, 9, 30));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Restaurants" && r.Date == new DateOnly(2026, 8, 19));
+        Assert.False(row.IsExcluded);
+    }
+
+    // This is the actual bug report that started the whole TrackedBudget feature: a single
+    // real transaction must never be suggested as "the" answer for a many-transaction
+    // category's line - the standalone line's own Amount already reflects everything summed
+    // so far (see TrackedBudgetLineCalculator), so there's nothing here for a near-miss
+    // suggestion to usefully add - it would only mislead toward Confirm-paid-different-amount
+    // wrongly writing off the rest of the period's spending.
+    [Fact]
+    public async Task TrackedBudgetStandaloneLine_NeverShowsANearMissSuggestion()
+    {
+        await SeedCheckingBalanceAsync(3000m, new DateOnly(2026, 8, 19));
+        var checking = new Account { Name = "Checking", Type = AccountType.Checking };
+        Context.Accounts.Add(checking);
+        await Context.SaveChangesAsync();
+
+        var restaurants = new Category { Name = "Restaurants" };
+        Context.Categories.Add(restaurants);
+        await Context.SaveChangesAsync();
+
+        Context.FundingRules.Add(new FundingRule { CategoryId = restaurants.Id, Strategy = FundingStrategies.TrackedBudget });
+        Context.BudgetPeriods.Add(new BudgetPeriod
+        {
+            CategoryId = restaurants.Id, Amount = 195m, Frequency = Frequency.Weekly, Direction = Direction.Expense,
+            Anchor = new DateOnly(2026, 8, 19), AccountId = checking.Id, EffectiveFrom = new DateOnly(2026, 1, 1)
+        });
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = checking.Id, TransactionDate = new DateOnly(2026, 8, 17), PostedDate = new DateOnly(2026, 8, 17),
+            Description = "SOME RESTAURANT", Amount = -38.32m, ImportSource = "Test", CategoryId = restaurants.Id, CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.GenerateAsync(Context, new DateOnly(2026, 8, 19), new DateOnly(2026, 9, 30));
+
+        var row = Assert.Single(result.Rows, r => r.Description == "Restaurants" && r.Date == new DateOnly(2026, 8, 19));
+        Assert.Null(row.SuggestedOverrideAmount);
+        Assert.Null(row.PartialPaymentCandidates);
     }
 
     [Fact]
@@ -596,11 +867,11 @@ public class ForecastEngineTests : DatabaseTestBase
         await Context.SaveChangesAsync();
 
         Context.FundingRules.AddRange(
-            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex },
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget },
             new FundingRule { CategoryId = amexPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = amex.Id });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         Context.BankTransactions.AddRange(
             new BankTransaction
@@ -642,11 +913,11 @@ public class ForecastEngineTests : DatabaseTestBase
         await Context.SaveChangesAsync();
 
         Context.FundingRules.AddRange(
-            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex },
+            new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget },
             new FundingRule { CategoryId = amexPayment.Id, Strategy = FundingStrategies.AccountPayment, AccountId = amex.Id });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         Context.BankTransactions.Add(new BankTransaction
         {
@@ -678,10 +949,10 @@ public class ForecastEngineTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         Context.BankTransactions.AddRange(
             new BankTransaction
@@ -734,10 +1005,10 @@ public class ForecastEngineTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         Context.BankTransactions.AddRange(
             new BankTransaction
@@ -776,10 +1047,10 @@ public class ForecastEngineTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         // Only $131.65 pending, well under the $900 budget.
         Context.BankTransactions.Add(new BankTransaction
@@ -811,10 +1082,10 @@ public class ForecastEngineTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         Context.BankTransactions.Add(new BankTransaction
         {
@@ -843,10 +1114,10 @@ public class ForecastEngineTests : DatabaseTestBase
         var groceries = new Category { Name = "Groceries" };
         Context.Categories.Add(groceries);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = groceries.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
-            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1)
+            CategoryId = groceries.Id, Amount = 900m, Frequency = Frequency.Monthly, EffectiveFrom = new DateOnly(2026, 1, 1), AccountId = amex.Id
         });
         Context.BankTransactions.AddRange(
             new BankTransaction

@@ -8,12 +8,14 @@ using Microsoft.EntityFrameworkCore;
 namespace Expense.Domain.Services.Forecast;
 
 /// <summary>
-/// Ties RecurrenceExpander + AmexCycleCalculator + the latest checking balance +
-/// each debt account's configured payment into one dated ledger with a running
-/// balance. Always starts from the latest real checking balance, never from
+/// Ties RecurrenceExpander + AmexCycleCalculator + TrackedBudgetLineCalculator + the latest
+/// checking balance + each debt account's configured payment into one dated ledger with a
+/// running balance. Always starts from the latest real checking balance, never from
 /// reconciling history.
 /// </summary>
-public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander recurrenceExpander, AmexCycleCalculator amexCycleCalculator)
+public class ForecastEngine(
+    BudgetProrationService proration, RecurrenceExpander recurrenceExpander, AmexCycleCalculator amexCycleCalculator,
+    TrackedBudgetLineCalculator trackedBudgetLineCalculator)
 {
     // How long a manually confirmed/overridden occurrence stays visible in the ledger after
     // its effective date - long enough to catch a mistaken click, short enough that resolved
@@ -125,28 +127,23 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
 
         foreach (var account in activeSpendingAccounts)
         {
-            var qualifyingCategoryIds = await context.FundingRules
-                .Where(f => f.Strategy == FundingStrategies.PayInFullAmex)
-                .Select(f => f.CategoryId)
+            // Scoped to this specific account, not every TrackedBudget category regardless
+            // of account - a category funded from a different account (e.g. Restaurants
+            // moved off Amex onto checking) must not still inflate this card's own
+            // future-cycle estimate just because it shares the strategy.
+            var currentTrackedBudgetPeriods = await context.BudgetPeriods
+                .Where(p => p.AccountId == account.Id
+                            && p.EffectiveFrom <= asOfDate
+                            && (p.EffectiveThrough == null || p.EffectiveThrough >= asOfDate))
+                .Join(context.FundingRules.Where(f => f.Strategy == FundingStrategies.TrackedBudget),
+                    p => p.CategoryId, f => f.CategoryId, (p, _) => p)
                 .ToListAsync(cancellationToken);
 
-            decimal monthlyBudgetTotal = 0m;
-            foreach (var categoryId in qualifyingCategoryIds)
-            {
-                var currentPeriod = await context.BudgetPeriods
-                    .Where(p => p.CategoryId == categoryId
-                                && p.EffectiveFrom <= asOfDate
-                                && (p.EffectiveThrough == null || p.EffectiveThrough >= asOfDate))
-                    .FirstOrDefaultAsync(cancellationToken);
-
-                if (currentPeriod is not null)
-                {
-                    monthlyBudgetTotal += proration.Convert(currentPeriod.Amount, currentPeriod.Frequency, Frequency.Monthly);
-                }
-            }
+            var monthlyBudgetTotal = currentTrackedBudgetPeriods
+                .Sum(p => proration.Convert(p.Amount, p.Frequency, Frequency.Monthly));
 
             // The actual-charges figure is every real charge on the account this cycle -
-            // not just the ones already sorted into a PayInFullAmex category. This is a
+            // not just the ones already sorted into a TrackedBudget category. This is a
             // pay-in-full card: an uncategorized charge still needs to be paid, so it can't
             // be invisible to "how much do I owe" just because it hasn't been categorized
             // yet. Amount < 0 excludes payments/credits (positive amounts) - those must
@@ -182,6 +179,57 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 {
                     Date = cycle.DueDate, Description = description, Amount = -cycle.Amount, AccountId = account.Id,
                     CategoryId = amexPaymentCategoryId, MatchWindowDays = RecurrenceExpander.MatchWindowDaysFor(Frequency.Monthly)
+                });
+            }
+        }
+
+        // TrackedBudget categories funded from an ordinary (non-statement-cycle) account -
+        // e.g. Restaurants moved off Amex onto checking - get their own standalone recurring
+        // line instead of pooling into a shared card payment, since there's no separate "pay
+        // the bill later" step: the money already left the account as it was spent. Unlike a
+        // credit card, this needs no real "payment" transaction to resolve - once its own
+        // period has fully passed, whatever posted during it (see
+        // TrackedBudgetLineCalculator) already is the complete, final answer, so it
+        // auto-resolves purely by date. Requires an Anchor, same as Direct - a category
+        // pointed at an ordinary account but never given one is skipped rather than guessed at.
+        var activeSpendingAccountIds = activeSpendingAccounts.Select(a => a.Id).ToHashSet();
+        var standaloneTrackedBudgetPeriods = await context.BudgetPeriods
+            .Where(p => p.AccountId != null && !activeSpendingAccountIds.Contains(p.AccountId.Value) && p.Anchor != null
+                        && p.EffectiveFrom <= asOfDate && (p.EffectiveThrough == null || p.EffectiveThrough >= asOfDate))
+            .Join(context.FundingRules.Where(f => f.Strategy == FundingStrategies.TrackedBudget),
+                p => p.CategoryId, f => f.CategoryId, (p, _) => p)
+            .Include(p => p.Category)
+            .ToListAsync(cancellationToken);
+
+        var standaloneTrackedBudgetRows = new List<ForecastLedgerRow>();
+        foreach (var period in standaloneTrackedBudgetPeriods)
+        {
+            var categoryTransactions = await context.BankTransactions
+                .Where(t => t.CategoryId == period.CategoryId && t.Amount < 0)
+                .Where(BankTransactionReconciliation.CountsAsReal)
+                .ToListAsync(cancellationToken);
+
+            var periods = trackedBudgetLineCalculator.CalculatePeriods(
+                period.Anchor!.Value, period.Frequency, period.Amount, categoryTransactions,
+                asOfDate, asOfDate.AddDays(-RecurrenceExpander.MaxMatchWindowDays), windowEnd);
+
+            foreach (var result in periods)
+            {
+                var isResolved = asOfDate > result.PeriodEnd;
+                var signedAmount = period.Direction == Direction.Income ? result.Amount : -result.Amount;
+                standaloneTrackedBudgetRows.Add(new ForecastLedgerRow
+                {
+                    Date = result.PeriodEnd,
+                    Description = period.Category.Name,
+                    Amount = signedAmount,
+                    RunningBalance = 0m,
+                    AccountId = period.AccountId!.Value,
+                    OriginalDate = result.PeriodEnd,
+                    CategoryId = period.CategoryId,
+                    IsExcluded = isResolved,
+                    ExclusionReason = isResolved ? ConfirmationReason.AutoReconciled : null,
+                    ResolvedDate = isResolved ? result.PeriodEnd : null,
+                    IsTrackedBudgetLine = true
                 });
             }
         }
@@ -453,6 +501,8 @@ public class ForecastEngine(BudgetProrationService proration, RecurrenceExpander
                 ResolvedDate = DateOnly.FromDateTime(confirmation.CreatedAt.UtcDateTime)
             });
         }
+
+        rows.AddRange(standaloneTrackedBudgetRows);
 
         var excludedVisibilityCutoff = asOfDate.AddDays(-ExcludedPaymentVisibilityDays);
         // Income before expense on days with more than one line - roughly matches how

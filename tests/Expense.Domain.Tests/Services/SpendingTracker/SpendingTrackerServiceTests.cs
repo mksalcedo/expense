@@ -22,7 +22,7 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 
-        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
             CategoryId = category.Id, Amount = amount, Frequency = frequency, EffectiveFrom = new DateOnly(2026, 1, 1)
@@ -45,7 +45,7 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
 
-        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.Add(new BudgetPeriod
         {
             CategoryId = category.Id, Amount = amount, Frequency = frequency, EffectiveFrom = new DateOnly(2026, 1, 1)
@@ -103,7 +103,7 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
         var category = new Category { Name = "Groceries", CarryoverAnchorDate = new DateOnly(2026, 1, 1) };
         Context.Categories.Add(category);
         await Context.SaveChangesAsync();
-        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.PayInFullAmex });
+        Context.FundingRules.Add(new FundingRule { CategoryId = category.Id, Strategy = FundingStrategies.TrackedBudget });
         Context.BudgetPeriods.AddRange(
             new BudgetPeriod
             {
@@ -381,7 +381,7 @@ public class SpendingTrackerServiceTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task NonPayInFullAmexCategories_AreExcluded()
+    public async Task NonTrackedBudgetCategories_AreExcluded()
     {
         var truist = new Category { Name = "Truist" };
         Context.Categories.Add(truist);
