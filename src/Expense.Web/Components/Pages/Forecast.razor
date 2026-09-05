@@ -427,7 +427,7 @@ else
                 break;
             case ModalKind.PayPartial:
                 if (_modalAmount is not { } amount || amount <= 0m) { CloseModal(); return; }
-                await ForecastResultProvider.PayPartialAmountAsync(row.AccountId, row.OriginalDate, _modalDate, amount, IsIncomeLine(row) ? Direction.Income : Direction.Expense);
+                await ForecastResultProvider.PayPartialAmountAsync(row.AccountId, row.OriginalDate, _modalDate, amount, IsIncomeLine(row) ? Direction.Income : Direction.Expense, row.Description);
                 break;
             case ModalKind.RemoveDeferral:
                 if (row.DeferralId is { } deferralId) await ForecastResultProvider.RemoveDeferralAsync(deferralId);

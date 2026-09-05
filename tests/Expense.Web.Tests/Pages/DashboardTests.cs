@@ -33,7 +33,7 @@ public class DashboardTests : BunitContext
         public Task ConfirmPaymentAsync(int accountId, int? categoryId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task OverridePaymentAsync(int accountId, int? categoryId, DateOnly originalDate, DateOnly effectiveDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, string lineDescription, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task AdjustAmountAsync(int accountId, int? categoryId, DateOnly originalDate, decimal amount, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task RemoveAmountAdjustmentAsync(int adjustmentId, CancellationToken cancellationToken = default) => Task.CompletedTask;

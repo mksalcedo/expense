@@ -103,7 +103,7 @@ public class ForecastTests : BunitContext
             return Task.CompletedTask;
         }
 
-        public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default)
+        public Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, string lineDescription, CancellationToken cancellationToken = default)
         {
             var row = result.Rows.Single(r => r.AccountId == accountId && r.OriginalDate == originalDate);
             row.Amount += direction == Direction.Income ? -amount : amount;

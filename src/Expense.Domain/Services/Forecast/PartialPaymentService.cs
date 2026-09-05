@@ -13,14 +13,21 @@ namespace Expense.Domain.Services.Forecast;
 /// </summary>
 public class PartialPaymentService
 {
+    /// <param name="lineDescription">The original forecast line's own description (e.g.
+    /// "Piano") - used to name the synthetic OneTimeEvent this creates. Deliberately not
+    /// re-derived from the account, which only reads correctly for a debt/Amex payment
+    /// (where the line's own description already IS "{account.Name} Payment" anyway, so this
+    /// produces the identical text there) - a Direct-funded category like Piano is paid into
+    /// the plain checking account itself, and naming its synthetic event after that account
+    /// produced the nonsensical "Wells Fargo Checking Payment (partial)" (found live
+    /// 2026-09-05, from a real $95 Piano partial payment).</param>
     public async Task<PartialPayment> CreateAsync(
-        ExpenseDbContext context, int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default)
+        ExpenseDbContext context, int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction,
+        string lineDescription, CancellationToken cancellationToken = default)
     {
-        var account = await context.Accounts.SingleAsync(a => a.Id == accountId, cancellationToken);
-
         var oneTimeEvent = new OneTimeEvent
         {
-            Name = $"{account.Name} Payment (partial)",
+            Name = $"{lineDescription} (partial)",
             Amount = amount,
             Direction = direction,
             Date = paidDate,

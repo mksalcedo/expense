@@ -17,7 +17,7 @@ public interface IForecastResultProvider
 
     Task RemoveConfirmationAsync(int confirmationId, CancellationToken cancellationToken = default);
 
-    Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, CancellationToken cancellationToken = default);
+    Task PayPartialAmountAsync(int accountId, DateOnly originalDate, DateOnly paidDate, decimal amount, Direction direction, string lineDescription, CancellationToken cancellationToken = default);
 
     Task RemovePartialPaymentAsync(int partialPaymentId, CancellationToken cancellationToken = default);
 
