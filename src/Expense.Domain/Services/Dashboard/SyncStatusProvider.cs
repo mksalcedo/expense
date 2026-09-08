@@ -25,6 +25,7 @@ public class SyncStatusProvider(
     SimpleFinSyncService simpleFinSync,
     AmazonImportService amazonImportService,
     CategorizationService categorization,
+    DepartmentMappingService departmentMappings,
     DedupService dedup,
     IConfiguration configuration,
     SyncIssueService syncIssues,
@@ -108,7 +109,7 @@ public class SyncStatusProvider(
                 cancellationToken);
         }
 
-        var syncService = new AmazonGmailSyncService(new GoogleGmailMessageSource(gmail), amazonImportService, categorization);
+        var syncService = new AmazonGmailSyncService(new GoogleGmailMessageSource(gmail), amazonImportService, categorization, departmentMappings);
         var result = await syncService.RunAsync(context, onProgress, cancellationToken);
         await CaptureForecastSnapshotAsync(cancellationToken);
         return result.Run;

@@ -72,6 +72,36 @@ public class GmailMessageParsingTests
     }
 
     [Fact]
+    public void ExtractHtmlBody_FindsTheHtmlPart_EvenWhenAPlainTextPartExistsToo()
+    {
+        // Amazon's order emails carry the per-order "{count} {department}" line only in the
+        // text/html part, never text/plain - so this has to prefer html, not fall back to it.
+        var part = new MessagePart
+        {
+            MimeType = "multipart/alternative",
+            Parts =
+            [
+                new MessagePart { MimeType = "text/plain", Body = new MessagePartBody { Data = EncodeBase64Url("plain text version") } },
+                new MessagePart { MimeType = "text/html", Body = new MessagePartBody { Data = EncodeBase64Url("<span>2 Supplements</span>") } }
+            ]
+        };
+
+        Assert.Equal("<span>2 Supplements</span>", GmailMessageParsing.ExtractHtmlBody(part));
+    }
+
+    [Fact]
+    public void ExtractHtmlBody_WhenNoHtmlPartExists_ReturnsNull()
+    {
+        var part = new MessagePart
+        {
+            MimeType = "multipart/alternative",
+            Parts = [new MessagePart { MimeType = "text/plain", Body = new MessagePartBody { Data = EncodeBase64Url("plain only") } }]
+        };
+
+        Assert.Null(GmailMessageParsing.ExtractHtmlBody(part));
+    }
+
+    [Fact]
     public void DecodeBase64Url_HandlesAllThreePaddingCases()
     {
         Assert.Equal("ab", GmailMessageParsing.DecodeBase64Url(EncodeBase64Url("ab")));

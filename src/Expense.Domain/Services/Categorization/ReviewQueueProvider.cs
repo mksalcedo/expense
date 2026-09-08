@@ -10,7 +10,7 @@ namespace Expense.Domain.Services.Categorization;
 /// <summary>Thin DI-composition wiring (like ForecastResultProvider) - all real logic lives in CategorizationService.</summary>
 public class ReviewQueueProvider(
     IDbContextFactory<ExpenseDbContext> contextFactory, CategorizationService categorization, TransactionManagementService transactions,
-    AmazonImportService amazonImport, HttpClient httpClient, IConfiguration configuration)
+    AmazonImportService amazonImport, DepartmentMappingService departmentMappings, HttpClient httpClient, IConfiguration configuration)
     : IReviewQueueProvider
 {
     public async Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default)
@@ -20,8 +20,21 @@ public class ReviewQueueProvider(
         {
             TransactionGroups = await categorization.GetPendingTransactionGroupsAsync(context),
             AmazonItemGroups = await categorization.GetPendingAmazonItemGroupsAsync(context),
-            Categories = await context.Categories.OrderBy(c => c.Name).ToListAsync(cancellationToken)
+            Categories = await context.Categories.OrderBy(c => c.Name).ToListAsync(cancellationToken),
+            AmazonDepartmentMappings = await departmentMappings.GetAllAsync(context, cancellationToken)
         };
+    }
+
+    public async Task<int> UpsertAmazonDepartmentMappingAsync(string departmentName, int categoryId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await departmentMappings.UpsertAndReapplyAsync(context, departmentName, categoryId, cancellationToken);
+    }
+
+    public async Task DeleteAmazonDepartmentMappingAsync(int mappingId, CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await departmentMappings.DeleteAsync(context, mappingId, cancellationToken);
     }
 
     public async Task<int> CategorizeTransactionAsync(

@@ -26,4 +26,16 @@ public class PendingAmazonItemGroup
     public string? NeedsReviewReason { get; set; }
     public string? RawEmailBody { get; set; }
     public string? OrderDetailsUrl { get; set; }
+
+    /// <summary>The "{count} {department}" hint from the order email's HTML body (see
+    /// AmazonOrderCategoryHintParser), when one was parsed but didn't resolve to a single
+    /// category (unmapped or genuinely mixed). Null otherwise.</summary>
+    public string? DepartmentHint { get; set; }
+
+    /// <summary>
+    /// The single department name when DepartmentHint names exactly one - the thing a
+    /// "remember this department" shortcut in the Review Queue would map. Null for a mixed
+    /// hint (nothing single to remember) or no hint.
+    /// </summary>
+    public string? SingleDepartmentName { get; set; }
 }

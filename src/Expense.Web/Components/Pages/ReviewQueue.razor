@@ -176,6 +176,13 @@ else
                         {
                             <input id="item-title-@representativeId" value="@group.ItemTitle"
                                    @onchange="e => UpdateAmazonItemDetailsAsync(representativeId, title: (string?)e.Value, price: null)" />
+                            @if (group.DepartmentHint is { } hint)
+                            {
+                                <br />
+                                <span id="item-department-hint-@representativeId" style="color:#666; font-size:0.85em;">
+                                    Amazon department: <strong>@hint</strong>
+                                </span>
+                            }
                         }
                         else
                         {
@@ -224,6 +231,17 @@ else
                                 <option value="@category.Id">@category.Name</option>
                             }
                         </select>
+                        @if (group.NeedsReview && group.SingleDepartmentName is { } dept
+                             && !_data.AmazonDepartmentMappings.Any(m => string.Equals(m.DepartmentName, dept, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            <br />
+                            <label style="font-size:0.85em;">
+                                <input type="checkbox" id="item-remember-department-@representativeId"
+                                       checked="@_rememberDepartment.Contains(representativeId)"
+                                       @onchange="e => ToggleRememberDepartment(representativeId, (bool)e.Value!)" />
+                                Always file Amazon &ldquo;@dept&rdquo; here
+                            </label>
+                        }
                     </td>
                     <td>
                         @if (group.NeedsReview)
@@ -336,6 +354,55 @@ else
             }
         </tbody>
     </table>
+
+    <details id="amazon-department-rules" style="margin-top: 1rem;">
+        <summary>Amazon department rules (@_data.AmazonDepartmentMappings.Count)</summary>
+        <p style="color:#666; font-size:0.9em;">
+            When an Amazon order email has no item detail, its category is set automatically from the
+            department below and the order skips this queue. Leave ambiguous departments (Kitchen, Home)
+            unmapped &mdash; those still come here for review.
+        </p>
+        <table>
+            <thead><tr><th>Amazon department</th><th>Category</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var mapping in _data.AmazonDepartmentMappings)
+                {
+                    <tr @key="mapping.Id">
+                        <td>@mapping.DepartmentName</td>
+                        <td>
+                            <select id="department-mapping-category-@mapping.Id"
+                                    @onchange="e => RepointDepartmentMappingAsync(mapping.DepartmentName, int.Parse((string)e.Value!))">
+                                @foreach (var category in _data.Categories)
+                                {
+                                    <option value="@category.Id" selected="@(category.Id == mapping.CategoryId)">@category.Name</option>
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <button id="department-mapping-delete-@mapping.Id" @onclick="() => DeleteDepartmentMappingAsync(mapping.Id)">Delete</button>
+                        </td>
+                    </tr>
+                }
+                <tr>
+                    <td><input id="new-department-name" placeholder="e.g. Kitchen" @bind="_newDepartmentName" /></td>
+                    <td>
+                        <select id="new-department-category" @bind="_newDepartmentCategoryId">
+                            <option value="0">-- category --</option>
+                            @foreach (var category in _data.Categories)
+                            {
+                                <option value="@category.Id">@category.Name</option>
+                            }
+                        </select>
+                    </td>
+                    <td>
+                        <button id="add-department-mapping-btn"
+                                disabled="@(string.IsNullOrWhiteSpace(_newDepartmentName) || _newDepartmentCategoryId == 0)"
+                                @onclick="AddDepartmentMappingAsync">Add</button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </details>
 }
 
 @if (_confirmSingleWordModalOpen)
@@ -360,6 +427,12 @@ else
     private ReviewQueueData? _data;
     private readonly Dictionary<int, string?> _transactionPattern = [];
     private readonly Dictionary<int, string?> _itemPattern = [];
+
+    // representativeIds whose "Remember this Amazon department" checkbox is ticked - when the
+    // group is then categorized, that department gets mapped to the chosen category.
+    private readonly HashSet<int> _rememberDepartment = [];
+    private string _newDepartmentName = "";
+    private int _newDepartmentCategoryId;
     private bool _reapplyingRules;
     private string? _reapplyMessage;
 
@@ -710,6 +783,45 @@ else
     private async Task CommitAmazonItemCategorizationAsync(int representativeId, int categoryId, string? pattern)
     {
         await ReviewQueueProvider.CategorizeAmazonItemAsync(representativeId, categoryId, pattern);
+
+        // "Remember this department" was ticked - map it, which also re-resolves any other
+        // pending placeholders with the same department hint.
+        if (_rememberDepartment.Remove(representativeId))
+        {
+            var group = _data?.AmazonItemGroups.FirstOrDefault(g => g.ItemIds[0] == representativeId);
+            if (group?.SingleDepartmentName is { } department)
+            {
+                await ReviewQueueProvider.UpsertAmazonDepartmentMappingAsync(department, categoryId);
+            }
+        }
+
+        await ReloadDataAsync();
+    }
+
+    private void ToggleRememberDepartment(int representativeId, bool remember)
+    {
+        if (remember) _rememberDepartment.Add(representativeId);
+        else _rememberDepartment.Remove(representativeId);
+    }
+
+    private async Task AddDepartmentMappingAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newDepartmentName) || _newDepartmentCategoryId == 0) return;
+        await ReviewQueueProvider.UpsertAmazonDepartmentMappingAsync(_newDepartmentName.Trim(), _newDepartmentCategoryId);
+        _newDepartmentName = "";
+        _newDepartmentCategoryId = 0;
+        await ReloadDataAsync();
+    }
+
+    private async Task RepointDepartmentMappingAsync(string departmentName, int categoryId)
+    {
+        await ReviewQueueProvider.UpsertAmazonDepartmentMappingAsync(departmentName, categoryId);
+        await ReloadDataAsync();
+    }
+
+    private async Task DeleteDepartmentMappingAsync(int mappingId)
+    {
+        await ReviewQueueProvider.DeleteAmazonDepartmentMappingAsync(mappingId);
         await ReloadDataAsync();
     }
 

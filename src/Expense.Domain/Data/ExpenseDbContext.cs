@@ -14,6 +14,7 @@ public class ExpenseDbContext(DbContextOptions<ExpenseDbContext> options) : DbCo
     public DbSet<FundingRule> FundingRules => Set<FundingRule>();
     public DbSet<BankTransaction> BankTransactions => Set<BankTransaction>();
     public DbSet<AmazonOrderItem> AmazonOrderItems => Set<AmazonOrderItem>();
+    public DbSet<AmazonDepartmentMapping> AmazonDepartmentMappings => Set<AmazonDepartmentMapping>();
     public DbSet<BudgetPeriod> BudgetPeriods => Set<BudgetPeriod>();
     public DbSet<OneTimeEvent> OneTimeEvents => Set<OneTimeEvent>();
     public DbSet<ImportRun> ImportRuns => Set<ImportRun>();

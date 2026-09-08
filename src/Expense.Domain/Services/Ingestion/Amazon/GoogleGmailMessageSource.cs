@@ -34,11 +34,12 @@ public class GoogleGmailMessageSource(GmailService gmail) : IGmailMessageSource
             var message = await gmail.Users.Messages.Get("me", messageRef.Id).ExecuteAsync(cancellationToken);
             var subject = GmailMessageParsing.GetHeader(message, "Subject");
             var body = GmailMessageParsing.ExtractPlainTextBody(message.Payload);
+            var htmlBody = GmailMessageParsing.ExtractHtmlBody(message.Payload);
             var receivedDate = message.InternalDate is { } unixMs
                 ? DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeMilliseconds(unixMs).UtcDateTime)
                 : DateOnly.FromDateTime(DateTime.UtcNow);
 
-            messages.Add(new GmailMessage(messageRef.Id, subject, body, receivedDate));
+            messages.Add(new GmailMessage(messageRef.Id, subject, body, receivedDate, htmlBody));
         }
 
         return messages;

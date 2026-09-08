@@ -20,14 +20,25 @@ namespace Expense.Domain.Services.Ingestion.Amazon;
 /// Dedup is by (order_id, item_title, price) since the negative price never collides
 /// with the original purchase's own positive-price row under the same order/item key.
 /// </summary>
-public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefundEmailParser refundParser)
+public class AmazonImportService(
+    AmazonOrderEmailParser orderParser, AmazonRefundEmailParser refundParser, AmazonOrderCategoryHintParser hintParser)
 {
     public async Task<AmazonImportSummary> ImportOrderAsync(
-        ExpenseDbContext context, string emailBody, DateOnly orderDate, string? messageId = null, CancellationToken cancellationToken = default)
+        ExpenseDbContext context, string emailBody, DateOnly orderDate, string? messageId = null, string? htmlBody = null,
+        CancellationToken cancellationToken = default)
     {
         var items = orderParser.Parse(emailBody, orderDate, messageId);
         var summary = new AmazonImportSummary();
         var products = await context.Products.ToListAsync(cancellationToken);
+
+        // Per-order "{count} {department}" hints from the HTML body (text/plain omits them),
+        // plus the department->category map - together these let a detail-less placeholder
+        // order auto-categorize from its department alone. Both empty/absent -> every
+        // placeholder just stays NeedsReview with a null category, exactly as before.
+        var categoryHints = hintParser.Parse(htmlBody);
+        var departmentMappings = categoryHints.Count == 0
+            ? []
+            : await context.AmazonDepartmentMappings.Include(m => m.Category).ToListAsync(cancellationToken);
 
         foreach (var item in items)
         {
@@ -40,11 +51,19 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
             // brand new item and got inserted as a duplicate (a real bug found in production).
             // OrderId alone is a safe, stable key here specifically because there's structurally
             // only ever one such row per order.
-            var exists = item.NeedsReview
-                ? await context.AmazonOrderItems.AnyAsync(i => i.OrderId == item.OrderId, cancellationToken)
-                : await context.AmazonOrderItems.AnyAsync(i => i.OrderId == item.OrderId && i.ItemTitle == item.ItemTitle, cancellationToken);
-            if (exists)
+            var existingRow = item.NeedsReview
+                ? await context.AmazonOrderItems.FirstOrDefaultAsync(i => i.OrderId == item.OrderId, cancellationToken)
+                : await context.AmazonOrderItems.FirstOrDefaultAsync(i => i.OrderId == item.OrderId && i.ItemTitle == item.ItemTitle, cancellationToken);
+            if (existingRow is not null)
             {
+                // Backfill a department hint (and maybe auto-categorize) onto a placeholder
+                // that imported before this feature existed - a re-scan of its email within
+                // the sync's overlap window is the only chance to reach it.
+                if (existingRow is { NeedsReview: true, CategoryId: null, DepartmentHint: null })
+                {
+                    ApplyDepartmentHint(existingRow, categoryHints, departmentMappings);
+                }
+
                 summary.DuplicatesSkipped++;
                 summary.ItemOutcomes.Add(new AmazonItemOutcome(item.ItemTitle, item.Price, item.Quantity, WasDuplicate: true, NeedsReview: item.NeedsReview));
                 continue;
@@ -65,6 +84,11 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
                 item.CategoryId = match.CategoryId;
             }
 
+            if (item.NeedsReview)
+            {
+                ApplyDepartmentHint(item, categoryHints, departmentMappings);
+            }
+
             context.AmazonOrderItems.Add(item);
             summary.ItemsAdded++;
             summary.ItemOutcomes.Add(new AmazonItemOutcome(item.ItemTitle, item.Price, item.Quantity, WasDuplicate: false, NeedsReview: item.NeedsReview));
@@ -72,6 +96,31 @@ public class AmazonImportService(AmazonOrderEmailParser orderParser, AmazonRefun
 
         await context.SaveChangesAsync(cancellationToken);
         return summary;
+    }
+
+    /// <summary>
+    /// For a NeedsReview placeholder row, look up its order's department hint and try to
+    /// resolve it to a single category. Only auto-assigns when every department named for
+    /// the order maps, and they all resolve to exactly one category (so "Supplements" +
+    /// "Vitamins" -> Supplements is fine; "Apparel" + "Office" -> two categories is not, and
+    /// neither is any unmapped department). On a confident match: sets the category, clears
+    /// NeedsReview, and rewrites the generic title. Always records the hint string, so a
+    /// later-added mapping can re-resolve rows still in the queue and a wrong auto-category
+    /// stays traceable.
+    /// </summary>
+    private static void ApplyDepartmentHint(
+        AmazonOrderItem item, IReadOnlyList<AmazonOrderCategoryHint> hints, IReadOnlyList<AmazonDepartmentMapping> mappings)
+    {
+        var hint = hints.FirstOrDefault(h => h.OrderId == item.OrderId);
+        if (hint is null || hint.Departments.Count == 0) return;
+
+        item.DepartmentHint = hint.ToDisplayString();
+
+        var category = AmazonDepartmentResolver.Resolve(hint.Departments.Select(d => d.Department), mappings);
+        if (category is not null)
+        {
+            AmazonDepartmentResolver.ApplyResolvedCategory(item, category, hint.ToDisplayString());
+        }
     }
 
     public async Task<AmazonImportSummary> ImportRefundAsync(

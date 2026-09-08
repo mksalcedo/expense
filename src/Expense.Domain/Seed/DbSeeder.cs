@@ -38,6 +38,16 @@ public class DbSeeder
         await context.SaveChangesAsync();
 
         context.Products.Add(new Product { ProductPattern = "%GIFT CARD%", CategoryId = offBudget.Id });
+
+        // Amazon department -> category, for auto-categorizing detail-less order emails
+        // (see AmazonImportService / AmazonOrderCategoryHintParser). Same conservative seed
+        // the AddAmazonDepartmentMappings migration applies to an existing prod DB.
+        context.AmazonDepartmentMappings.AddRange(
+            new AmazonDepartmentMapping { DepartmentName = "Nutrition & Wellness", CategoryId = supplements.Id },
+            new AmazonDepartmentMapping { DepartmentName = "Supplements", CategoryId = supplements.Id },
+            new AmazonDepartmentMapping { DepartmentName = "Vitamins", CategoryId = supplements.Id },
+            new AmazonDepartmentMapping { DepartmentName = "Health Care", CategoryId = supplements.Id },
+            new AmazonDepartmentMapping { DepartmentName = "Grocery", CategoryId = groceries.Id });
         await context.SaveChangesAsync();
 
         context.Accounts.Add(new Account { Name = "Wells Fargo Checking", Type = AccountType.Checking });

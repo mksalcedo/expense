@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Expense.Domain.Data;
 using Expense.Domain.Entities;
+using Expense.Domain.Services.Ingestion.Amazon;
 using Microsoft.EntityFrameworkCore;
 
 namespace Expense.Domain.Services.Categorization;
@@ -331,7 +332,9 @@ public class CategorizationService
                 OrderId = i.OrderId,
                 NeedsReviewReason = i.NeedsReviewReason,
                 RawEmailBody = i.RawEmailBody,
-                OrderDetailsUrl = i.OrderDetailsUrl
+                OrderDetailsUrl = i.OrderDetailsUrl,
+                DepartmentHint = i.DepartmentHint,
+                SingleDepartmentName = SingleDepartmentNameOf(i.DepartmentHint)
             });
 
         var groupedItems = pending
@@ -354,6 +357,12 @@ public class CategorizationService
             });
 
         return needsReviewGroups.Concat(groupedItems).OrderByDescending(g => g.ItemIds.Count).ToList();
+    }
+
+    private static string? SingleDepartmentNameOf(string? departmentHint)
+    {
+        var names = AmazonDepartmentResolver.ParseDepartmentNames(departmentHint);
+        return names.Count == 1 ? names[0] : null;
     }
 
     /// <summary>Hides selected pending transactions from the Review Queue's action list without categorizing them - see BankTransaction.Dismissed.</summary>

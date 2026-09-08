@@ -79,6 +79,8 @@ public class NavMenuTests : BunitContext
         public Task UpdateAmazonItemDetailsAsync(int itemId, string itemTitle, decimal price, int quantity, decimal? taxAllocated = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, decimal taxAllocated = 0m, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default) => Task.FromResult(new List<string>());
+        public Task<int> UpsertAmazonDepartmentMappingAsync(string departmentName, int categoryId, CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task DeleteAmazonDepartmentMappingAsync(int mappingId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private class FakeStagedScrapeStore : IStagedScrapeStore

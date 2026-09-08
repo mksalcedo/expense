@@ -7,7 +7,7 @@ namespace Expense.Domain.Tests.Services.Ingestion.Amazon;
 
 public class AmazonImportServiceTests : DatabaseTestBase
 {
-    private readonly AmazonImportService _sut = new(new AmazonOrderEmailParser(), new AmazonRefundEmailParser());
+    private readonly AmazonImportService _sut = new(new AmazonOrderEmailParser(), new AmazonRefundEmailParser(), new AmazonOrderCategoryHintParser());
 
     private const string SingleItemEmail = """
         Order #
@@ -208,6 +208,163 @@ public class AmazonImportServiceTests : DatabaseTestBase
         var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
         Assert.Null(item.ProductId);
         Assert.Null(item.CategoryId);
+    }
+
+    // --- Auto-categorization from the email's HTML department hint ---
+
+    private const string SingleDepartmentHtml = """
+        <table><tr><td><div><span class="rio-text">Arriving tomorrow</span></div></td></tr>
+        <tr><td><div><span class="rio-text">1 Supplements item</span></div></td></tr>
+        <tr><td><div><span class="rio-text"><span>Order #</span> <span>113-1132648-3403446</span></span></div></td></tr>
+        <tr><td><div><span class="rio-text">Grand Total:</span></div></td></tr></table>
+        """;
+
+    private const string MixedDepartmentHtml = """
+        <table><tr><td><div><span class="rio-text">Arriving tomorrow</span></div></td></tr>
+        <tr><td><div><span class="rio-text"><span>Order #</span> <span>113-1132648-3403446</span></span></div></td></tr>
+        <tr><td><div><span class="rio-text">4 items: 3 Apparel, 1 Office</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Grand Total:</span></div></td></tr></table>
+        """;
+
+    private const string KitchenDepartmentHtml = """
+        <table><tr><td><div><span class="rio-text">Arriving tomorrow</span></div></td></tr>
+        <tr><td><div><span class="rio-text">1 Kitchen item</span></div></td></tr>
+        <tr><td><div><span class="rio-text"><span>Order #</span> <span>113-1132648-3403446</span></span></div></td></tr>
+        <tr><td><div><span class="rio-text">Grand Total:</span></div></td></tr></table>
+        """;
+
+    private const string TwoSupplementFamilyDepartmentsHtml = """
+        <table><tr><td><div><span class="rio-text">Arriving tomorrow</span></div></td></tr>
+        <tr><td><div><span class="rio-text"><span>Order #</span> <span>113-1132648-3403446</span></span></div></td></tr>
+        <tr><td><div><span class="rio-text">2 items: 1 Supplements, 1 Vitamins</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Grand Total:</span></div></td></tr></table>
+        """;
+
+    // "Supplements" and "Vitamins" both map to the one Supplements category (matching the real
+    // seed) - so an order spanning both still resolves to a single category. "Kitchen" is not mapped.
+    private async Task SeedSupplementsMappingAsync()
+    {
+        var supplements = new Category { Name = "Supplements" };
+        Context.Categories.Add(supplements);
+        await Context.SaveChangesAsync();
+        Context.AmazonDepartmentMappings.AddRange(
+            new AmazonDepartmentMapping { DepartmentName = "Supplements", CategoryId = supplements.Id },
+            new AmazonDepartmentMapping { DepartmentName = "Vitamins", CategoryId = supplements.Id });
+        await Context.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task ImportOrder_PlaceholderWithAMappedDepartmentHint_AutoCategorizesAndClearsNeedsReview()
+    {
+        await SeedSupplementsMappingAsync();
+        var supplements = await Context.Categories.SingleAsync(c => c.Name == "Supplements");
+
+        var summary = await _sut.ImportOrderAsync(
+            Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 20), htmlBody: SingleDepartmentHtml);
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Equal(supplements.Id, item.CategoryId);
+        Assert.False(item.NeedsReview);
+        Assert.Equal("Amazon order — Supplements", item.ItemTitle);
+        Assert.Equal("Supplements", item.DepartmentHint);
+        Assert.False(Assert.Single(summary.ItemOutcomes).NeedsReview);
+    }
+
+    [Fact]
+    public async Task ImportOrder_PlaceholderWhoseTwoDepartmentsBothMapToTheSameCategory_StillAutoCategorizes()
+    {
+        await SeedSupplementsMappingAsync();
+        var supplements = await Context.Categories.SingleAsync(c => c.Name == "Supplements");
+
+        await _sut.ImportOrderAsync(
+            Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 9, 1), htmlBody: TwoSupplementFamilyDepartmentsHtml);
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Equal(supplements.Id, item.CategoryId);
+        Assert.False(item.NeedsReview);
+    }
+
+    [Fact]
+    public async Task ImportOrder_PlaceholderWithAMixedDepartmentHint_StaysUncategorizedAndNeedsReview_ButRecordsTheHint()
+    {
+        var apparel = new Category { Name = "Clothing" };
+        var office = new Category { Name = "Office Supplies" };
+        Context.Categories.AddRange(apparel, office);
+        await Context.SaveChangesAsync();
+        Context.AmazonDepartmentMappings.AddRange(
+            new AmazonDepartmentMapping { DepartmentName = "Apparel", CategoryId = apparel.Id },
+            new AmazonDepartmentMapping { DepartmentName = "Office", CategoryId = office.Id });
+        await Context.SaveChangesAsync();
+
+        await _sut.ImportOrderAsync(
+            Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 17), htmlBody: MixedDepartmentHtml);
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Null(item.CategoryId);
+        Assert.True(item.NeedsReview);
+        Assert.Equal("3 Apparel, 1 Office", item.DepartmentHint);
+    }
+
+    [Fact]
+    public async Task ImportOrder_PlaceholderWithAnUnmappedDepartmentHint_StaysUncategorized_ButRecordsTheHint()
+    {
+        await SeedSupplementsMappingAsync(); // "Kitchen" is deliberately not mapped
+
+        await _sut.ImportOrderAsync(
+            Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 9), htmlBody: KitchenDepartmentHtml);
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Null(item.CategoryId);
+        Assert.True(item.NeedsReview);
+        Assert.Equal("Kitchen", item.DepartmentHint);
+    }
+
+    [Fact]
+    public async Task ImportOrder_PlaceholderWithNoHtmlBody_BehavesExactlyAsBefore()
+    {
+        await SeedSupplementsMappingAsync();
+
+        await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 20));
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Null(item.CategoryId);
+        Assert.True(item.NeedsReview);
+        Assert.Null(item.DepartmentHint);
+    }
+
+    [Fact]
+    public async Task ImportOrder_ReScan_BackfillsADepartmentHintOntoAPlaceholderThatImportedBeforeTheFeature()
+    {
+        await SeedSupplementsMappingAsync();
+        var supplements = await Context.Categories.SingleAsync(c => c.Name == "Supplements");
+
+        // First import: no HTML body (simulates a pre-feature import) -> plain placeholder.
+        await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 20));
+        var before = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Null(before.DepartmentHint);
+
+        // Re-scan of the same email, now with the HTML body available.
+        await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 20), htmlBody: SingleDepartmentHtml);
+
+        var after = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Equal("Supplements", after.DepartmentHint);
+        Assert.Equal(supplements.Id, after.CategoryId);
+        Assert.False(after.NeedsReview);
+        Assert.Single(await Context.AmazonOrderItems.Where(i => i.OrderId == "113-1132648-3403446").ToListAsync());
+    }
+
+    [Fact]
+    public async Task ImportOrder_ReScanOfAnAutoCategorizedOrder_DoesNotDuplicateOrOverwrite()
+    {
+        await SeedSupplementsMappingAsync();
+
+        await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 20), htmlBody: SingleDepartmentHtml);
+        var summary = await _sut.ImportOrderAsync(Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 20), htmlBody: SingleDepartmentHtml);
+
+        Assert.Equal(0, summary.ItemsAdded);
+        Assert.Equal(1, summary.DuplicatesSkipped);
+        var item = Assert.Single(await Context.AmazonOrderItems.Where(i => i.OrderId == "113-1132648-3403446").ToListAsync());
+        Assert.False(item.NeedsReview);
     }
 
     [Fact]

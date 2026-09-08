@@ -74,14 +74,14 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
         IReadOnlyList<GmailMessage>? orderMessages = null, IReadOnlyList<GmailMessage>? refundMessages = null) =>
         new(
             new FakeGmailMessageSource(orderMessages ?? [], refundMessages ?? []),
-            new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser()),
-            new CategorizationService());
+            new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser(), new AmazonOrderCategoryHintParser()),
+            new CategorizationService(), new DepartmentMappingService());
 
     private static (AmazonGmailSyncService Sut, FakeGmailMessageSource Fake) CreateSutWithFake(
         IReadOnlyList<GmailMessage>? orderMessages = null, IReadOnlyList<GmailMessage>? refundMessages = null)
     {
         var fake = new FakeGmailMessageSource(orderMessages ?? [], refundMessages ?? []);
-        var sut = new AmazonGmailSyncService(fake, new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser()), new CategorizationService());
+        var sut = new AmazonGmailSyncService(fake, new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser(), new AmazonOrderCategoryHintParser()), new CategorizationService(), new DepartmentMappingService());
         return (sut, fake);
     }
 
@@ -345,7 +345,7 @@ public class AmazonGmailSyncServiceTests : DatabaseTestBase
     public async Task RunAsync_OnFailure_StillPersistsWhateverProgressLinesWereEmittedBeforeTheFailure()
     {
         var sut = new AmazonGmailSyncService(
-            new ThrowingGmailMessageSource(), new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser()), new CategorizationService());
+            new ThrowingGmailMessageSource(), new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser(), new AmazonOrderCategoryHintParser()), new CategorizationService(), new DepartmentMappingService());
 
         var result = await sut.RunAsync(Context);
 

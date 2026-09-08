@@ -29,8 +29,8 @@ if (gmail is null)
 }
 
 var messageSource = new GoogleGmailMessageSource(gmail);
-var importService = new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser());
-var syncService = new AmazonGmailSyncService(messageSource, importService, new CategorizationService());
+var importService = new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser(), new AmazonOrderCategoryHintParser());
+var syncService = new AmazonGmailSyncService(messageSource, importService, new CategorizationService(), new DepartmentMappingService());
 
 Console.WriteLine("Searching Gmail for Amazon order confirmation and refund emails...");
 var result = await syncService.RunAsync(context);

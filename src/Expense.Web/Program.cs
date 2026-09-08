@@ -88,7 +88,9 @@ builder.Services.AddScoped<IPendingChargesPageProvider, PendingChargesPageProvid
 
 builder.Services.AddScoped<AmazonOrderEmailParser>();
 builder.Services.AddScoped<AmazonRefundEmailParser>();
+builder.Services.AddScoped<AmazonOrderCategoryHintParser>();
 builder.Services.AddScoped<AmazonImportService>();
+builder.Services.AddScoped<DepartmentMappingService>();
 
 builder.Services.AddScoped<SyncIssueService>();
 builder.Services.AddScoped<ISyncStatusProvider, SyncStatusProvider>();

@@ -9,9 +9,18 @@ public static class GmailMessageParsing
     public static string GetHeader(Message message, string name) =>
         message.Payload.Headers.FirstOrDefault(h => h.Name == name)?.Value ?? "(no subject)";
 
-    public static string? ExtractPlainTextBody(MessagePart part)
+    public static string? ExtractPlainTextBody(MessagePart part) => ExtractBodyOfType(part, "text/plain");
+
+    /// <summary>
+    /// The text/html part. Amazon's detail-less order emails put the per-order
+    /// "{count} {department}" line (see AmazonOrderCategoryHintParser) only here - their
+    /// text/plain part deliberately omits it.
+    /// </summary>
+    public static string? ExtractHtmlBody(MessagePart part) => ExtractBodyOfType(part, "text/html");
+
+    private static string? ExtractBodyOfType(MessagePart part, string mimeType)
     {
-        if (part.MimeType == "text/plain" && !string.IsNullOrEmpty(part.Body?.Data))
+        if (part.MimeType == mimeType && !string.IsNullOrEmpty(part.Body?.Data))
         {
             return DecodeBase64Url(part.Body.Data);
         }
@@ -20,7 +29,7 @@ public static class GmailMessageParsing
         {
             foreach (var sub in part.Parts)
             {
-                var result = ExtractPlainTextBody(sub);
+                var result = ExtractBodyOfType(sub, mimeType);
                 if (result is not null)
                 {
                     return result;

@@ -18,6 +18,7 @@ public class AmazonOrderItemConfiguration : IEntityTypeConfiguration<AmazonOrder
         builder.Property(i => i.SourceMessageId).HasMaxLength(100);
         builder.Property(i => i.NeedsReviewReason).HasMaxLength(500);
         builder.Property(i => i.OrderDetailsUrl).HasMaxLength(500);
+        builder.Property(i => i.DepartmentHint).HasMaxLength(200);
         // RawEmailBody deliberately has no HasMaxLength - Npgsql maps it to an unbounded
         // text column, same as ImportRunProgressLine.Text, since a full email body can be
         // long and there's no reasonable fixed cap to pick.

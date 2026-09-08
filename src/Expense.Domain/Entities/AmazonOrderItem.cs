@@ -47,5 +47,14 @@ public class AmazonOrderItem
     public string? NeedsReviewReason { get; set; }
     public string? OrderDetailsUrl { get; set; }
 
+    /// <summary>
+    /// The compact "{count} {department}" hint parsed from the order email's HTML body (see
+    /// AmazonOrderCategoryHintParser), e.g. "Supplements" or "3 Apparel, 1 Office". Stored on
+    /// every placeholder row - whether or not it auto-categorized - so a wrong auto-category
+    /// is traceable and a newly-added AmazonDepartmentMapping can re-resolve rows already
+    /// sitting in the queue. Null for a normal itemized row or an email with no hint.
+    /// </summary>
+    public string? DepartmentHint { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 }

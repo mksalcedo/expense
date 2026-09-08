@@ -8,7 +8,7 @@ namespace Expense.Domain.Tests.Services.Ingestion;
 
 public class SyncIssueServiceTests : DatabaseTestBase
 {
-    private readonly SyncIssueService _sut = new(new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser()));
+    private readonly SyncIssueService _sut = new(new AmazonImportService(new AmazonOrderEmailParser(), new AmazonRefundEmailParser(), new AmazonOrderCategoryHintParser()));
 
     private SyncIssue MakeIssue(string messageId, SyncIssueResolution resolution = SyncIssueResolution.None) => new()
     {

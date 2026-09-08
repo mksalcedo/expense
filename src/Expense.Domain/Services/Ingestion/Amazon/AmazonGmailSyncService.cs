@@ -15,7 +15,9 @@ namespace Expense.Domain.Services.Ingestion.Amazon;
 /// a real Gmail connection; the OAuth/network-fetching side stays a thin, un-mocked
 /// implementation of that interface, same pragmatic exception as Program.cs composition.
 /// </summary>
-public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImportService importService, CategorizationService categorization)
+public class AmazonGmailSyncService(
+    IGmailMessageSource messageSource, AmazonImportService importService, CategorizationService categorization,
+    DepartmentMappingService departmentMappings)
 {
     // Used only when there's no prior successful run to base an incremental window on (a
     // brand-new mailbox sync): generous enough to backfill roughly a year of history for
@@ -84,7 +86,8 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
 
                 try
                 {
-                    var summary = await importService.ImportOrderAsync(context, message.PlainTextBody, message.ReceivedDate, message.Id, cancellationToken);
+                    var summary = await importService.ImportOrderAsync(
+                        context, message.PlainTextBody, message.ReceivedDate, message.Id, message.HtmlBody, cancellationToken);
                     result.ItemsAdded += summary.ItemsAdded;
                     result.DuplicatesSkipped += summary.DuplicatesSkipped;
                     Emit(new SyncProgressLine(FormatMessageProgress(message, summary.ItemOutcomes)));
@@ -123,10 +126,15 @@ public class AmazonGmailSyncService(IGmailMessageSource messageSource, AmazonImp
             // since, left stuck.
             var reapplied = await categorization.ReapplyRulesToPendingAsync(context);
 
+            // Same for Amazon department mappings: a mapping added between syncs should
+            // auto-categorize the placeholders it now covers, not just future imports.
+            var departmentReapplied = await departmentMappings.ReapplyToPendingPlaceholdersAsync(context, cancellationToken);
+
             run.Success = true;
             run.Summary = $"Order items added: {result.ItemsAdded}, duplicates skipped: {result.DuplicatesSkipped}, refunds applied: {result.RefundsApplied}"
                 + (result.ParseFailures.Count > 0 ? $"; {result.ParseFailures.Count} email(s) failed to parse" : "")
-                + (reapplied.ItemsUpdated > 0 ? $"; re-categorized {reapplied.ItemsUpdated} previously pending item(s)" : "");
+                + (reapplied.ItemsUpdated > 0 ? $"; re-categorized {reapplied.ItemsUpdated} previously pending item(s)" : "")
+                + (departmentReapplied > 0 ? $"; auto-categorized {departmentReapplied} placeholder(s) from an Amazon department mapping" : "");
 
             var elapsed = DateTimeOffset.UtcNow - startedAt;
             Emit(new SyncProgressLine($"Done in {elapsed.TotalSeconds:0.0}s - {run.Summary}"));

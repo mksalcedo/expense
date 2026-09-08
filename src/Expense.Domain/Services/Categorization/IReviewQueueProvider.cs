@@ -32,4 +32,9 @@ public interface IReviewQueueProvider
     /// UpdateAmazonItemDetailsAsync itself, same as if the user had typed it in by hand.
     /// </summary>
     Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default);
+
+    /// <summary>Creates/repoints an Amazon department -> category mapping and re-resolves any pending placeholders it now covers. Returns how many were auto-categorized.</summary>
+    Task<int> UpsertAmazonDepartmentMappingAsync(string departmentName, int categoryId, CancellationToken cancellationToken = default);
+
+    Task DeleteAmazonDepartmentMappingAsync(int mappingId, CancellationToken cancellationToken = default);
 }
