@@ -80,7 +80,6 @@ public class NavMenuTests : BunitContext
         public Task AddManualAmazonItemAsync(string orderId, DateOnly orderDate, string itemTitle, decimal price, int quantity, decimal taxAllocated = 0m, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default) => Task.FromResult(new List<string>());
         public Task<int> UpsertAmazonDepartmentMappingAsync(string departmentName, int categoryId, CancellationToken cancellationToken = default) => Task.FromResult(0);
-        public Task DeleteAmazonDepartmentMappingAsync(int mappingId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private class FakeStagedScrapeStore : IStagedScrapeStore
@@ -315,6 +314,17 @@ public class NavMenuTests : BunitContext
 
         var link = cut.Find("#nav-amazon-order-scraper-link");
         Assert.Equal("amazon-order-scraper", link.GetAttribute("href"));
+    }
+
+    [Fact]
+    public void NavMenu_HasAnAmazonDepartmentRulesLink()
+    {
+        RegisterFakes();
+
+        var cut = Render<NavMenu>();
+
+        var link = cut.Find("#nav-amazon-department-rules-link");
+        Assert.Equal("amazon-department-rules", link.GetAttribute("href"));
     }
 
     [Fact]

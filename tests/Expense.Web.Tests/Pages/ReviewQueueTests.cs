@@ -46,7 +46,6 @@ public class ReviewQueueTests : BunitContext
         public List<PendingTransactionGroup> TransactionGroups { get; set; } = [];
         public List<PendingAmazonItemGroup> AmazonItemGroups { get; set; } = [];
         public List<Category> Categories { get; set; } = [];
-        public List<AmazonDepartmentMapping> AmazonDepartmentMappings { get; set; } = [];
 
         public int? LastTransactionId { get; private set; }
         public int? LastAmazonItemId { get; private set; }
@@ -58,26 +57,19 @@ public class ReviewQueueTests : BunitContext
         public Task<ReviewQueueData> GetReviewQueueAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new ReviewQueueData
             {
-                TransactionGroups = TransactionGroups, AmazonItemGroups = AmazonItemGroups, Categories = Categories,
-                AmazonDepartmentMappings = AmazonDepartmentMappings
+                TransactionGroups = TransactionGroups, AmazonItemGroups = AmazonItemGroups, Categories = Categories
             });
 
         public string? LastUpsertedDepartment { get; private set; }
         public int? LastUpsertedDepartmentCategoryId { get; private set; }
-        public int? LastDeletedDepartmentMappingId { get; private set; }
+        public int UpsertDepartmentMappingCallCount { get; private set; }
 
         public Task<int> UpsertAmazonDepartmentMappingAsync(string departmentName, int categoryId, CancellationToken cancellationToken = default)
         {
+            UpsertDepartmentMappingCallCount++;
             LastUpsertedDepartment = departmentName;
             LastUpsertedDepartmentCategoryId = categoryId;
             return Task.FromResult(0);
-        }
-
-        public Task DeleteAmazonDepartmentMappingAsync(int mappingId, CancellationToken cancellationToken = default)
-        {
-            LastDeletedDepartmentMappingId = mappingId;
-            AmazonDepartmentMappings = AmazonDepartmentMappings.Where(m => m.Id != mappingId).ToList();
-            return Task.CompletedTask;
         }
 
         public Task<int> CategorizeTransactionAsync(int transactionId, int categoryId, string? merchantPatternToCreate, CancellationToken cancellationToken = default)
@@ -1482,88 +1474,62 @@ public class ReviewQueueTests : BunitContext
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("#item-staged-scrape-500")));
     }
 
-    // --- Amazon department hint / mapping ---
+    // --- Amazon department mapping: created automatically on categorize ---
 
     private static PendingAmazonItemGroup KitchenPlaceholder(int id = 500) => new()
     {
         SuggestedPattern = "(Item details unavailable in email - check Amazon order page)",
-        ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+        ItemTitle = "Amazon order — Kitchen",
         SampleDate = new DateOnly(2026, 8, 9), ItemIds = [id], TotalPrice = 40.84m,
         NeedsReview = true, OrderId = "113-4060590-9735436",
         DepartmentHint = "Kitchen", SingleDepartmentName = "Kitchen"
     };
 
+    private static PendingAmazonItemGroup MixedHintPlaceholder(int id = 501) => new()
+    {
+        SuggestedPattern = "x", ItemTitle = "Amazon order — 3 Apparel, 1 Office",
+        SampleDate = new DateOnly(2026, 8, 17), ItemIds = [id], TotalPrice = 84.76m,
+        NeedsReview = true, OrderId = "113-8777231-4791428",
+        DepartmentHint = "3 Apparel, 1 Office", SingleDepartmentName = null
+    };
+
     [Fact]
-    public void NeedsReviewItem_ShowsItsAmazonDepartmentHint()
+    public void CategorizingASingleDepartmentPlaceholder_AlwaysCreatesTheMapping_NoOptIn()
     {
         var provider = MakeProvider();
         provider.AmazonItemGroups = [KitchenPlaceholder()];
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
-
-        Assert.Contains("Amazon department", cut.Find("#item-department-hint-500").TextContent);
-        Assert.Contains("Kitchen", cut.Find("#item-department-hint-500").TextContent);
-    }
-
-    [Fact]
-    public void TickingRememberDepartment_ThenCategorizing_CreatesTheMapping()
-    {
-        var provider = MakeProvider();
-        provider.AmazonItemGroups = [KitchenPlaceholder()];
-        Services.AddSingleton<IReviewQueueProvider>(provider);
-
-        var cut = Render<ReviewQueue>();
-        cut.Find("#item-remember-department-500").Change(true);
         cut.Find("#item-category-500").Change("1"); // Groceries
 
         Assert.Equal("Kitchen", provider.LastUpsertedDepartment);
         Assert.Equal(1, provider.LastUpsertedDepartmentCategoryId);
-    }
-
-    [Fact]
-    public void CategorizingWithoutTicking_DoesNotCreateAMapping()
-    {
-        var provider = MakeProvider();
-        provider.AmazonItemGroups = [KitchenPlaceholder()];
-        Services.AddSingleton<IReviewQueueProvider>(provider);
-
-        var cut = Render<ReviewQueue>();
-        cut.Find("#item-category-500").Change("1");
-
-        Assert.Null(provider.LastUpsertedDepartment);
-    }
-
-    [Fact]
-    public void RememberCheckbox_IsHidden_WhenTheDepartmentIsAlreadyMapped()
-    {
-        var provider = MakeProvider();
-        provider.AmazonItemGroups = [KitchenPlaceholder()];
-        provider.AmazonDepartmentMappings = [new AmazonDepartmentMapping { Id = 1, DepartmentName = "Kitchen", CategoryId = 1 }];
-        Services.AddSingleton<IReviewQueueProvider>(provider);
-
-        var cut = Render<ReviewQueue>();
-
+        // no checkbox anywhere
         Assert.Empty(cut.FindAll("#item-remember-department-500"));
     }
 
     [Fact]
-    public void DepartmentRulesSection_AddsAndDeletesMappings()
+    public void CategorizingAMixedDepartmentPlaceholder_DoesNotCreateAMapping()
     {
         var provider = MakeProvider();
-        provider.AmazonDepartmentMappings = [new AmazonDepartmentMapping { Id = 7, DepartmentName = "Grocery", CategoryId = 1 }];
+        provider.AmazonItemGroups = [MixedHintPlaceholder()];
         Services.AddSingleton<IReviewQueueProvider>(provider);
 
         var cut = Render<ReviewQueue>();
+        cut.Find("#item-category-501").Change("1");
 
-        cut.Find("#new-department-name").Change("Vitamins");
-        cut.Find("#new-department-category").Change("2");
-        cut.Find("#add-department-mapping-btn").Click();
-        Assert.Equal("Vitamins", provider.LastUpsertedDepartment);
-        Assert.Equal(2, provider.LastUpsertedDepartmentCategoryId);
+        Assert.Equal(0, provider.UpsertDepartmentMappingCallCount);
+    }
 
-        cut.Find("#department-mapping-delete-7").Click();
-        Assert.Equal(7, provider.LastDeletedDepartmentMappingId);
+    [Fact]
+    public void ReviewQueue_LinksToTheAmazonDepartmentRulesPage()
+    {
+        Services.AddSingleton<IReviewQueueProvider>(MakeProvider());
+
+        var cut = Render<ReviewQueue>();
+
+        Assert.Equal("amazon-department-rules", cut.Find("#manage-amazon-department-rules-link").GetAttribute("href"));
     }
 
     [Fact]

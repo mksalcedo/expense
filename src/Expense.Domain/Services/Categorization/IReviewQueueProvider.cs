@@ -33,8 +33,6 @@ public interface IReviewQueueProvider
     /// </summary>
     Task<List<string>> ParseAmazonItemScreenshotAsync(byte[] imageBytes, string mediaType, CancellationToken cancellationToken = default);
 
-    /// <summary>Creates/repoints an Amazon department -> category mapping and re-resolves any pending placeholders it now covers. Returns how many were auto-categorized.</summary>
+    /// <summary>Creates/repoints an Amazon department -> category mapping and re-resolves any pending placeholders it now covers. Returns how many were auto-categorized. Called whenever a queued placeholder with a single department hint is categorized.</summary>
     Task<int> UpsertAmazonDepartmentMappingAsync(string departmentName, int categoryId, CancellationToken cancellationToken = default);
-
-    Task DeleteAmazonDepartmentMappingAsync(int mappingId, CancellationToken cancellationToken = default);
 }

@@ -1,0 +1,110 @@
+@page "/amazon-department-rules"
+@using Expense.Domain.Services.Ingestion.Amazon
+@inject IAmazonDepartmentRulesPageProvider Provider
+
+<PageTitle>Amazon Department Rules</PageTitle>
+
+<h1>Amazon Department Rules</h1>
+
+<p>
+    When an Amazon order confirmation email has no item detail, its category is set
+    automatically from the <strong>department</strong> Amazon put it in. Each rule below maps
+    one Amazon department to one of your categories - a matching order skips the
+    <a href="review-queue">Review Queue</a> entirely.
+</p>
+<p>
+    You don't normally add rules here by hand: categorizing an order in the Review Queue
+    creates its rule automatically. Come here to fix one that's routing orders to the wrong
+    category, or to remove one.
+</p>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    @if (_message is { } m)
+    {
+        <p id="rules-message" style="color: var(--color-success, #2f855a);">@m</p>
+    }
+
+    <table>
+        <thead>
+            <tr><th>Amazon department</th><th>Files as</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var mapping in _data.Mappings)
+            {
+                <tr @key="mapping.Id">
+                    <td>@mapping.DepartmentName</td>
+                    <td>
+                        <select id="rule-category-@mapping.Id"
+                                @onchange="e => RepointAsync(mapping.DepartmentName, int.Parse((string)e.Value!))">
+                            @foreach (var category in _data.Categories)
+                            {
+                                <option value="@category.Id" selected="@(category.Id == mapping.CategoryId)">@category.Name</option>
+                            }
+                        </select>
+                    </td>
+                    <td>
+                        <button id="rule-delete-@mapping.Id" @onclick="() => DeleteAsync(mapping.Id)">Delete</button>
+                    </td>
+                </tr>
+            }
+            <tr>
+                <td>
+                    <input id="new-rule-department" placeholder="e.g. Kitchen" @bind="_newDepartment" />
+                </td>
+                <td>
+                    <select id="new-rule-category" @bind="_newCategoryId">
+                        <option value="0">-- category --</option>
+                        @foreach (var category in _data.Categories)
+                        {
+                            <option value="@category.Id">@category.Name</option>
+                        }
+                    </select>
+                </td>
+                <td>
+                    <button id="new-rule-add" disabled="@(string.IsNullOrWhiteSpace(_newDepartment) || _newCategoryId == 0)"
+                            @onclick="AddAsync">Add</button>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+}
+
+@code {
+    private AmazonDepartmentRulesPageData? _data;
+    private string _newDepartment = "";
+    private int _newCategoryId;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => _data = await Provider.GetAsync();
+
+    private async Task AddAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newDepartment) || _newCategoryId == 0) return;
+        var reapplied = await Provider.UpsertAsync(_newDepartment.Trim(), _newCategoryId);
+        _message = reapplied > 0 ? $"Added. {reapplied} order(s) in the queue were re-filed by this rule." : "Added.";
+        _newDepartment = "";
+        _newCategoryId = 0;
+        _data = await Provider.GetAsync();
+    }
+
+    private async Task RepointAsync(string departmentName, int categoryId)
+    {
+        var reapplied = await Provider.UpsertAsync(departmentName, categoryId);
+        _message = reapplied > 0
+            ? $"Updated. {reapplied} order(s) in the queue were re-filed."
+            : $"Updated “{departmentName}”.";
+        _data = await Provider.GetAsync();
+    }
+
+    private async Task DeleteAsync(int mappingId)
+    {
+        await Provider.DeleteAsync(mappingId);
+        _message = "Rule removed.";
+        _data = await Provider.GetAsync();
+    }
+}

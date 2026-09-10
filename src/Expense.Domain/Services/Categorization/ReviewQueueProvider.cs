@@ -20,8 +20,7 @@ public class ReviewQueueProvider(
         {
             TransactionGroups = await categorization.GetPendingTransactionGroupsAsync(context),
             AmazonItemGroups = await categorization.GetPendingAmazonItemGroupsAsync(context),
-            Categories = await context.Categories.OrderBy(c => c.Name).ToListAsync(cancellationToken),
-            AmazonDepartmentMappings = await departmentMappings.GetAllAsync(context, cancellationToken)
+            Categories = await context.Categories.OrderBy(c => c.Name).ToListAsync(cancellationToken)
         };
     }
 
@@ -29,12 +28,6 @@ public class ReviewQueueProvider(
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         return await departmentMappings.UpsertAndReapplyAsync(context, departmentName, categoryId, cancellationToken);
-    }
-
-    public async Task DeleteAmazonDepartmentMappingAsync(int mappingId, CancellationToken cancellationToken = default)
-    {
-        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        await departmentMappings.DeleteAsync(context, mappingId, cancellationToken);
     }
 
     public async Task<int> CategorizeTransactionAsync(
