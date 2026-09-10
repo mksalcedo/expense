@@ -29,7 +29,7 @@ public class CategorizationService
         var searchText = (transaction.Merchant ?? transaction.Description).ToUpperInvariant();
         var rules = await context.MerchantRules.ToListAsync();
 
-        var match = rules.FirstOrDefault(r => MerchantPatternMatcher.Matches(searchText, r.MerchantPattern));
+        var match = MerchantRuleMatcher.FirstMatch(rules, searchText, transaction.Amount);
         if (match is not null)
         {
             transaction.CategoryId = match.CategoryId;
@@ -243,7 +243,7 @@ public class CategorizationService
         foreach (var transaction in pendingTransactions)
         {
             var searchText = (transaction.Merchant ?? transaction.Description).ToUpperInvariant();
-            var match = rules.FirstOrDefault(r => MerchantPatternMatcher.Matches(searchText, r.MerchantPattern));
+            var match = MerchantRuleMatcher.FirstMatch(rules, searchText, transaction.Amount);
             if (match is not null)
             {
                 transaction.CategoryId = match.CategoryId;

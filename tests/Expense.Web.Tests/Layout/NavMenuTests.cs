@@ -262,6 +262,17 @@ public class NavMenuTests : BunitContext
     }
 
     [Fact]
+    public void NavMenu_HasAMerchantRulesLink()
+    {
+        RegisterFakes();
+
+        var cut = Render<NavMenu>();
+
+        var link = cut.Find("#nav-merchant-rules-link");
+        Assert.Equal("merchant-rules", link.GetAttribute("href"));
+    }
+
+    [Fact]
     public void ImportDataLink_HasNoFailureSuffix_WhenBothLastSyncsSucceededOrNeverRan()
     {
         RegisterFakes(lastSimpleFinRun: new ImportRun { Source = ImportSource.SimpleFin, RanAt = DateTimeOffset.UtcNow, Success = true });

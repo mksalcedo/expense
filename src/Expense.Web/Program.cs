@@ -58,6 +58,8 @@ builder.Services.AddScoped<IConfirmedPaymentsPageProvider, ConfirmedPaymentsPage
 builder.Services.AddScoped<CategorizationService>();
 builder.Services.AddHttpClient<IReviewQueueProvider, ReviewQueueProvider>();
 builder.Services.AddScoped<IReviewQueueChangeNotifier, ReviewQueueChangeNotifier>();
+builder.Services.AddScoped<MerchantRuleService>();
+builder.Services.AddScoped<IMerchantRulesPageProvider, MerchantRulesPageProvider>();
 
 builder.Services.AddScoped<CategoryManagementService>();
 builder.Services.AddScoped<ICategoriesPageProvider, CategoriesPageProvider>();

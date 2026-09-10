@@ -24,5 +24,28 @@ public class MerchantRuleTests : DatabaseTestBase
 
         Assert.Equal("%KROGER%", reloaded.MerchantPattern);
         Assert.Equal("Groceries", reloaded.Category.Name);
+        Assert.Null(reloaded.Direction);
+    }
+
+    [Fact]
+    public async Task MerchantRule_Direction_RoundTrips()
+    {
+        var category = new Category { Name = "Piano" };
+        Context.Categories.Add(category);
+        await Context.SaveChangesAsync();
+
+        Context.MerchantRules.AddRange(
+            new MerchantRule { MerchantPattern = "VENMO", CategoryId = category.Id, Direction = Direction.Income },
+            new MerchantRule { MerchantPattern = "VENMO", CategoryId = category.Id, Direction = Direction.Expense });
+        await Context.SaveChangesAsync();
+
+        await using var reloadContext = CreateContextInSameTransaction();
+        var reloaded = await reloadContext.MerchantRules
+            .Where(r => r.MerchantPattern == "VENMO")
+            .OrderBy(r => r.Id)
+            .ToListAsync();
+
+        Assert.Equal(Direction.Income, reloaded[0].Direction);
+        Assert.Equal(Direction.Expense, reloaded[1].Direction);
     }
 }

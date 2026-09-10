@@ -1,0 +1,159 @@
+@page "/merchant-rules"
+@using Expense.Domain.Entities
+@using Expense.Domain.Services.Categorization
+@inject IMerchantRulesPageProvider Provider
+
+<PageTitle>Merchant Rules</PageTitle>
+
+<h1>Merchant Rules</h1>
+
+<p>
+    When a bank transaction's description contains one of the patterns below, it's filed
+    into the matching category automatically and skips the
+    <a href="review-queue">Review Queue</a>. First match wins, top to bottom.
+</p>
+<p>
+    <strong>Direction</strong> lets one merchant string route two ways by the sign of the
+    amount. A bare “Venmo” is a credit-card payment when money goes <em>out</em> but piano
+    income when money comes <em>in</em> — so give it two rules: “Venmo, money out → Venmo
+    Credit Card Payment” and “Venmo, money in → Piano”. Leave it on <em>Any</em> for a normal
+    merchant.
+</p>
+<p>
+    Rules are usually created for you when you categorize something in the Review Queue (those
+    come in as <em>Any</em>). Come here to add a direction, fix one that's routing to the
+    wrong category, or remove one.
+</p>
+
+@if (_data is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    @if (_message is { } m)
+    {
+        <p id="rules-message" style="color: var(--color-success, #2f855a);">@m</p>
+    }
+
+    <table>
+        <thead>
+            <tr><th>When the description contains</th><th>And the amount is</th><th>File as</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var rule in _data.Rules)
+            {
+                <tr @key="rule.Id">
+                    <td>
+                        <input id="rule-pattern-@rule.Id" value="@rule.MerchantPattern"
+                               @onchange="e => OnPatternChanged(rule, (string?)e.Value)" />
+                    </td>
+                    <td>
+                        <select id="rule-direction-@rule.Id" @onchange="e => OnDirectionChanged(rule, (string?)e.Value)">
+                            <option value="" selected="@(rule.Direction is null)">Any</option>
+                            <option value="@Direction.Income" selected="@(rule.Direction == Direction.Income)">Money in (income)</option>
+                            <option value="@Direction.Expense" selected="@(rule.Direction == Direction.Expense)">Money out (expense)</option>
+                        </select>
+                    </td>
+                    <td>
+                        <select id="rule-category-@rule.Id" @onchange="e => OnCategoryChanged(rule, (string?)e.Value)">
+                            @foreach (var category in _data.Categories)
+                            {
+                                <option value="@category.Id" selected="@(category.Id == rule.CategoryId)">@category.Name</option>
+                            }
+                        </select>
+                    </td>
+                    <td>
+                        <button id="rule-delete-@rule.Id" @onclick="() => DeleteAsync(rule.Id)">Delete</button>
+                    </td>
+                </tr>
+            }
+            <tr>
+                <td>
+                    <input id="new-rule-pattern" placeholder="e.g. VENMO" @bind="_newPattern" />
+                </td>
+                <td>
+                    <select id="new-rule-direction" @bind="_newDirection">
+                        <option value="">Any</option>
+                        <option value="@Direction.Income">Money in (income)</option>
+                        <option value="@Direction.Expense">Money out (expense)</option>
+                    </select>
+                </td>
+                <td>
+                    <select id="new-rule-category" @bind="_newCategoryId">
+                        <option value="0">-- category --</option>
+                        @foreach (var category in _data.Categories)
+                        {
+                            <option value="@category.Id">@category.Name</option>
+                        }
+                    </select>
+                </td>
+                <td>
+                    <button id="new-rule-add"
+                            disabled="@(string.IsNullOrWhiteSpace(_newPattern) || _newCategoryId == 0)"
+                            @onclick="AddAsync">Add</button>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+}
+
+@code {
+    private MerchantRulesPageData? _data;
+    private string _newPattern = "";
+    private string _newDirection = "";
+    private int _newCategoryId;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => _data = await Provider.GetAsync();
+
+    private static Direction? ParseDirection(string? value) =>
+        string.IsNullOrEmpty(value) ? null : Enum.Parse<Direction>(value);
+
+    private async Task AddAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newPattern) || _newCategoryId == 0) return;
+        var reapplied = await Provider.CreateAsync(_newPattern.Trim(), ParseDirection(_newDirection), _newCategoryId);
+        _message = reapplied > 0
+            ? $"Added. {reapplied} transaction(s) in the queue were re-filed by this rule."
+            : "Added.";
+        _newPattern = "";
+        _newDirection = "";
+        _newCategoryId = 0;
+        _data = await Provider.GetAsync();
+    }
+
+    private async Task OnPatternChanged(MerchantRule rule, string? value)
+    {
+        rule.MerchantPattern = (value ?? "").Trim();
+        await SaveRowAsync(rule);
+    }
+
+    private async Task OnDirectionChanged(MerchantRule rule, string? value)
+    {
+        rule.Direction = ParseDirection(value);
+        await SaveRowAsync(rule);
+    }
+
+    private async Task OnCategoryChanged(MerchantRule rule, string? value)
+    {
+        rule.CategoryId = int.Parse(value!);
+        await SaveRowAsync(rule);
+    }
+
+    private async Task SaveRowAsync(MerchantRule rule)
+    {
+        var reapplied = await Provider.UpdateAsync(rule.Id, rule.MerchantPattern, rule.Direction, rule.CategoryId);
+        _message = reapplied > 0
+            ? $"Updated. {reapplied} transaction(s) in the queue were re-filed."
+            : "Rule updated.";
+        _data = await Provider.GetAsync();
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        await Provider.DeleteAsync(id);
+        _message = "Rule removed.";
+        _data = await Provider.GetAsync();
+    }
+}

@@ -97,6 +97,114 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task DirectionScopedRule_OnlyMatchesTransactionsOfThatSign()
+    {
+        var account = await CreateAccountAsync();
+        var venmoPayment = new Category { Name = "Venmo Credit Card Payment" };
+        Context.Categories.Add(venmoPayment);
+        await Context.SaveChangesAsync();
+        Context.MerchantRules.Add(new MerchantRule
+        {
+            MerchantPattern = "VENMO", CategoryId = venmoPayment.Id, Direction = Direction.Expense
+        });
+        await Context.SaveChangesAsync();
+
+        var moneyOut = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 9, 8),
+            Description = "Venmo", Amount = -50m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+        };
+        var moneyIn = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 9, 8),
+            Description = "Venmo", Amount = 238m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        await _sut.ApplyMerchantRuleAsync(Context, moneyOut);
+        await _sut.ApplyMerchantRuleAsync(Context, moneyIn);
+
+        Assert.Equal(venmoPayment.Id, moneyOut.CategoryId);
+        Assert.Null(moneyIn.CategoryId); // income - the expense-only rule must not touch it
+    }
+
+    [Fact]
+    public async Task TwoRulesSamePattern_OppositeDirections_RouteEachSignToItsOwnCategory()
+    {
+        var account = await CreateAccountAsync();
+        var venmoPayment = new Category { Name = "Venmo Credit Card Payment" };
+        var piano = new Category { Name = "Piano" };
+        Context.Categories.AddRange(venmoPayment, piano);
+        await Context.SaveChangesAsync();
+        Context.MerchantRules.AddRange(
+            new MerchantRule { MerchantPattern = "VENMO", CategoryId = venmoPayment.Id, Direction = Direction.Expense },
+            new MerchantRule { MerchantPattern = "VENMO", CategoryId = piano.Id, Direction = Direction.Income });
+        await Context.SaveChangesAsync();
+
+        var moneyOut = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 9, 8),
+            Description = "Venmo", Amount = -50m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+        };
+        var moneyIn = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 9, 8),
+            Description = "Venmo", Amount = 238m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        await _sut.ApplyMerchantRuleAsync(Context, moneyOut);
+        await _sut.ApplyMerchantRuleAsync(Context, moneyIn);
+
+        Assert.Equal(venmoPayment.Id, moneyOut.CategoryId);
+        Assert.Equal(piano.Id, moneyIn.CategoryId);
+    }
+
+    [Fact]
+    public async Task NullDirectionRule_MatchesEitherSign()
+    {
+        var account = await CreateAccountAsync();
+        var groceries = new Category { Name = "Groceries" };
+        Context.Categories.Add(groceries);
+        await Context.SaveChangesAsync();
+        Context.MerchantRules.Add(new MerchantRule { MerchantPattern = "KROGER", CategoryId = groceries.Id });
+        await Context.SaveChangesAsync();
+
+        var refund = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 9, 8),
+            Description = "KROGER #123", Amount = 12m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        await _sut.ApplyMerchantRuleAsync(Context, refund);
+
+        Assert.Equal(groceries.Id, refund.CategoryId);
+    }
+
+    [Fact]
+    public async Task ReapplyRulesToPendingAsync_RespectsRuleDirection()
+    {
+        var account = await CreateAccountAsync();
+        var venmoPayment = new Category { Name = "Venmo Credit Card Payment" };
+        Context.Categories.Add(venmoPayment);
+        await Context.SaveChangesAsync();
+        Context.MerchantRules.Add(new MerchantRule
+        {
+            MerchantPattern = "VENMO", CategoryId = venmoPayment.Id, Direction = Direction.Expense
+        });
+        var pendingIncome = new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 9, 8),
+            Description = "Venmo", Amount = 200m, ImportSource = "Plaid", CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.BankTransactions.Add(pendingIncome);
+        await Context.SaveChangesAsync();
+
+        var result = await _sut.ReapplyRulesToPendingAsync(Context);
+
+        Assert.Equal(0, result.TransactionsUpdated);
+        Assert.Null(pendingIncome.CategoryId);
+    }
+
+    [Fact]
     public async Task Transaction_WithNoRule_ButUnanimousHistory_GetsAutoCategorizedFromHistory()
     {
         var account = await CreateAccountAsync();
