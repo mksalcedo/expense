@@ -438,6 +438,28 @@ public class CategorizationServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task CategorizeAmazonItemAsync_OnANeedsReviewPlaceholder_ClearsNeedsReview()
+    {
+        var misc = new Category { Name = "Off-Budget/Misc" };
+        Context.Categories.Add(misc);
+        await Context.SaveChangesAsync();
+
+        var placeholder = new AmazonOrderItem
+        {
+            OrderId = "113-9999999-9999999", OrderDate = new DateOnly(2026, 9, 9),
+            ItemTitle = "(Item details unavailable in email - check Amazon order page)",
+            Price = 25m, Quantity = 1, NeedsReview = true, CreatedAt = DateTimeOffset.UtcNow
+        };
+        Context.AmazonOrderItems.Add(placeholder);
+        await Context.SaveChangesAsync();
+
+        await _sut.CategorizeAmazonItemAsync(Context, placeholder.Id, misc.Id, productPatternToCreate: null);
+
+        Assert.Equal(misc.Id, placeholder.CategoryId);
+        Assert.False(placeholder.NeedsReview); // fully resolved - gone from the queue for good, not just the "uncategorized" filter
+    }
+
+    [Fact]
     public async Task CategorizeAmazonItemAsync_CreatingAProduct_AppliesRetroactivelyToOtherPendingMatches()
     {
         var supplements = new Category { Name = "Supplements" };

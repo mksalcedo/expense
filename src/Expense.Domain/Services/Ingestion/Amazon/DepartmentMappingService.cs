@@ -70,18 +70,29 @@ public class DepartmentMappingService
         var mappings = await context.AmazonDepartmentMappings.Include(m => m.Category).ToListAsync(cancellationToken);
 
         var reapplied = 0;
+        var changed = false;
         foreach (var item in candidates)
         {
+            // Bring a pre-feature placeholder's title up to the "Amazon order — {department}"
+            // form (guarded against a title the user has since typed in themselves).
+            if (AmazonDepartmentResolver.IsSystemPlaceholderTitle(item.ItemTitle)
+                && item.ItemTitle != AmazonDepartmentResolver.PlaceholderTitle(item.DepartmentHint))
+            {
+                item.ItemTitle = AmazonDepartmentResolver.PlaceholderTitle(item.DepartmentHint);
+                changed = true;
+            }
+
             var names = AmazonDepartmentResolver.ParseDepartmentNames(item.DepartmentHint);
             var category = AmazonDepartmentResolver.Resolve(names, mappings);
             if (category is not null)
             {
                 AmazonDepartmentResolver.ApplyResolvedCategory(item, category, item.DepartmentHint!);
                 reapplied++;
+                changed = true;
             }
         }
 
-        if (reapplied > 0) await context.SaveChangesAsync(cancellationToken);
+        if (changed) await context.SaveChangesAsync(cancellationToken);
         return reapplied;
     }
 }

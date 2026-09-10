@@ -271,6 +271,38 @@ public class AmazonImportServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ImportOrder_UnmappedDepartmentHint_UpgradesTheGenericTitleToTheDepartment_ButStaysInReview()
+    {
+        await SeedSupplementsMappingAsync(); // "Kitchen" is not mapped
+
+        await _sut.ImportOrderAsync(
+            Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 9), htmlBody: KitchenDepartmentHtml);
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.True(item.NeedsReview);
+        Assert.Null(item.CategoryId);
+        Assert.Equal("Amazon order — Kitchen", item.ItemTitle);
+    }
+
+    [Fact]
+    public async Task ImportOrder_MappedDepartmentHint_TitleUsesTheDepartment_NotTheCategoryName()
+    {
+        var misc = new Category { Name = "Off-Budget/Misc" };
+        Context.Categories.Add(misc);
+        await Context.SaveChangesAsync();
+        Context.AmazonDepartmentMappings.Add(new AmazonDepartmentMapping { DepartmentName = "Kitchen", CategoryId = misc.Id });
+        await Context.SaveChangesAsync();
+
+        await _sut.ImportOrderAsync(
+            Context, SimplifiedNoItemDetailEmail, new DateOnly(2026, 8, 9), htmlBody: KitchenDepartmentHtml);
+
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1132648-3403446");
+        Assert.Equal(misc.Id, item.CategoryId);
+        Assert.False(item.NeedsReview);
+        Assert.Equal("Amazon order — Kitchen", item.ItemTitle); // the department, not "Amazon order — Off-Budget/Misc"
+    }
+
+    [Fact]
     public async Task ImportOrder_PlaceholderWhoseTwoDepartmentsBothMapToTheSameCategory_StillAutoCategorizes()
     {
         await SeedSupplementsMappingAsync();

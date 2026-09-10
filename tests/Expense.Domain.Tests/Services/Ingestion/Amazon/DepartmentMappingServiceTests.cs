@@ -46,11 +46,27 @@ public class DepartmentMappingServiceTests : DatabaseTestBase
         var kitchen1 = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-1111111-1111111");
         Assert.Equal(misc.Id, kitchen1.CategoryId);
         Assert.False(kitchen1.NeedsReview);
-        Assert.Equal("Amazon order — Off-Budget/Misc", kitchen1.ItemTitle);
+        Assert.Equal("Amazon order — Kitchen", kitchen1.ItemTitle); // the department hint, not the category name
 
         var garden = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-3333333-3333333");
         Assert.Null(garden.CategoryId);
         Assert.True(garden.NeedsReview);
+    }
+
+    [Fact]
+    public async Task ReapplyToPendingPlaceholders_UpgradesAGenericTitleToTheDepartmentForm_EvenWhenItStillDoesNotResolve()
+    {
+        await SeedCategoriesAsync();
+        Context.AmazonOrderItems.Add(Placeholder("113-7777777-7777777", "Printer Supplies")); // not mapped
+        await Context.SaveChangesAsync();
+
+        var reapplied = await _sut.ReapplyToPendingPlaceholdersAsync(Context);
+
+        Assert.Equal(0, reapplied);
+        var item = await Context.AmazonOrderItems.SingleAsync(i => i.OrderId == "113-7777777-7777777");
+        Assert.True(item.NeedsReview);
+        Assert.Null(item.CategoryId);
+        Assert.Equal("Amazon order — Printer Supplies", item.ItemTitle);
     }
 
     [Fact]

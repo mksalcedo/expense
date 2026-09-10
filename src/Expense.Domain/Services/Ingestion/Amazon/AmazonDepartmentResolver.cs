@@ -44,12 +44,27 @@ public static partial class AmazonDepartmentResolver
         return categories.Count == 1 ? categories[0] : null;
     }
 
-    /// <summary>Applies a resolved category to a placeholder row: sets the category, clears NeedsReview, rewrites the generic title, and records how.</summary>
+    /// <summary>Applies a resolved category to a placeholder row: sets the category, clears NeedsReview, records how. The title is set separately from the department hint (see PlaceholderTitle).</summary>
     public static void ApplyResolvedCategory(AmazonOrderItem item, Category category, string hintDisplayString)
     {
         item.CategoryId = category.Id;
         item.NeedsReview = false;
         item.NeedsReviewReason = $"Category set automatically from email department: {hintDisplayString}";
-        item.ItemTitle = $"Amazon order — {category.Name}";
     }
+
+    /// <summary>The fixed generic title an item-list-free order confirmation imports with, before any department hint is available.</summary>
+    public const string GenericPlaceholderTitle = "(Item details unavailable in email - check Amazon order page)";
+
+    /// <summary>
+    /// The best title we can give a placeholder row: the Amazon department it was in
+    /// ("Amazon order — Printer Supplies") when the email's HTML told us one, else the plain
+    /// generic string. Purely descriptive - never touches CategoryId. Overwritten by the real
+    /// item name if the order page is later scraped.
+    /// </summary>
+    public static string PlaceholderTitle(string? departmentHint) =>
+        string.IsNullOrWhiteSpace(departmentHint) ? GenericPlaceholderTitle : $"Amazon order — {departmentHint}";
+
+    /// <summary>True when the title is still one this code generated (generic or "Amazon order — …"), i.e. safe to refresh - as opposed to a real title the user typed or a scrape filled in.</summary>
+    public static bool IsSystemPlaceholderTitle(string? title) =>
+        title == GenericPlaceholderTitle || (title?.StartsWith("Amazon order — ", StringComparison.Ordinal) ?? false);
 }

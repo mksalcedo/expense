@@ -169,6 +169,9 @@ public class CategorizationService
 
         if (productPatternToCreate is null || item.NeedsReview)
         {
+            // A placeholder that's just been given a category is fully resolved - drop it out
+            // of the review queue for good, not just out of the "uncategorized" filter.
+            item.NeedsReview = false;
             await context.SaveChangesAsync();
             return 0;
         }
@@ -217,6 +220,7 @@ public class CategorizationService
         foreach (var item in items)
         {
             item.CategoryId = categoryId;
+            item.NeedsReview = false;
         }
         await context.SaveChangesAsync();
         return items.Count;

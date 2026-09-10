@@ -99,14 +99,12 @@ public class AmazonImportService(
     }
 
     /// <summary>
-    /// For a NeedsReview placeholder row, look up its order's department hint and try to
-    /// resolve it to a single category. Only auto-assigns when every department named for
-    /// the order maps, and they all resolve to exactly one category (so "Supplements" +
+    /// For a NeedsReview placeholder row, look up its order's department hint. Always: store
+    /// the hint and upgrade the generic title to "Amazon order — {department}" (purely
+    /// descriptive - the real item name still isn't in the email). Then, only when every
+    /// department named maps and they all resolve to exactly one category ("Supplements" +
     /// "Vitamins" -> Supplements is fine; "Apparel" + "Office" -> two categories is not, and
-    /// neither is any unmapped department). On a confident match: sets the category, clears
-    /// NeedsReview, and rewrites the generic title. Always records the hint string, so a
-    /// later-added mapping can re-resolve rows still in the queue and a wrong auto-category
-    /// stays traceable.
+    /// neither is any unmapped department): also set the category and clear NeedsReview.
     /// </summary>
     private static void ApplyDepartmentHint(
         AmazonOrderItem item, IReadOnlyList<AmazonOrderCategoryHint> hints, IReadOnlyList<AmazonDepartmentMapping> mappings)
@@ -115,6 +113,10 @@ public class AmazonImportService(
         if (hint is null || hint.Departments.Count == 0) return;
 
         item.DepartmentHint = hint.ToDisplayString();
+        if (AmazonDepartmentResolver.IsSystemPlaceholderTitle(item.ItemTitle))
+        {
+            item.ItemTitle = AmazonDepartmentResolver.PlaceholderTitle(item.DepartmentHint);
+        }
 
         var category = AmazonDepartmentResolver.Resolve(hint.Departments.Select(d => d.Department), mappings);
         if (category is not null)
