@@ -1,0 +1,67 @@
+<!--
+Reproduces the 2026-09-08 live diagnostic dump for order 113-9957140-8010655.
+Only the "API POND" link is a real order item; everything else must be ignored:
+  - #ewc-compact-body mini-cart flyout (open on the page), items outside #orderDetails
+  - a "Buy it again" carousel INSIDE #orderDetails (.a-carousel-card)
+  - a "Products related to your order" carousel outside #orderDetails
+  - footer credit-card links (no price)
+Expected: [{ "API POND 5 IN 1 POND TEST STRIPS Pond Water Test Strips 25-Count", 14.98, 1 }]
+-->
+<body>
+  <div id="nav-cart">
+    <div id="ewc-compact-body"><div class="a-scroller ewc-scroller"><div class="a-row ewc-active-cart"><ul class="a-unordered-list"><li><span class="a-list-item">
+      <div id="sc-item-2cc25f5a" class="a-row ewc-item">
+        <div class="a-section ewc-wider-compact-view-only">
+          <div class="a-section ewc-item-remove-msg aok-hidden"><a href="/dp/B01">HP Everyday Photo Paper, Glossy, 8.5x11 in, 50 sheets</a></div>
+          <div class="a-section ewc-item-already-removed-msg aok-hidden"><a href="/dp/B01">HP Everyday Photo Paper, Glossy, 8.5x11 in, 50 sheets</a></div>
+          <span>$16.99</span>
+        </div>
+      </div>
+      <div id="sc-item-c8b9d7a5" class="a-row ewc-item"><div class="a-section ewc-wider-compact-view-only">
+        <div class="a-section ewc-item-remove-msg aok-hidden"><a href="/dp/B02">The Original Mini Glitter Photo Christmas Ornament, Magnetic</a></div>
+        <span>$13.96</span>
+      </div></div>
+      <div id="sc-item-0ef51e2a" class="a-row ewc-item"><div class="a-section ewc-wider-compact-view-only">
+        <div class="a-section ewc-item-remove-msg aok-hidden"><a href="/dp/B03">Snapins Create Your Own Round Ornaments - Pack of 10</a></div>
+        <span>$26.00</span>
+      </div></div>
+    </span></li></ul></div></div></div>
+  </div>
+
+  <div id="orderDetails">
+    <div class="a-box-group">
+      <div class="a-fixed-left-grid a-spacing-none">
+        <div class="a-fixed-left-grid-inner">
+          <div class="a-fixed-left-grid-col a-col-right">
+            <div class="a-row a-spacing-top-base">
+              <div class="a-fixed-right-grid-col a-col-left">
+                <a href="/gp/product/B0POND">API POND 5 IN 1 POND TEST STRIPS Pond Water Test Strips 25-Count</a>
+              </div>
+              <div class="a-fixed-right-grid-col a-col-right"><span class="a-price">$14.98</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="adfeedbackdetails">
+      <ol class="a-carousel"><div id="anonCarousel1" class="a-carousel-viewport"><div class="a-carousel-row-inner">
+        <span><li class="a-carousel-card"><div class="p13n-sc-uncoverable-faceout">
+          <a href="/dp/B02">The Original Mini Glitter Photo Christmas Ornament, Magnetic</a>
+          <div class="a-row"><span>$13.96</span></div>
+        </div></li></span>
+      </div></div></ol>
+    </div>
+  </div>
+
+  <div id="spDesktopFaceout">
+    <ol class="a-carousel"><div id="anonCarousel3" class="a-carousel-viewport"><div class="a-carousel-row-inner">
+      <span><li class="a-carousel-card"><div class="p13n-sc-uncoverable-faceout">
+        <a href="/dp/BSP1">Integrative Therapeutics Active B-Complex</a>
+        <div class="a-row"><span>$18.25</span></div>
+      </div></li></span>
+    </div></div></ol>
+  </div>
+
+  <div id="navFooter"><ul><li><a href="/dp/BCARD">Amazon Secured Card</a></li></ul></div>
+</body>

@@ -1,0 +1,8 @@
+{
+  "name": "amazon-order-scraper-bookmarklet-test",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Offline regression harness for the Amazon order-scraper bookmarklet",
+  "scripts": { "test": "node test.js" },
+  "devDependencies": { "jsdom": "^25.0.1" }
+}
