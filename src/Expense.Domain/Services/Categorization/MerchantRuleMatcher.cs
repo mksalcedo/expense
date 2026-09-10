@@ -13,11 +13,13 @@ namespace Expense.Domain.Services.Categorization;
 /// </summary>
 public static class MerchantRuleMatcher
 {
-    public static MerchantRule? FirstMatch(IEnumerable<MerchantRule> rules, string searchText, decimal amount)
+    public static MerchantRule? FirstMatch(IEnumerable<MerchantRule> rules, string searchText, decimal amount) =>
+        rules.FirstOrDefault(r => IsMatch(r, searchText, amount));
+
+    public static bool IsMatch(MerchantRule rule, string searchText, decimal amount)
     {
         var direction = amount >= 0 ? Direction.Income : Direction.Expense;
-        return rules.FirstOrDefault(r =>
-            (r.Direction is null || r.Direction == direction)
-            && MerchantPatternMatcher.Matches(searchText, r.MerchantPattern));
+        return (rule.Direction is null || rule.Direction == direction)
+            && MerchantPatternMatcher.Matches(searchText, rule.MerchantPattern);
     }
 }

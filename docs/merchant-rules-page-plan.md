@@ -1,7 +1,13 @@
 # Merchant Rules management page + direction-aware rules
 
-Status: **built.** All 5 parts done, full suite green (1194 tests). Migration applied to
-`expense_test` (automatic). Prod migration + publish + real Venmo rule split still pending.
+Status: **built + shipped** (commit 4cedcda). Migration applied to prod. Full suite green.
+
+UX follow-up (in progress): filter box, add-form-on-top, patch-not-reload on edit/delete,
+and a per-rule "Matched" count column - all done, tests green, awaiting commit. Deferred:
+group-by-category toggle (#5), overlap/shadow warnings.
+
+Real Venmo rule split (#105 -> two direction-scoped rules) still pending - user's call to
+do on the page or via the service.
 
 ## Problem
 

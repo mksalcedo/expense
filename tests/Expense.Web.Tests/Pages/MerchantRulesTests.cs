@@ -18,6 +18,8 @@ public class MerchantRulesTests : BunitContext
             new() { Id = 3, Name = "Venmo Credit Card Payment" },
         ];
 
+        public Dictionary<int, int> MatchCounts { get; set; } = new();
+        public int GetCallCount { get; private set; }
         public string? LastPattern { get; private set; }
         public Direction? LastDirection { get; private set; }
         public int? LastCategoryId { get; private set; }
@@ -25,8 +27,11 @@ public class MerchantRulesTests : BunitContext
         public int? LastDeletedId { get; private set; }
         public int NextReapplyCount { get; set; }
 
-        public Task<MerchantRulesPageData> GetAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new MerchantRulesPageData { Rules = Rules, Categories = Categories });
+        public Task<MerchantRulesPageData> GetAsync(CancellationToken cancellationToken = default)
+        {
+            GetCallCount++;
+            return Task.FromResult(new MerchantRulesPageData { Rules = Rules, Categories = Categories, MatchCounts = MatchCounts });
+        }
 
         public Task<int> CreateAsync(string merchantPattern, Direction? direction, int categoryId, CancellationToken cancellationToken = default)
         {
@@ -60,12 +65,15 @@ public class MerchantRulesTests : BunitContext
         return provider;
     }
 
+    private static MerchantRule Rule(int id, string pattern, int categoryId, Direction? direction = null) =>
+        new() { Id = id, MerchantPattern = pattern, CategoryId = categoryId, Direction = direction };
+
     [Fact]
     public void ListsEveryRule_WithPatternDirectionAndCategoryPreselected()
     {
         Register(
-            new MerchantRule { Id = 10, MerchantPattern = "VENMO", CategoryId = 3, Direction = Direction.Expense },
-            new MerchantRule { Id = 11, MerchantPattern = "KROGER", CategoryId = 1, Direction = null });
+            Rule(10, "VENMO", 3, Direction.Expense),
+            Rule(11, "KROGER", 1));
 
         var cut = Render<MerchantRules>();
 
@@ -76,6 +84,17 @@ public class MerchantRulesTests : BunitContext
         Assert.Equal("", direction11.Children.First(o => o.HasAttribute("selected")).GetAttribute("value"));
         var category10 = cut.Find("#rule-category-10");
         Assert.Equal("3", category10.Children.First(o => o.HasAttribute("selected")).GetAttribute("value"));
+    }
+
+    [Fact]
+    public void AddForm_RendersAboveTheRuleList()
+    {
+        Register(Rule(10, "VENMO", 3));
+
+        var cut = Render<MerchantRules>();
+
+        Assert.True(cut.Markup.IndexOf("id=\"new-rule-pattern\"", StringComparison.Ordinal)
+                    < cut.Markup.IndexOf("id=\"rule-pattern-10\"", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -127,7 +146,7 @@ public class MerchantRulesTests : BunitContext
     [Fact]
     public void ChangingARowsDirection_CallsUpdate_WithTheRowsOtherFields()
     {
-        var provider = Register(new MerchantRule { Id = 10, MerchantPattern = "VENMO", CategoryId = 3, Direction = null });
+        var provider = Register(Rule(10, "VENMO", 3));
 
         var cut = Render<MerchantRules>();
         cut.Find("#rule-direction-10").Change("Expense");
@@ -141,7 +160,7 @@ public class MerchantRulesTests : BunitContext
     [Fact]
     public void ChangingARowsCategory_CallsUpdate()
     {
-        var provider = Register(new MerchantRule { Id = 10, MerchantPattern = "VENMO", CategoryId = 3, Direction = Direction.Income });
+        var provider = Register(Rule(10, "VENMO", 3, Direction.Income));
 
         var cut = Render<MerchantRules>();
         cut.Find("#rule-category-10").Change("2");
@@ -154,12 +173,88 @@ public class MerchantRulesTests : BunitContext
     [Fact]
     public void DeletingARule_CallsDelete_AndRemovesTheRow()
     {
-        var provider = Register(new MerchantRule { Id = 10, MerchantPattern = "VENMO", CategoryId = 3 });
+        var provider = Register(Rule(10, "VENMO", 3));
 
         var cut = Render<MerchantRules>();
         cut.Find("#rule-delete-10").Click();
 
         Assert.Equal(10, provider.LastDeletedId);
         Assert.Empty(cut.FindAll("#rule-delete-10"));
+    }
+
+    [Fact]
+    public void Filter_ByPattern_HidesNonMatchingRows()
+    {
+        Register(
+            Rule(10, "VENMO", 3),
+            Rule(11, "KROGER", 1),
+            Rule(12, "ADOBE", 1));
+
+        var cut = Render<MerchantRules>();
+        cut.Find("#rule-filter").Input("ven");
+
+        Assert.NotEmpty(cut.FindAll("#rule-pattern-10"));
+        Assert.Empty(cut.FindAll("#rule-pattern-11"));
+        Assert.Empty(cut.FindAll("#rule-pattern-12"));
+    }
+
+    [Fact]
+    public void Filter_ByCategoryName_MatchesRowsFiledThere()
+    {
+        Register(
+            Rule(10, "VENMO", 2),   // Piano
+            Rule(11, "KROGER", 1)); // Groceries
+
+        var cut = Render<MerchantRules>();
+        cut.Find("#rule-filter").Input("pian");
+
+        Assert.NotEmpty(cut.FindAll("#rule-pattern-10"));
+        Assert.Empty(cut.FindAll("#rule-pattern-11"));
+    }
+
+    [Fact]
+    public void Filter_ShowsAMatchCountSummary()
+    {
+        Register(
+            Rule(10, "VENMO", 3),
+            Rule(11, "KROGER", 1),
+            Rule(12, "ADOBE", 1));
+
+        var cut = Render<MerchantRules>();
+        cut.Find("#rule-filter").Input("ven");
+
+        Assert.Contains("1 of 3", cut.Find("#rule-filter-count").TextContent);
+    }
+
+    [Fact]
+    public void ShowsPerRuleMatchCount()
+    {
+        var provider = Register(Rule(10, "APPLE", 1), Rule(11, "NOSUCHMERCHANT", 1));
+        provider.MatchCounts = new Dictionary<int, int> { [10] = 312, [11] = 0 };
+
+        var cut = Render<MerchantRules>();
+
+        Assert.Equal("312", cut.Find("#rule-matches-10").TextContent.Trim());
+        Assert.Equal("0", cut.Find("#rule-matches-11").TextContent.Trim());
+    }
+
+    [Fact]
+    public void EditingARow_DoesNotReloadTheWholeTable_AndKeepsTheFilterApplied()
+    {
+        var provider = Register(
+            Rule(10, "VENMO", 3),
+            Rule(11, "KROGER", 1));
+        provider.NextReapplyCount = 1;
+
+        var cut = Render<MerchantRules>();
+        Assert.Equal(1, provider.GetCallCount); // initial load only
+
+        cut.Find("#rule-filter").Input("ven");
+        cut.Find("#rule-category-10").Change("2");
+
+        Assert.Equal(1, provider.GetCallCount);          // no reload
+        Assert.NotEmpty(cut.FindAll("#rule-pattern-10")); // still shown
+        Assert.Empty(cut.FindAll("#rule-pattern-11"));    // filter still hides KROGER
+        Assert.Contains("re-filed", cut.Find("#rules-message").TextContent);
     }
 }

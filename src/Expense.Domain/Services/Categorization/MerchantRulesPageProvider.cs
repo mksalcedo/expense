@@ -14,7 +14,8 @@ public class MerchantRulesPageProvider(
         return new MerchantRulesPageData
         {
             Rules = await rules.GetAllAsync(context, cancellationToken),
-            Categories = await context.Categories.Where(c => c.IsActive).OrderBy(c => c.Name).ToListAsync(cancellationToken)
+            Categories = await context.Categories.Where(c => c.IsActive).OrderBy(c => c.Name).ToListAsync(cancellationToken),
+            MatchCounts = await rules.GetMatchCountsAsync(context, cancellationToken)
         };
     }
 

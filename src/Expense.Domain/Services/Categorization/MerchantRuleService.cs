@@ -57,6 +57,31 @@ public class MerchantRuleService
     }
 
     /// <summary>
+    /// How many bank transactions each rule's pattern+direction currently matches, across the
+    /// whole history (not just pending) - a "reach" number for the management page. It's an
+    /// estimate, not an audit: transactions aren't tagged with the rule that categorized them,
+    /// and first-match-wins means a broad rule and a narrower one that overlaps will both count
+    /// the same rows. That overlap showing up is the point - a one-word pattern with a huge
+    /// count is too broad; a count of 0 is a dead or mistyped rule.
+    /// </summary>
+    public async Task<Dictionary<int, int>> GetMatchCountsAsync(ExpenseDbContext context, CancellationToken cancellationToken = default)
+    {
+        var rules = await context.MerchantRules.ToListAsync(cancellationToken);
+        var transactions = await context.BankTransactions
+            .Where(t => !t.IsAmazonMerchant)
+            .Select(t => new { t.Merchant, t.Description, t.Amount })
+            .ToListAsync(cancellationToken);
+
+        var prepared = transactions
+            .Select(t => ((t.Merchant ?? t.Description).ToUpperInvariant(), t.Amount))
+            .ToList();
+
+        return rules.ToDictionary(
+            rule => rule.Id,
+            rule => prepared.Count(p => MerchantRuleMatcher.IsMatch(rule, p.Item1, p.Item2)));
+    }
+
+    /// <summary>
     /// Re-checks every still-pending bank transaction against all current merchant_rules
     /// (the merchant-rule half of CategorizationService's "Re-apply Rules Now" sweep - no
     /// history fallback, no Amazon items, so the count reported back to the page is purely

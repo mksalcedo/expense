@@ -94,6 +94,48 @@ public class MerchantRuleServiceTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task GetMatchCounts_CountsTransactionsEachRuleMatches_RespectingDirection()
+    {
+        var (account, piano, venmoPayment) = await SeedAsync();
+        var venmoAny = new MerchantRule { MerchantPattern = "VENMO", CategoryId = venmoPayment.Id };
+        var venmoIncome = new MerchantRule { MerchantPattern = "VENMO", CategoryId = piano.Id, Direction = Direction.Income };
+        var neverMatches = new MerchantRule { MerchantPattern = "NOSUCHMERCHANT", CategoryId = piano.Id };
+        Context.MerchantRules.AddRange(venmoAny, venmoIncome, neverMatches);
+        Context.BankTransactions.AddRange(
+            Pending(account.Id, -50m),
+            Pending(account.Id, -20m),
+            Pending(account.Id, -10m),
+            Pending(account.Id, 100m),
+            Pending(account.Id, 238m));
+        await Context.SaveChangesAsync();
+
+        var counts = await _sut.GetMatchCountsAsync(Context);
+
+        Assert.Equal(5, counts[venmoAny.Id]);    // all five "Venmo" rows
+        Assert.Equal(2, counts[venmoIncome.Id]); // only the two positive ones
+        Assert.Equal(0, counts[neverMatches.Id]);
+    }
+
+    [Fact]
+    public async Task GetMatchCounts_IgnoresAmazonMerchantTransactions()
+    {
+        var (account, piano, _) = await SeedAsync();
+        var rule = new MerchantRule { MerchantPattern = "VENMO", CategoryId = piano.Id };
+        Context.MerchantRules.Add(rule);
+        Context.BankTransactions.Add(new BankTransaction
+        {
+            AccountId = account.Id, TransactionDate = new DateOnly(2026, 9, 8),
+            Description = "Venmo", Amount = -50m, ImportSource = "Plaid", IsAmazonMerchant = true,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await Context.SaveChangesAsync();
+
+        var counts = await _sut.GetMatchCountsAsync(Context);
+
+        Assert.Equal(0, counts[rule.Id]);
+    }
+
+    [Fact]
     public async Task Delete_RemovesRule()
     {
         var (_, piano, _) = await SeedAsync();

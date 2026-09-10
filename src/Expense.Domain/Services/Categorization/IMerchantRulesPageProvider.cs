@@ -6,6 +6,9 @@ public class MerchantRulesPageData
 {
     public required List<MerchantRule> Rules { get; init; }
     public required List<Category> Categories { get; init; }
+
+    /// <summary>Rule id -&gt; how many historical transactions its pattern+direction matches. See MerchantRuleService.GetMatchCountsAsync.</summary>
+    public Dictionary<int, int> MatchCounts { get; init; } = new();
 }
 
 /// <summary>Thin abstraction over MerchantRuleService so the /merchant-rules page can be tested against a fake.</summary>

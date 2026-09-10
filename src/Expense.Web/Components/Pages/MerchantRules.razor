@@ -36,12 +36,40 @@ else
         <p id="rules-message" style="color: var(--color-success, #2f855a);">@m</p>
     }
 
+    <fieldset class="add-rule-form" style="margin-bottom: 1rem;">
+        <legend>Add a rule</legend>
+        <input id="new-rule-pattern" placeholder="e.g. VENMO" @bind="_newPattern" />
+        <select id="new-rule-direction" @bind="_newDirection">
+            <option value="">Any amount</option>
+            <option value="@Direction.Income">Money in (income)</option>
+            <option value="@Direction.Expense">Money out (expense)</option>
+        </select>
+        <select id="new-rule-category" @bind="_newCategoryId">
+            <option value="0">-- category --</option>
+            @foreach (var category in _data.Categories)
+            {
+                <option value="@category.Id">@category.Name</option>
+            }
+        </select>
+        <button id="new-rule-add"
+                disabled="@(string.IsNullOrWhiteSpace(_newPattern) || _newCategoryId == 0)"
+                @onclick="AddAsync">Add</button>
+    </fieldset>
+
+    <div style="margin-bottom: 0.5rem;">
+        <input id="rule-filter" placeholder="Filter by pattern or category..."
+               value="@_filter" @oninput="e => _filter = (string?)e.Value ?? string.Empty" />
+        <span id="rule-filter-count" style="margin-left: 0.5rem; color: var(--color-muted, #666);">
+            Showing @FilteredRules.Count of @_data.Rules.Count
+        </span>
+    </div>
+
     <table>
         <thead>
-            <tr><th>When the description contains</th><th>And the amount is</th><th>File as</th><th></th></tr>
+            <tr><th>When the description contains</th><th>And the amount is</th><th>File as</th><th title="How many transactions in your history this pattern matches">Matched</th><th></th></tr>
         </thead>
         <tbody>
-            @foreach (var rule in _data.Rules)
+            @foreach (var rule in FilteredRules)
             {
                 <tr @key="rule.Id">
                     <td>
@@ -63,37 +91,12 @@ else
                             }
                         </select>
                     </td>
+                    <td id="rule-matches-@rule.Id" style="text-align: right;">@MatchCountText(rule.Id)</td>
                     <td>
                         <button id="rule-delete-@rule.Id" @onclick="() => DeleteAsync(rule.Id)">Delete</button>
                     </td>
                 </tr>
             }
-            <tr>
-                <td>
-                    <input id="new-rule-pattern" placeholder="e.g. VENMO" @bind="_newPattern" />
-                </td>
-                <td>
-                    <select id="new-rule-direction" @bind="_newDirection">
-                        <option value="">Any</option>
-                        <option value="@Direction.Income">Money in (income)</option>
-                        <option value="@Direction.Expense">Money out (expense)</option>
-                    </select>
-                </td>
-                <td>
-                    <select id="new-rule-category" @bind="_newCategoryId">
-                        <option value="0">-- category --</option>
-                        @foreach (var category in _data.Categories)
-                        {
-                            <option value="@category.Id">@category.Name</option>
-                        }
-                    </select>
-                </td>
-                <td>
-                    <button id="new-rule-add"
-                            disabled="@(string.IsNullOrWhiteSpace(_newPattern) || _newCategoryId == 0)"
-                            @onclick="AddAsync">Add</button>
-                </td>
-            </tr>
         </tbody>
     </table>
 }
@@ -103,9 +106,32 @@ else
     private string _newPattern = "";
     private string _newDirection = "";
     private int _newCategoryId;
+    private string _filter = "";
     private string? _message;
 
     protected override async Task OnInitializedAsync() => _data = await Provider.GetAsync();
+
+    private List<MerchantRule> FilteredRules
+    {
+        get
+        {
+            if (_data is null) return [];
+            if (string.IsNullOrWhiteSpace(_filter)) return _data.Rules;
+
+            var needle = _filter.Trim();
+            return _data.Rules
+                .Where(r =>
+                    r.MerchantPattern.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                    || CategoryName(r.CategoryId).Contains(needle, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
+
+    private string CategoryName(int categoryId) =>
+        _data?.Categories.FirstOrDefault(c => c.Id == categoryId)?.Name ?? "";
+
+    private string MatchCountText(int ruleId) =>
+        _data is not null && _data.MatchCounts.TryGetValue(ruleId, out var n) ? n.ToString() : "—";
 
     private static Direction? ParseDirection(string? value) =>
         string.IsNullOrEmpty(value) ? null : Enum.Parse<Direction>(value);
@@ -141,19 +167,20 @@ else
         await SaveRowAsync(rule);
     }
 
+    // Patch in place - the rule object is already mutated, so no full reload (which would
+    // drop the filter, the scroll position, and re-run every match-count query).
     private async Task SaveRowAsync(MerchantRule rule)
     {
         var reapplied = await Provider.UpdateAsync(rule.Id, rule.MerchantPattern, rule.Direction, rule.CategoryId);
         _message = reapplied > 0
             ? $"Updated. {reapplied} transaction(s) in the queue were re-filed."
             : "Rule updated.";
-        _data = await Provider.GetAsync();
     }
 
     private async Task DeleteAsync(int id)
     {
         await Provider.DeleteAsync(id);
+        _data!.Rules.RemoveAll(r => r.Id == id);
         _message = "Rule removed.";
-        _data = await Provider.GetAsync();
     }
 }
