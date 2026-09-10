@@ -188,6 +188,48 @@ public class AmazonOrderCategoryHintParserTests
         Assert.Equal("", hint.ToDisplayString());
     }
 
+    // Real 2026-09-09 digest ("Ordered 5 items: Home Décor Products, Supplements, and more"),
+    // 4 orders, department line 3 lines before each Order #. Guards two bugs found together:
+    // (1) an accented department name ("Décor") the old ASCII-only regex silently dropped,
+    // (2) which cascaded into every hint being shifted one order down under nearest-by-distance
+    // matching - fixed by pairing department lines to orders by position.
+    private const string FourOrderDigestWithAccentedDepartmentHtml = """
+        <table><tr><td><div><span class="rio-text">Mark, your Home Décor Products and more are confirmed!</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Arriving Friday</span></div></td></tr>
+        <tr><td><div><span class="rio-text">&#8294;1&#8297; item: Home Décor Products</span></div></td></tr>
+        <tr><td><div><span class="rio-text"><span>Order #</span></span></div></td></tr>
+        <tr><td><div><span class="rio-text">&#8299;113-4247589-2375404</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Grand Total:</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Arriving today 5 PM &#8211; 10 PM</span></div></td></tr>
+        <tr><td><div><span class="rio-text">&#8294;1&#8297; item: Printer Supplies</span></div></td></tr>
+        <tr><td><div><span class="rio-text"><span>Order #</span></span></div></td></tr>
+        <tr><td><div><span class="rio-text">&#8299;113-5361156-9373840</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Grand Total:</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Arriving September 17 - September 23</span></div></td></tr>
+        <tr><td><div><span class="rio-text">&#8294;2&#8297; Home Décor items</span></div></td></tr>
+        <tr><td><div><span class="rio-text"><span>Order #</span></span></div></td></tr>
+        <tr><td><div><span class="rio-text">&#8299;113-1582770-0042620</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Grand Total:</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Arriving today 5 PM &#8211; 10 PM</span></div></td></tr>
+        <tr><td><div><span class="rio-text">&#8294;1&#8297; item: Supplements</span></div></td></tr>
+        <tr><td><div><span class="rio-text"><span>Order #</span></span></div></td></tr>
+        <tr><td><div><span class="rio-text">&#8299;113-4775473-0313063</span></div></td></tr>
+        <tr><td><div><span class="rio-text">Grand Total:</span></div></td></tr></table>
+        """;
+
+    [Fact]
+    public void Parse_FourOrderDigest_AlignsEachOrderToItsOwnDepartment_IncludingAnAccentedName()
+    {
+        var hints = _sut.Parse(FourOrderDigestWithAccentedDepartmentHtml);
+
+        Assert.Equal(4, hints.Count);
+        Assert.Equal(("113-4247589-2375404", "Home Décor Products"), (hints[0].OrderId, hints[0].Departments[0].Department));
+        Assert.Equal(("113-5361156-9373840", "Printer Supplies"), (hints[1].OrderId, hints[1].Departments[0].Department));
+        Assert.Equal(("113-1582770-0042620", "Home Décor"), (hints[2].OrderId, hints[2].Departments[0].Department));
+        Assert.Equal(2, hints[2].Departments[0].Count);
+        Assert.Equal(("113-4775473-0313063", "Supplements"), (hints[3].OrderId, hints[3].Departments[0].Department));
+    }
+
     [Fact]
     public void Parse_NullOrEmpty_ReturnsEmpty()
     {

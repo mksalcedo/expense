@@ -14,10 +14,13 @@ namespace Expense.Domain.Services.Ingestion.Amazon;
 ///   <item><c>4 items: 3 Apparel, 1 Office</c> - genuinely mixed order, per-department counts</item>
 /// </list>
 ///
-/// Digest emails carry several Order # blocks; each gets its own hint, matched to the
-/// nearest department line. Never throws - an email with no recognizable hint yields an
-/// empty list (or per-order entries with empty Departments), which callers treat exactly
-/// like today's no-information placeholder path.
+/// Digest emails carry several Order # blocks. When there's exactly one department line per
+/// order they're paired by position (the k-th department line belongs to the k-th order),
+/// which is stable whether Amazon puts the line before or after the Order # - unlike
+/// nearest-by-distance, which shifted every hint by one in a real 2026-09-09 digest. Falls
+/// back to nearest-unused only when the counts don't line up. Never throws - an email with
+/// no recognizable hint yields an empty list (or per-order entries with empty Departments),
+/// which callers treat exactly like today's no-information placeholder path.
 /// </summary>
 public partial class AmazonOrderCategoryHintParser
 {
@@ -48,12 +51,15 @@ public partial class AmazonOrderCategoryHintParser
     [GeneratedRegex(@"^(?<count>\d+)\s+(?<dept>.+?)\s+items?$")]
     private static partial Regex ItemForm();
 
-    // "2 Supplements" - a bare count + a short capitalised department phrase and nothing else
-    [GeneratedRegex(@"^(?<count>\d+)\s+(?<dept>[A-Z][A-Za-z][A-Za-z &/'-]{0,38})$")]
+    // "2 Supplements" - a bare count + a short capitalised department phrase and nothing else.
+    // \p{L}/\p{M} (any Unicode letter + combining marks), not [A-Za-z] - Amazon department
+    // names include accents ("Home Décor"), and an ASCII-only class silently drops the whole
+    // line, which cascades into misaligned per-order hints in a digest (found live 2026-09-09).
+    [GeneratedRegex(@"^(?<count>\d+)\s+(?<dept>\p{Lu}[\p{L}\p{M}\p{N} &/'.-]{0,38})$")]
     private static partial Regex BareForm();
 
-    // One piece of a mixed-form breakdown - "3 Apparel" (with count) or just "Supplements" (count implied).
-    [GeneratedRegex(@"^\s*(?:(?<count>\d+)\s+)?(?<dept>[A-Za-z][A-Za-z0-9 &/'-]{0,48}?)\s*$")]
+    // One piece of a mixed-form breakdown - "3 Apparel" (with count) or just "Home Décor Products" (count implied).
+    [GeneratedRegex(@"^\s*(?:(?<count>\d+)\s+)?(?<dept>\p{L}[\p{L}\p{M}\p{N} &/'.-]{0,48}?)\s*$")]
     private static partial Regex BreakdownPiece();
 
     public IReadOnlyList<AmazonOrderCategoryHint> Parse(string? htmlBody)
@@ -90,6 +96,17 @@ public partial class AmazonOrderCategoryHintParser
             }
         }
 
+        // One department line per order (the common case, single or digest) - pair by
+        // position. Both appear in the same order in the document, whichever comes first.
+        if (deptLines.Count == orderLines.Count)
+        {
+            return orderLines
+                .Select((o, i) => new AmazonOrderCategoryHint(o.OrderId, deptLines[i].Departments))
+                .ToList();
+        }
+
+        // Counts don't line up (an order with no hint mixed into a digest, or a stray
+        // matching line) - best-effort nearest-unused department line per order.
         var usedDeptLines = new HashSet<int>();
         var hints = new List<AmazonOrderCategoryHint>();
         foreach (var (orderLineIndex, orderId) in orderLines)
